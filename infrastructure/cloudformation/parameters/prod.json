@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "prod"
+  },
+  {
+    "ParameterKey": "DomainPrefix",
+    "ParameterValue": "app"
+  },
+  {
+    "ParameterKey": "DBMasterUsername",
+    "ParameterValue": "complensadmin"
+  },
+  {
+    "ParameterKey": "DBMasterPassword",
+    "ParameterValue": "CHANGE_ME_SECURE_PASSWORD"
+  }
+]
