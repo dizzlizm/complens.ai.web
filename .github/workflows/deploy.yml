@@ -231,7 +231,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd backend/lambda/api
-          npm ci --production
+          npm install --production
 
       - name: Build Lambda package
         run: |
@@ -328,7 +328,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd frontend
-          npm ci
+          npm install
 
       - name: Build frontend
         env:
