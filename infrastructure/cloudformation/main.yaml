@@ -435,6 +435,8 @@ Resources:
       BackupRetentionPeriod: !If [IsProd, 7, 1]
       PreferredBackupWindow: '03:00-04:00'
       PreferredMaintenanceWindow: 'sun:04:00-sun:05:00'
+      AutoMinorVersionUpgrade: true
+      AllowMajorVersionUpgrade: false
       EnableCloudwatchLogsExports:
         - postgresql
       Tags:
