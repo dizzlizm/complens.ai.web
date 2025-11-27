@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "DomainPrefix",
+    "ParameterValue": "app.dev"
+  },
+  {
+    "ParameterKey": "DBMasterUsername",
+    "ParameterValue": "complensadmin"
+  },
+  {
+    "ParameterKey": "DBMasterPassword",
+    "ParameterValue": "CHANGE_ME_SECURE_PASSWORD"
+  }
+]
