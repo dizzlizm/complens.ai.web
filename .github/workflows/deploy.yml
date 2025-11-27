@@ -101,11 +101,18 @@ jobs:
 
       - name: Deploy CloudFormation stack
         id: deploy-stack
+        env:
+          DB_PASSWORD: ${{ secrets.DB_MASTER_PASSWORD }}
         run: |
           cd infrastructure/cloudformation
 
           STACK_NAME="complens-${{ needs.setup.outputs.environment }}"
           ENV="${{ needs.setup.outputs.environment }}"
+
+          # Prepare parameters with password override from secrets
+          PARAMS=$(jq --arg pwd "$DB_PASSWORD" \
+            'map(if .ParameterKey == "DBMasterPassword" then .ParameterValue = $pwd else . end)' \
+            parameters/${ENV}.json)
 
           # Check if stack exists
           if aws cloudformation describe-stacks --stack-name ${STACK_NAME} --region ${{ env.AWS_REGION }} 2>&1 | grep -q "does not exist"; then
@@ -113,7 +120,7 @@ jobs:
             aws cloudformation create-stack \
               --stack-name ${STACK_NAME} \
               --template-body file://main.yaml \
-              --parameters file://parameters/${ENV}.json \
+              --parameters "$PARAMS" \
               --capabilities CAPABILITY_NAMED_IAM \
               --region ${{ env.AWS_REGION }} \
               --tags \
@@ -130,7 +137,7 @@ jobs:
             UPDATE_OUTPUT=$(aws cloudformation update-stack \
               --stack-name ${STACK_NAME} \
               --template-body file://main.yaml \
-              --parameters file://parameters/${ENV}.json \
+              --parameters "$PARAMS" \
               --capabilities CAPABILITY_NAMED_IAM \
               --region ${{ env.AWS_REGION }} 2>&1 || true)
 
