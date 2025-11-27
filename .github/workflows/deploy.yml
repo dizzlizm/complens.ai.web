@@ -1,0 +1,385 @@
+name: Deploy Complens.ai
+
+on:
+  push:
+    branches:
+      - main
+      - 'claude/**'  # Allow deployments from claude branches for testing
+  workflow_dispatch:  # Allow manual triggers
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+env:
+  AWS_REGION: us-east-1
+  NODE_VERSION: '20'
+
+jobs:
+  # Determine environment based on branch
+  setup:
+    name: Setup Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      deploy-infra: ${{ steps.changes.outputs.infrastructure }}
+      deploy-backend: ${{ steps.changes.outputs.backend }}
+      deploy-frontend: ${{ steps.changes.outputs.frontend }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need 2 commits to detect changes
+
+      - name: Determine environment
+        id: set-env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Detect changes
+        id: changes
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q "^infrastructure/"; then
+            echo "infrastructure=true" >> $GITHUB_OUTPUT
+          else
+            echo "infrastructure=false" >> $GITHUB_OUTPUT
+          fi
+
+          if git diff --name-only HEAD~1 HEAD | grep -q "^backend/"; then
+            echo "backend=true" >> $GITHUB_OUTPUT
+          else
+            echo "backend=false" >> $GITHUB_OUTPUT
+          fi
+
+          if git diff --name-only HEAD~1 HEAD | grep -q "^frontend/"; then
+            echo "frontend=true" >> $GITHUB_OUTPUT
+          else
+            echo "frontend=false" >> $GITHUB_OUTPUT
+          fi
+
+  # Deploy infrastructure with CloudFormation
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.deploy-infra == 'true' || github.event_name == 'workflow_dispatch'
+    environment:
+      name: ${{ needs.setup.outputs.environment }}
+    outputs:
+      api-url: ${{ steps.stack-outputs.outputs.api-url }}
+      frontend-bucket: ${{ steps.stack-outputs.outputs.frontend-bucket }}
+      lambda-bucket: ${{ steps.stack-outputs.outputs.lambda-bucket }}
+      cloudfront-id: ${{ steps.stack-outputs.outputs.cloudfront-id }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate CloudFormation template
+        run: |
+          cd infrastructure/cloudformation
+          aws cloudformation validate-template \
+            --template-body file://main.yaml \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy CloudFormation stack
+        id: deploy-stack
+        run: |
+          cd infrastructure/cloudformation
+
+          STACK_NAME="complens-${{ needs.setup.outputs.environment }}"
+          ENV="${{ needs.setup.outputs.environment }}"
+
+          # Check if stack exists
+          if aws cloudformation describe-stacks --stack-name ${STACK_NAME} --region ${{ env.AWS_REGION }} 2>&1 | grep -q "does not exist"; then
+            echo "Creating new stack..."
+            aws cloudformation create-stack \
+              --stack-name ${STACK_NAME} \
+              --template-body file://main.yaml \
+              --parameters file://parameters/${ENV}.json \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --region ${{ env.AWS_REGION }} \
+              --tags \
+                Key=Environment,Value=${ENV} \
+                Key=Project,Value=Complens \
+                Key=ManagedBy,Value=GitHubActions
+
+            echo "Waiting for stack creation..."
+            aws cloudformation wait stack-create-complete \
+              --stack-name ${STACK_NAME} \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "Updating existing stack..."
+            UPDATE_OUTPUT=$(aws cloudformation update-stack \
+              --stack-name ${STACK_NAME} \
+              --template-body file://main.yaml \
+              --parameters file://parameters/${ENV}.json \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --region ${{ env.AWS_REGION }} 2>&1 || true)
+
+            if echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
+              echo "No updates needed"
+            else
+              echo "Waiting for stack update..."
+              aws cloudformation wait stack-update-complete \
+                --stack-name ${STACK_NAME} \
+                --region ${{ env.AWS_REGION }}
+            fi
+          fi
+
+      - name: Get stack outputs
+        id: stack-outputs
+        run: |
+          STACK_NAME="complens-${{ needs.setup.outputs.environment }}"
+
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayURL`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucketName`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          LAMBDA_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`LambdaCodeBucketName`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          # Extract CloudFront ID from URL
+          CLOUDFRONT_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?contains(Aliases.Items, '${CLOUDFRONT_URL}')].Id | [0]" \
+            --output text 2>/dev/null || echo "")
+
+          echo "api-url=${API_URL}" >> $GITHUB_OUTPUT
+          echo "frontend-bucket=${FRONTEND_BUCKET}" >> $GITHUB_OUTPUT
+          echo "lambda-bucket=${LAMBDA_BUCKET}" >> $GITHUB_OUTPUT
+          echo "cloudfront-id=${CLOUDFRONT_ID}" >> $GITHUB_OUTPUT
+
+  # Deploy Lambda backend
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    needs: [setup, deploy-infrastructure]
+    if: |
+      always() &&
+      (needs.setup.outputs.deploy-backend == 'true' || github.event_name == 'workflow_dispatch') &&
+      (needs.deploy-infrastructure.result == 'success' || needs.deploy-infrastructure.result == 'skipped')
+    environment:
+      name: ${{ needs.setup.outputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/lambda/api/package-lock.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get Lambda bucket from stack
+        id: get-bucket
+        run: |
+          STACK_NAME="complens-${{ needs.setup.outputs.environment }}"
+          LAMBDA_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`LambdaCodeBucketName`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          echo "lambda-bucket=${LAMBDA_BUCKET}" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: |
+          cd backend/lambda/api
+          npm ci --production
+
+      - name: Build Lambda package
+        run: |
+          cd backend/lambda/api
+          zip -r ../api-${{ github.sha }}.zip . -x '*.git*' 'node_modules/.cache/*' 'tests/*' '*.md'
+
+      - name: Upload to S3
+        run: |
+          aws s3 cp backend/lambda/api-${{ github.sha }}.zip \
+            s3://${{ steps.get-bucket.outputs.lambda-bucket }}/api/latest.zip \
+            --region ${{ env.AWS_REGION }}
+
+          # Also upload with commit hash for versioning
+          aws s3 cp backend/lambda/api-${{ github.sha }}.zip \
+            s3://${{ steps.get-bucket.outputs.lambda-bucket }}/api/${{ github.sha }}.zip \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Update Lambda function (if exists)
+        run: |
+          FUNCTION_NAME="${{ needs.setup.outputs.environment }}-complens-api"
+
+          # Check if function exists
+          if aws lambda get-function --function-name ${FUNCTION_NAME} --region ${{ env.AWS_REGION }} 2>&1 | grep -q "ResourceNotFoundException"; then
+            echo "Lambda function not yet created by CloudFormation"
+            echo "Uncomment ApiLambdaFunction resource in main.yaml and redeploy infrastructure"
+          else
+            echo "Updating Lambda function code..."
+            aws lambda update-function-code \
+              --function-name ${FUNCTION_NAME} \
+              --s3-bucket ${{ steps.get-bucket.outputs.lambda-bucket }} \
+              --s3-key api/latest.zip \
+              --region ${{ env.AWS_REGION }}
+
+            # Wait for update to complete
+            aws lambda wait function-updated \
+              --function-name ${FUNCTION_NAME} \
+              --region ${{ env.AWS_REGION }}
+          fi
+
+  # Deploy frontend
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: [setup, deploy-infrastructure, deploy-backend]
+    if: |
+      always() &&
+      (needs.setup.outputs.deploy-frontend == 'true' || github.event_name == 'workflow_dispatch') &&
+      (needs.deploy-infrastructure.result == 'success' || needs.deploy-infrastructure.result == 'skipped')
+    environment:
+      name: ${{ needs.setup.outputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get stack outputs
+        id: get-outputs
+        run: |
+          STACK_NAME="complens-${{ needs.setup.outputs.environment }}"
+
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayURL`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucketName`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          echo "api-url=${API_URL}" >> $GITHUB_OUTPUT
+          echo "frontend-bucket=${FRONTEND_BUCKET}" >> $GITHUB_OUTPUT
+          echo "cloudfront-url=${CLOUDFRONT_URL}" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Build frontend
+        env:
+          REACT_APP_API_URL: ${{ steps.get-outputs.outputs.api-url }}
+        run: |
+          cd frontend
+          npm run build
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync frontend/build/ s3://${{ steps.get-outputs.outputs.frontend-bucket }}/ \
+            --delete \
+            --region ${{ env.AWS_REGION }} \
+            --cache-control "public,max-age=31536000,immutable" \
+            --exclude "index.html" \
+            --exclude "*.map"
+
+          # Upload index.html separately with no cache
+          aws s3 cp frontend/build/index.html s3://${{ steps.get-outputs.outputs.frontend-bucket }}/index.html \
+            --region ${{ env.AWS_REGION }} \
+            --cache-control "public,max-age=0,must-revalidate" \
+            --content-type "text/html"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          # Get CloudFront distribution ID
+          DISTRIBUTION_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?DomainName=='${{ steps.get-outputs.outputs.cloudfront-url }}'.substring(8)].Id | [0]" \
+            --output text \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+
+          if [ -n "$DISTRIBUTION_ID" ] && [ "$DISTRIBUTION_ID" != "None" ]; then
+            echo "Invalidating CloudFront distribution: $DISTRIBUTION_ID"
+            aws cloudfront create-invalidation \
+              --distribution-id ${DISTRIBUTION_ID} \
+              --paths "/*" \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "CloudFront distribution not found, skipping invalidation"
+          fi
+
+      - name: Deployment summary
+        run: |
+          echo "## Deployment Complete! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Frontend URL:** ${{ steps.get-outputs.outputs.cloudfront-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "**API URL:** ${{ steps.get-outputs.outputs.api-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Test your deployment:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Health check" >> $GITHUB_STEP_SUMMARY
+          echo "curl ${{ steps.get-outputs.outputs.api-url }}/health" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Visit frontend" >> $GITHUB_STEP_SUMMARY
+          echo "open ${{ steps.get-outputs.outputs.cloudfront-url }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
