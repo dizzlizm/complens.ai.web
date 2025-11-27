@@ -419,7 +419,7 @@ Resources:
     Properties:
       DBInstanceIdentifier: !Sub '${Environment}-complens-postgres'
       Engine: postgres
-      EngineVersion: '15.5'
+      EngineVersion: '15.7'  # Using 15.7 - change to just '15' for latest minor version
       DBInstanceClass: !If [IsProd, db.t4g.medium, db.t4g.micro]
       AllocatedStorage: !If [IsProd, 100, 20]
       StorageType: gp3
