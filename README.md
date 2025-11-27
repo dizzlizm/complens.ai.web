@@ -212,9 +212,14 @@ The database schema is automatically created on first Lambda execution:
 
 ## 💰 Cost Estimates
 
-### Development Environment (dev)
+### Development Environment (dev) - **OPTIMIZED**
+
+✅ **Current Configuration** (NAT Gateway removed):
 - **RDS PostgreSQL (db.t4g.micro)**: ~$15/month
-- **NAT Gateway**: ~$32/month (~$0.045/hour)
+- **VPC Endpoints** (3x Interface endpoints): ~$21/month
+  - Secrets Manager: ~$7/month
+  - Bedrock Runtime: ~$7/month
+  - Additional: ~$7/month
 - **CloudFront**: Free tier covers most dev usage
 - **S3**: Minimal (<$1/month)
 - **Lambda**: Free tier covers dev usage
@@ -223,26 +228,61 @@ The database schema is automatically created on first Lambda execution:
   - Input: ~$3 per 1M tokens
   - Output: ~$15 per 1M tokens
 
-**Estimated Monthly Cost (Dev)**: ~$50-70 + usage-based Bedrock costs
+**💵 Estimated Monthly Cost (Dev): ~$18-20/month + Bedrock usage**
+
+**Savings**: Removed NAT Gateway saves ~$32/month! 🎉
+
+### When to Add NAT Gateway
+
+The NAT Gateway is **commented out** by default to minimize costs. Add it back when you need to:
+
+- Call external APIs (Google Workspace, Chrome Web Store, etc.)
+- Access non-AWS services from Lambda
+- Download packages during Lambda execution
+
+To enable NAT Gateway:
+1. Uncomment NAT resources in `infrastructure/cloudformation/main.yaml`
+2. Uncomment PrivateRoute
+3. Redeploy: `./deploy.sh dev`
+4. **Cost increase**: +$32/month
+
+### Production Environment Cost (estimated)
+
+- **RDS (db.t4g.medium, Multi-AZ)**: ~$120/month
+- **NAT Gateway**: ~$32/month (usually needed for production)
+- **VPC Endpoints**: ~$21/month
+- **CloudFront**: ~$5-20/month (based on traffic)
+- **S3**: ~$5/month
+- **Lambda**: ~$10-50/month (based on usage)
+- **API Gateway**: ~$3.50 per 1M requests
+- **Bedrock**: Based on usage
+
+**💵 Estimated Monthly Cost (Prod): ~$200-250/month + Bedrock usage**
 
 ### Cost Optimization Tips
 
-1. **Remove NAT Gateway** (saves ~$32/month):
-   - Use VPC endpoints only (already configured)
-   - Comment out NAT Gateway in CloudFormation
-   - Requires Lambda to only access AWS services
+1. ✅ **NAT Gateway removed** (already optimized - saves ~$32/month)
+   - Using VPC endpoints exclusively
+   - Add back only when needed for external API calls
 
 2. **Use Aurora Serverless v2** (for production):
-   - Pay per second when database is active
-   - Auto-scales based on load
+   - Scales to zero when idle
+   - Pay per second of use
+   - Good for variable workloads
 
 3. **Enable CloudFront caching**:
-   - Reduces S3 data transfer costs
-   - Improves performance
+   - Already configured with appropriate TTLs
+   - Reduces S3 requests and data transfer
 
 4. **Monitor Bedrock usage**:
-   - Use shorter context windows when possible
+   - Track token consumption in CloudWatch
    - Implement conversation limits
+   - Use streaming for large responses
+
+5. **Right-size RDS instances**:
+   - Start with t4g.micro for dev
+   - Monitor CPU and connections
+   - Upgrade only when needed
 
 ## 🔒 Security Best Practices
 
@@ -308,43 +348,105 @@ aws logs tail /aws/apigateway/dev-complens-api --follow
 aws rds describe-db-log-files --db-instance-identifier dev-complens-postgres
 ```
 
-## 🔄 CI/CD
+## 🔄 CI/CD - Automated Deployments
 
-### GitHub Actions (Recommended)
+### GitHub Actions Workflow ✅
 
-Create `.github/workflows/deploy.yml`:
+**Fully automated CI/CD is configured and ready!** The workflow is located at `.github/workflows/deploy.yml`.
 
-```yaml
-name: Deploy Complens.ai
+#### Features
 
-on:
-  push:
-    branches: [main]
+✅ **Automatic Deployments**:
+- Deploys on push to `main` (production) or `claude/**` branches (dev)
+- Manual deployments via GitHub UI (workflow_dispatch)
+- Change detection - only deploys what changed
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+✅ **Three-Stage Pipeline**:
+1. **Infrastructure**: CloudFormation stack deployment
+2. **Backend**: Lambda function build and deployment
+3. **Frontend**: React build and S3/CloudFront deployment
 
-      - name: Deploy Lambda
-        run: |
-          cd backend/lambda/api
-          npm install
-          npm run build
-          npm run deploy
+✅ **Smart Change Detection**:
+- Analyzes git diff to determine what changed
+- Skips unchanged components for faster deployments
+- Reduces costs by not deploying unnecessarily
 
-      - name: Deploy Frontend
-        run: |
-          cd frontend
-          npm install
-          npm run build
-          npm run deploy
+✅ **Environment Management**:
+- `main` branch → Production environment
+- Other branches → Development environment
+- Manual trigger allows choosing environment
+
+#### Setup Instructions
+
+1. **Add AWS Credentials to GitHub Secrets**:
+
+   Go to your repository → Settings → Secrets and variables → Actions
+
+   Add these secrets:
+   ```
+   AWS_ACCESS_KEY_ID: your-aws-access-key
+   AWS_SECRET_ACCESS_KEY: your-aws-secret-key
+   ```
+
+2. **Configure Environment Secrets** (optional):
+
+   For production-specific settings, add environment secrets under:
+   Settings → Environments → New environment (prod/dev)
+
+3. **Trigger Deployment**:
+
+   ```bash
+   # Automatic on push
+   git push origin main  # Deploys to prod
+
+   # Or manually via GitHub UI
+   Actions → Deploy Complens.ai → Run workflow → Choose environment
+   ```
+
+#### Workflow Details
+
+**On every push**, the workflow:
+
+1. ✅ Detects which components changed
+2. ✅ Validates CloudFormation template
+3. ✅ Deploys/updates infrastructure
+4. ✅ Builds and uploads Lambda code
+5. ✅ Builds frontend with correct API URL
+6. ✅ Deploys to S3 and invalidates CloudFront
+7. ✅ Shows deployment summary with URLs
+
+**Deployment Summary Example**:
+```
+## Deployment Complete! 🚀
+
+Environment: dev
+Frontend URL: https://d123abc.cloudfront.net
+API URL: https://abc123.execute-api.us-east-1.amazonaws.com/dev
+
+Test your deployment:
+curl https://abc123.execute-api.us-east-1.amazonaws.com/dev/health
+```
+
+#### Manual Deployment (without CI/CD)
+
+If you prefer manual deployments:
+
+```bash
+# Deploy infrastructure
+cd infrastructure/cloudformation
+./deploy.sh dev
+
+# Deploy backend
+cd backend/lambda/api
+npm install && npm run build
+export LAMBDA_BUCKET=your-bucket
+npm run deploy
+
+# Deploy frontend
+cd frontend
+npm install && npm run build
+export FRONTEND_BUCKET=your-bucket
+npm run deploy
 ```
 
 ## 🛠️ Development

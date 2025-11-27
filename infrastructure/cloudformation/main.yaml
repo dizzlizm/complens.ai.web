@@ -105,22 +105,24 @@ Resources:
         - Key: Name
           Value: !Sub '${Environment}-private-subnet-2'
 
-  # NAT Gateway for private subnet internet access (optional - can be removed to save costs)
-  # Comment out if using VPC endpoints only
-  NatGatewayEIP:
-    Type: AWS::EC2::EIP
-    DependsOn: AttachGateway
-    Properties:
-      Domain: vpc
+  # NAT Gateway - COMMENTED OUT TO SAVE ~$32/MONTH
+  # Uncomment when you need Lambda to call external APIs (Google Workspace, Chrome Web Store, etc.)
+  # For now, Lambda only uses AWS services via VPC endpoints (no external internet needed)
 
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGatewayEIP.AllocationId
-      SubnetId: !Ref PublicSubnet1
-      Tags:
-        - Key: Name
-          Value: !Sub '${Environment}-nat-gateway'
+  # NatGatewayEIP:
+  #   Type: AWS::EC2::EIP
+  #   DependsOn: AttachGateway
+  #   Properties:
+  #     Domain: vpc
+  #
+  # NatGateway:
+  #   Type: AWS::EC2::NatGateway
+  #   Properties:
+  #     AllocationId: !GetAtt NatGatewayEIP.AllocationId
+  #     SubnetId: !Ref PublicSubnet1
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Sub '${Environment}-nat-gateway'
 
   # Route Tables
   PublicRouteTable:
@@ -159,12 +161,16 @@ Resources:
         - Key: Name
           Value: !Sub '${Environment}-private-rt'
 
-  PrivateRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
+  # PrivateRoute - COMMENTED OUT (no NAT Gateway = no internet for private subnets)
+  # Private subnets use VPC endpoints only (S3, Secrets Manager, Bedrock, etc.)
+  # Uncomment when NAT Gateway is enabled for external API calls
+  #
+  # PrivateRoute:
+  #   Type: AWS::EC2::Route
+  #   Properties:
+  #     RouteTableId: !Ref PrivateRouteTable
+  #     DestinationCidrBlock: 0.0.0.0/0
+  #     NatGatewayId: !Ref NatGateway
 
   PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
