@@ -580,19 +580,15 @@ Resources:
       Name: !Sub '${Environment}-complens-api'
       ProtocolType: HTTP
       CorsConfiguration:
-        AllowOrigins:
-          - !If
-            - HasDomain
-            - !Sub 'https://${DomainName}'
-            - !Sub 'https://${CloudFrontDistribution.DomainName}'
-          - !If
-            - IsDev
+        AllowOrigins: !If
+          - IsDev
+          - - 'https://dev.complens.ai'
             - 'http://localhost:3000'
-            - !Ref AWS::NoValue
-          - !If
-            - IsDev
             - '*'
-            - !Ref AWS::NoValue
+          - - !If
+              - HasDomain
+              - !Sub 'https://${DomainName}'
+              - !Sub 'https://${CloudFrontDistribution.DomainName}'
         AllowMethods:
           - GET
           - POST
