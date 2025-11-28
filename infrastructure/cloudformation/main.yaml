@@ -1149,8 +1149,50 @@ Resources:
       AlarmActions:
         - !Ref BillingAlertTopic
       Dimensions:
-        - Name: DBClusterIdentifier
-          Value: !Ref DBCluster
+        - Name: DBInstanceIdentifier
+          Value: !Ref PostgresDB
+
+  # RDS Free Storage Space Alarm
+  RDSStorageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-rds-storage'
+      AlarmDescription: Alert when RDS free storage is low
+      MetricName: FreeStorageSpace
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 1
+      Threshold: 2000000000  # 2 GB in bytes
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref PostgresDB
+
+  # RDS Database Connections Alarm
+  RDSConnectionsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-rds-connections'
+      AlarmDescription: Alert when RDS connection count is high
+      MetricName: DatabaseConnections
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 2
+      Threshold: !If [IsProd, 80, 40]  # Lower threshold for dev (t4g.micro has fewer connections)
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref PostgresDB
 
   # CloudWatch Log Insights Query Definitions
   LambdaErrorsQuery:
