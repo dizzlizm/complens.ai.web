@@ -1,6 +1,6 @@
 # Complens.ai
 
-A serverless AI-powered application built on AWS using **Claude Sonnet 4** via Amazon Bedrock, React frontend, Lambda functions, PostgreSQL, and full VPC infrastructure.
+A serverless AI security platform built on AWS using Amazon Bedrock, React frontend, Lambda functions, PostgreSQL, and full VPC infrastructure.
 
 ## 🏗️ Architecture Overview
 
@@ -10,7 +10,7 @@ This application follows a modern serverless architecture with the following com
 - **Frontend**: React SPA hosted on S3, delivered via CloudFront
 - **Backend**: AWS Lambda functions (Node.js)
 - **Database**: Amazon RDS PostgreSQL (encrypted, private subnets)
-- **AI Model**: Claude Sonnet 4 via Amazon Bedrock (pay-per-use)
+- **AI Models**: Amazon Bedrock with configurable models (Nova for chat, Claude for security)
 - **API**: API Gateway HTTP API with CORS support
 - **Networking**: VPC with public/private subnets, NAT Gateway, VPC Endpoints
 - **Security**: AWS Secrets Manager for credentials, IAM roles with least privilege
@@ -190,18 +190,15 @@ REACT_APP_API_URL=https://your-api.execute-api.us-east-1.amazonaws.com/dev
 
 ### Bedrock Model Configuration
 
-The application uses **Claude Sonnet 4** (`anthropic.claude-sonnet-4-20250514-v1:0`).
+Complens.ai uses a **dual-model architecture** for optimal cost and performance:
+- **Chat Model**: Amazon Nova Lite (default) - 98% cheaper than Claude
+- **Security Analysis**: Claude 3.5 Sonnet v2 - Strong reasoning for security tasks
 
-To change the model, edit `backend/lambda/api/services/bedrock.js`:
+To change models, set GitHub secrets or edit CloudFormation parameters:
+- `BEDROCK_MODEL_ID` - Chat model (default: `us.amazon.nova-lite-v1:0`)
+- `BEDROCK_SECURITY_MODEL_ID` - Security model (default: `us.anthropic.claude-3-5-sonnet-20241022-v2:0`)
 
-```javascript
-this.modelId = 'anthropic.claude-sonnet-4-20250514-v1:0';
-```
-
-Available Claude models in Bedrock:
-- `anthropic.claude-sonnet-4-20250514-v1:0` - Claude Sonnet 4 (recommended)
-- `anthropic.claude-3-5-sonnet-20241022-v2:0` - Claude 3.5 Sonnet
-- `anthropic.claude-3-opus-20240229-v1:0` - Claude 3 Opus
+See `docs/BEDROCK_MODELS.md` for complete model configuration guide.
 
 ### Database Schema
 
@@ -224,11 +221,12 @@ The database schema is automatically created on first Lambda execution:
 - **S3**: Minimal (<$1/month)
 - **Lambda**: Free tier covers dev usage
 - **API Gateway**: Free tier covers dev usage
-- **Bedrock (Claude Sonnet 4)**: Pay per token
-  - Input: ~$3 per 1M tokens
-  - Output: ~$15 per 1M tokens
+- **Bedrock AI Models**: Pay per token (dual-model setup)
+  - Nova Lite (chat): ~$0.06 input / $0.24 output per 1M tokens
+  - Claude 3.5 Sonnet (security): ~$3 input / $15 output per 1M tokens
+  - **Estimated AI cost**: ~$5-6/month for typical usage (98% savings vs all-Claude)
 
-**💵 Estimated Monthly Cost (Dev): ~$18-20/month + Bedrock usage**
+**💵 Estimated Monthly Cost (Dev): ~$23-26/month total**
 
 **Savings**: Removed NAT Gateway saves ~$32/month! 🎉
 
@@ -572,7 +570,7 @@ Get conversation by ID.
 ## 📚 Additional Resources
 
 - [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/)
-- [Claude API Documentation](https://docs.anthropic.com/)
+- [Amazon Nova Models](https://docs.aws.amazon.com/bedrock/latest/userguide/models-nova.html)
 - [AWS Lambda Best Practices](https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html)
 - [React Documentation](https://react.dev/)
 
@@ -586,4 +584,4 @@ Contributions welcome! Please open an issue or PR.
 
 ---
 
-**Built with ❤️ using AWS Bedrock and Claude Sonnet 4**
+**Built with ❤️ using AWS Bedrock**

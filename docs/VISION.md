@@ -4,7 +4,7 @@
 
 ## Vision Statement
 
-Complens.ai is an AI-powered security evaluation platform that provides continuous, intelligent monitoring and assessment of cloud applications and services. By combining Claude's advanced reasoning with autonomous background workers and the Model Context Protocol (MCP), Complens delivers real-time security insights for small businesses and enterprises.
+Complens.ai is an AI-powered security evaluation platform that provides continuous, intelligent monitoring and assessment of cloud applications and services. By combining advanced AI reasoning with autonomous background workers, Complens delivers real-time security insights for small businesses and enterprises.
 
 ## The Big Picture
 
@@ -14,7 +14,7 @@ A **dynamic security intelligence platform** that:
 
 1. **Continuously learns** about your cloud environment
 2. **Automatically discovers** security issues and misconfigurations
-3. **Intelligently analyzes** using Claude Sonnet 4
+3. **Intelligently analyzes** using AI-powered security models
 4. **Dynamically presents** findings through an adaptive UI
 5. **Proactively monitors** changes and emerging threats
 

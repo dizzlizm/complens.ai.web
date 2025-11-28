@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Complens.ai - Serverless Application Infrastructure with Claude Sonnet 4 via Bedrock'
+Description: 'Complens.ai - Serverless AI Security Platform with Amazon Bedrock'
 
 Parameters:
   Environment:
@@ -41,6 +41,23 @@ Parameters:
     Type: String
     Default: ''
     Description: '(Optional) Email address for billing alerts. Leave empty to skip billing alerts.'
+
+  BedrockModelId:
+    Type: String
+    Default: 'us.amazon.nova-lite-v1:0'
+    Description: 'Bedrock model ID for chat. Recommended: Amazon Nova Lite (cheap), Claude 3.5 Sonnet v2 (smart), Nova Micro (cheapest)'
+    AllowedValues:
+      - 'us.amazon.nova-micro-v1:0'  # Cheapest - $0.035 per 1M input tokens
+      - 'us.amazon.nova-lite-v1:0'   # Low cost - $0.06 per 1M input tokens
+      - 'us.amazon.nova-pro-v1:0'    # Balanced - $0.80 per 1M input tokens
+      - 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'  # Best reasoning - $3 per 1M
+      - 'anthropic.claude-3-haiku-20240307-v1:0'  # Fast Claude - $0.25 per 1M
+      - 'anthropic.claude-3-opus-20240229-v1:0'   # Most powerful - $15 per 1M
+
+  BedrockSecurityModelId:
+    Type: String
+    Default: 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'
+    Description: 'Bedrock model for security analysis (requires strong reasoning). Recommended: Claude 3.5 Sonnet v2'
 
 # ============================================================================
 # Mappings - Network Configuration
@@ -662,6 +679,8 @@ Resources:
           ENVIRONMENT: !Ref Environment
           SECRETS_ARN: !Ref ApplicationSecrets
           REGION: !Ref AWS::Region
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          BEDROCK_SECURITY_MODEL_ID: !Ref BedrockSecurityModelId
       Timeout: 60  # Increased for VPC cold starts + database connection
       MemorySize: !If [IsProd, 512, 256]
       Tags:
@@ -779,171 +798,6 @@ Resources:
       ApiId: !Ref ApiGateway
       RouteKey: '$default'
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
-
-  # ============================================================================
-  # MCP (Model Context Protocol) Infrastructure
-  # ============================================================================
-
-  # ECS Cluster for MCP Servers
-  MCPCluster:
-    Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: !Sub '${Environment}-complens-mcp-cluster'
-      ClusterSettings:
-        - Name: containerInsights
-          Value: !If [IsProd, enabled, disabled]
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Project
-          Value: Complens
-
-  # Security Group for MCP ECS Tasks
-  MCPSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for MCP server ECS tasks
-      VpcId: !Ref VPC
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
-          Description: Allow all outbound traffic for external API calls
-      Tags:
-        - Key: Name
-          Value: !Sub '${Environment}-mcp-sg'
-        - Key: Environment
-          Value: !Ref Environment
-
-  # CloudWatch Log Group for MCP Servers
-  MCPLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/ecs/${Environment}/complens-mcp'
-      RetentionInDays: !If [IsProd, 30, 7]
-
-  # ECS Task Execution Role (for pulling images, writing logs)
-  MCPTaskExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub '${Environment}-complens-mcp-execution-role'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: 'sts:AssumeRole'
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-      Policies:
-        - PolicyName: SecretsAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - secretsmanager:GetSecretValue
-                Resource: !Ref ApplicationSecrets
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-
-  # ECS Task Role (for MCP server operations - DB access, external APIs, etc.)
-  MCPTaskRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub '${Environment}-complens-mcp-task-role'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: 'sts:AssumeRole'
-      Policies:
-        - PolicyName: DatabaseAndSecretsAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - secretsmanager:GetSecretValue
-                Resource: !Ref ApplicationSecrets
-              - Effect: Allow
-                Action:
-                  - bedrock:InvokeModel
-                  - bedrock:InvokeModelWithResponseStream
-                Resource:
-                  - !Sub 'arn:aws:bedrock:*::foundation-model/*'
-                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
-        - PolicyName: S3Access
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                Resource:
-                  - !Sub 'arn:aws:s3:::${AWS::AccountId}-${Environment}-complens-lambda-code/*'
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-
-  # S3 Bucket for MCP Server Code/Images
-  MCPCodeBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${AWS::AccountId}-${Environment}-complens-mcp-code'
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Project
-          Value: Complens
-
-  # ECR Repository for MCP Server Docker Images
-  MCPRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: !Sub '${Environment}-complens-mcp-servers'
-      ImageScanningConfiguration:
-        ScanOnPush: true
-      EncryptionConfiguration:
-        EncryptionType: AES256
-      LifecyclePolicy:
-        LifecyclePolicyText: |
-          {
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Keep last 10 images",
-                "selection": {
-                  "tagStatus": "any",
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 10
-                },
-                "action": {
-                  "type": "expire"
-                }
-              }
-            ]
-          }
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Project
-          Value: Complens
 
   # ============================================================================
   # Billing Alerts
@@ -1267,27 +1121,3 @@ Outputs:
       - !Ref HostedZoneId
     Export:
       Name: !Sub '${Environment}-complens-hosted-zone-id'
-
-  MCPClusterName:
-    Description: ECS Cluster name for MCP servers
-    Value: !Ref MCPCluster
-    Export:
-      Name: !Sub '${Environment}-complens-mcp-cluster'
-
-  MCPRepositoryUri:
-    Description: ECR Repository URI for MCP server images
-    Value: !GetAtt MCPRepository.RepositoryUri
-    Export:
-      Name: !Sub '${Environment}-complens-mcp-repo-uri'
-
-  MCPTaskRoleArn:
-    Description: ARN of MCP task role
-    Value: !GetAtt MCPTaskRole.Arn
-    Export:
-      Name: !Sub '${Environment}-complens-mcp-task-role-arn'
-
-  MCPTaskExecutionRoleArn:
-    Description: ARN of MCP task execution role
-    Value: !GetAtt MCPTaskExecutionRole.Arn
-    Export:
-      Name: !Sub '${Environment}-complens-mcp-execution-role-arn'
