@@ -3,9 +3,9 @@ name: Deploy Complens.ai
 on:
   push:
     branches:
-      - main
+      # - main  # DISABLED: Prevent auto-deploy to prod on merge
       - 'claude/**'  # Allow deployments from claude branches for testing
-  workflow_dispatch:  # Allow manual triggers
+  workflow_dispatch:  # Manual triggers only for prod
     inputs:
       environment:
         description: 'Environment to deploy to'
@@ -42,7 +42,9 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "environment=prod" >> $GITHUB_OUTPUT
+            # Main branch pushes no longer trigger automatic deployment
+            # Use workflow_dispatch (manual trigger) to deploy to prod
+            echo "environment=dev" >> $GITHUB_OUTPUT
           else
             echo "environment=dev" >> $GITHUB_OUTPUT
           fi
