@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import ChatMessage from './components/ChatMessage';
-import { sendMessage, getConversations } from './services/api';
+import { sendMessage } from './services/api';
 
 function App() {
   const [messages, setMessages] = useState([]);
