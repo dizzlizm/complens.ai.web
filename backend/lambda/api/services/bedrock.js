@@ -1,54 +1,73 @@
 /**
- * AWS Bedrock Service
- * Handles interactions with Claude Sonnet 4 via AWS Bedrock
+ * AWS Bedrock Service (Security Enhanced)
+ * Handles interactions with Claude Sonnet via AWS Bedrock
+ * Implements strict Security Persona and Tool Use (MCP)
  */
 
-const { BedrockRuntimeClient, InvokeModelCommand } = require('@aws-sdk/client-bedrock-runtime');
+const { 
+  BedrockRuntimeClient, 
+  InvokeModelCommand, 
+  InvokeModelWithResponseStreamCommand 
+} = require('@aws-sdk/client-bedrock-runtime');
+
+// 1. Define the Security Persona
+const SECURITY_SYSTEM_PROMPT = `
+You are Complens.ai, an expert Senior Cloud Security Architect and Compliance Auditor. 
+Your goal is to analyze cloud configurations, identify vulnerabilities, and ensure compliance with frameworks like NIST 800-53, SOC2, ISO 27001, and HIPAA.
+
+GUIDELINES:
+1. SECURITY FIRST: Prioritize "Secure by Design" and "Least Privilege" principles.
+2. EVIDENCE-BASED: When making claims about vulnerabilities, reference specific configuration flaws.
+3. CLARITY: Explain complex security concepts simply, but do not omit technical details.
+4. REMEDIATION: Always provide specific CLI commands (AWS CLI, Terraform) or console steps to fix issues.
+5. TONE: Professional, objective, and vigilant.
+
+If asked to generate code, ensure it is free of hardcoded secrets, uses parameterization, and includes error handling.
+`;
 
 class BedrockService {
   constructor(region = 'us-east-1') {
     this.client = new BedrockRuntimeClient({ region });
-    this.modelId = 'us.anthropic.claude-sonnet-4-20250514-v1:0'; // Claude Sonnet 4
+    // Note: Verify exact Model ID in AWS Console. Currently, Sonnet 3.5 is usually 'us.anthropic.claude-3-5-sonnet-20240620-v1:0'
+    this.modelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-3-5-sonnet-20240620-v1:0'; 
     this.defaultMaxTokens = 4096;
   }
 
   /**
-   * Send a chat message to Claude Sonnet 4
-   * @param {string} message - User message
-   * @param {Array} conversationHistory - Previous messages in conversation
-   * @param {Object} options - Additional options (temperature, max_tokens, etc.)
-   * @returns {Object} - Response from Claude
+   * Core helper to construct the payload
+   */
+  _buildPayload(message, conversationHistory, options) {
+    const messages = [
+      ...conversationHistory.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+      })),
+      {
+        role: 'user',
+        content: message,
+      },
+    ];
+
+    return {
+      anthropic_version: 'bedrock-2023-05-31',
+      max_tokens: options.maxTokens || this.defaultMaxTokens,
+      messages: messages,
+      temperature: options.temperature || 0.1, // Low temp for factual security analysis
+      system: `${SECURITY_SYSTEM_PROMPT}\n${options.systemPrompt || ''}`, // Merge base persona with specific context
+      // 2. THIS IS WHERE MCP / TOOLS ARE CONFIGURED
+      tools: options.tools || undefined, 
+    };
+  }
+
+  /**
+   * Standard Chat (Waiting for full response)
    */
   async chat(message, conversationHistory = [], options = {}) {
     try {
-      // Build messages array in Claude format
-      const messages = [
-        ...conversationHistory.map(msg => ({
-          role: msg.role,
-          content: msg.content,
-        })),
-        {
-          role: 'user',
-          content: message,
-        },
-      ];
+      const requestBody = this._buildPayload(message, conversationHistory, options);
 
-      // Prepare request payload for Claude
-      const requestBody = {
-        anthropic_version: 'bedrock-2023-05-31',
-        max_tokens: options.maxTokens || this.defaultMaxTokens,
-        messages: messages,
-        temperature: options.temperature || 0.7,
-        top_p: options.topP || 0.9,
-        system: options.systemPrompt || 'You are a helpful AI assistant built by Complens.ai.',
-      };
+      console.log(`[Bedrock] Invoking ${this.modelId} (Tools: ${options.tools ? options.tools.length : 0})`);
 
-      console.log('Sending request to Bedrock:', {
-        modelId: this.modelId,
-        messageCount: messages.length,
-      });
-
-      // Invoke Bedrock model
       const command = new InvokeModelCommand({
         modelId: this.modelId,
         contentType: 'application/json',
@@ -57,67 +76,69 @@ class BedrockService {
       });
 
       const response = await this.client.send(command);
-
-      // Parse response
       const responseBody = JSON.parse(new TextDecoder().decode(response.body));
 
-      console.log('Bedrock response received:', {
-        stopReason: responseBody.stop_reason,
-        inputTokens: responseBody.usage?.input_tokens,
-        outputTokens: responseBody.usage?.output_tokens,
-      });
-
       return {
-        content: responseBody.content[0].text,
-        model: this.modelId,
+        content: responseBody.content.find(c => c.type === 'text')?.text || '',
+        toolCalls: responseBody.content.filter(c => c.type === 'tool_use'), // Capture MCP Tool requests
         stopReason: responseBody.stop_reason,
         usage: {
           input_tokens: responseBody.usage?.input_tokens || 0,
           output_tokens: responseBody.usage?.output_tokens || 0,
-          total_tokens: (responseBody.usage?.input_tokens || 0) + (responseBody.usage?.output_tokens || 0),
         },
       };
 
     } catch (error) {
-      console.error('Error calling Bedrock:', error);
-      throw new Error(`Bedrock API error: ${error.message}`);
+      console.error('[Bedrock] Error:', error);
+      throw new Error(`Bedrock Security Analysis failed: ${error.message}`);
     }
   }
 
   /**
-   * Stream chat response from Claude Sonnet 4 (for future implementation)
-   * @param {string} message - User message
-   * @param {Array} conversationHistory - Previous messages
-   * @param {Function} onChunk - Callback for each chunk
-   * @returns {Promise} - Resolves when stream completes
+   * Stream Chat (Real-time response)
+   * Essential for long security reports
    */
   async streamChat(message, conversationHistory = [], onChunk) {
-    // TODO: Implement streaming using InvokeModelWithResponseStreamCommand
-    throw new Error('Streaming not yet implemented');
+    try {
+      const requestBody = this._buildPayload(message, conversationHistory, {});
+
+      const command = new InvokeModelWithResponseStreamCommand({
+        modelId: this.modelId,
+        contentType: 'application/json',
+        accept: 'application/json',
+        body: JSON.stringify(requestBody),
+      });
+
+      const response = await this.client.send(command);
+
+      // Process the stream
+      for await (const item of response.body) {
+        if (item.chunk) {
+          const chunkData = JSON.parse(new TextDecoder().decode(item.chunk.bytes));
+          
+          // Handle content block deltas (text generation)
+          if (chunkData.type === 'content_block_delta' && chunkData.delta.text) {
+             onChunk(chunkData.delta.text);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[Bedrock] Stream Error:', error);
+      throw error;
+    }
   }
 
   /**
-   * Analyze text or perform specific tasks
-   * @param {string} prompt - Task prompt
-   * @param {string} text - Text to analyze
-   * @returns {Object} - Analysis result
+   * Security Analysis Helper
+   * Wraps the chat with specific analytical parameters
    */
-  async analyze(prompt, text) {
-    const systemPrompt = prompt || 'Analyze the following text and provide insights.';
-
-    return await this.chat(text, [], {
-      systemPrompt,
-      temperature: 0.3, // Lower temperature for analytical tasks
-      maxTokens: 2048,
+  async analyzeConfig(cloudConfigJson) {
+    const prompt = `Analyze this cloud configuration JSON for critical security vulnerabilities (Focus on IAM, S3 Public Access, and Unencrypted EBS). JSON: ${JSON.stringify(cloudConfigJson)}`;
+    
+    return await this.chat(prompt, [], {
+      temperature: 0, // Deterministic for auditing
+      systemPrompt: 'Provide output in Markdown format with High/Medium/Low risk categorization.',
     });
-  }
-
-  /**
-   * Generate embeddings (Note: Claude doesn't support embeddings directly)
-   * Use Amazon Titan Embeddings instead
-   */
-  async getEmbeddings(text) {
-    throw new Error('Embeddings not supported by Claude. Use Amazon Titan Embeddings model instead.');
   }
 }
 
