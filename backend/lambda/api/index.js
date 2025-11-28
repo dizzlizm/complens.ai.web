@@ -75,7 +75,15 @@ exports.handler = async (event) => {
 
     // Parse request
     const httpMethod = event.httpMethod || event.requestContext?.http?.method;
-    const path = event.path || event.requestContext?.http?.path;
+    let path = event.rawPath || event.path || event.requestContext?.http?.path;
+
+    // Strip stage prefix from path (e.g., /dev/chat -> /chat)
+    // API Gateway includes stage in path for HTTP API v2
+    const stage = event.requestContext?.stage;
+    if (stage && path.startsWith(`/${stage}/`)) {
+      path = path.substring(`/${stage}`.length);
+    }
+
     const body = event.body ? JSON.parse(event.body) : {};
 
     // Handle CORS preflight OPTIONS requests
