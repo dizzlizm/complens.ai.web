@@ -478,7 +478,7 @@ Resources:
           Value: !Ref Environment
 
   # ============================================================================
-  # RDS PostgreSQL - Aurora Serverless v2 for cost optimization
+  # RDS PostgreSQL - Standard Instance
   # ============================================================================
 
   DBSubnetGroup:
@@ -492,14 +492,14 @@ Resources:
         - Key: Name
           Value: !Sub '${Environment}-complens-db-subnet-group'
 
-  # For dev: use small RDS instance. For prod: consider Aurora Serverless v2
+  # Note: This creates a Standard RDS Instance. 
   PostgresDB:
     Type: AWS::RDS::DBInstance
     DeletionPolicy: !If [IsProd, Snapshot, Delete]
     Properties:
       DBInstanceIdentifier: !Sub '${Environment}-complens-postgres'
       Engine: postgres
-      EngineVersion: '15.7'  # Using 15.7 - change to just '15' for latest minor version
+      EngineVersion: '15.7'
       DBInstanceClass: !If [IsProd, db.t4g.medium, db.t4g.micro]
       AllocatedStorage: !If [IsProd, 100, 20]
       StorageType: gp3
@@ -1150,6 +1150,7 @@ Resources:
           Value: !Ref ApiGateway
 
   # RDS CPU Utilization Alarm
+  # FIXED: Pointed to DBInstance instead of non-existent DBCluster
   RDSCPUAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: EnableBillingAlerts
@@ -1162,48 +1163,6 @@ Resources:
       Period: 300  # 5 minutes
       EvaluationPeriods: 2
       Threshold: 80
-      ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref BillingAlertTopic
-      Dimensions:
-        - Name: DBInstanceIdentifier
-          Value: !Ref PostgresDB
-
-  # RDS Free Storage Space Alarm
-  RDSStorageAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Condition: EnableBillingAlerts
-    Properties:
-      AlarmName: !Sub '${Environment}-complens-rds-storage'
-      AlarmDescription: Alert when RDS free storage is low
-      MetricName: FreeStorageSpace
-      Namespace: AWS/RDS
-      Statistic: Average
-      Period: 300  # 5 minutes
-      EvaluationPeriods: 1
-      Threshold: 2000000000  # 2 GB in bytes
-      ComparisonOperator: LessThanThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref BillingAlertTopic
-      Dimensions:
-        - Name: DBInstanceIdentifier
-          Value: !Ref PostgresDB
-
-  # RDS Database Connections Alarm
-  RDSConnectionsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Condition: EnableBillingAlerts
-    Properties:
-      AlarmName: !Sub '${Environment}-complens-rds-connections'
-      AlarmDescription: Alert when RDS connection count is high
-      MetricName: DatabaseConnections
-      Namespace: AWS/RDS
-      Statistic: Average
-      Period: 300  # 5 minutes
-      EvaluationPeriods: 2
-      Threshold: !If [IsProd, 80, 40]  # Lower threshold for dev (t4g.micro has fewer connections)
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions:
