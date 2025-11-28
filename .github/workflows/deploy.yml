@@ -157,15 +157,20 @@ jobs:
         id: deploy-stack
         env:
           DB_PASSWORD: ${{ secrets.DB_MASTER_PASSWORD }}
+          BILLING_EMAIL: ${{ secrets.BILLING_ALERT_EMAIL }}
         run: |
           cd infrastructure/cloudformation
 
           STACK_NAME="complens-${{ needs.setup.outputs.environment }}"
           ENV="${{ needs.setup.outputs.environment }}"
 
-          # Prepare parameters with password override from secrets
-          PARAMS=$(jq --arg pwd "$DB_PASSWORD" \
-            'map(if .ParameterKey == "DBMasterPassword" then .ParameterValue = $pwd else . end)' \
+          # Prepare parameters with overrides from secrets
+          PARAMS=$(jq --arg pwd "$DB_PASSWORD" --arg email "$BILLING_EMAIL" \
+            'map(
+              if .ParameterKey == "DBMasterPassword" then .ParameterValue = $pwd
+              elif .ParameterKey == "BillingAlertEmail" then .ParameterValue = $email
+              else . end
+            )' \
             parameters/${ENV}.json)
 
           # Check if stack exists
