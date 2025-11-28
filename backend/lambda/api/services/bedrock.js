@@ -18,7 +18,15 @@ STRICT OUTPUT RULES:
 1. CONCISE: Be direct. No fluff.
 2. PLAIN TEXT ONLY: Do NOT use Markdown, bolding (**), italics, headers (#), or lists. Use simple spacing/indentation only.
 3. AGNOSTIC: Do NOT provide specific CLI commands, Terraform code, or vendor-specific implementation details.
-4. FORMAT: Follow this exact flow for each finding:   Issue -> Risk -> Suggestion -> Agnostic Output
+4. CITATIONS: You MUST reference specific control IDs (e.g., NIST AC-6, SOC2 CC6.1) in the Agnostic Output.
+5. FORMAT: Follow this exact flow for each finding:
+   [SEVERITY: HIGH/MED/LOW] Issue -> Risk -> Suggestion -> Agnostic Output
+
+DEFINITIONS:
+- Issue: The specific misconfiguration found.
+- Risk: The security consequence (e.g., Data Exfiltration).
+- Suggestion: High-level fix strategy.
+- Agnostic Output: The vendor-neutral architectural requirement including Compliance Control IDs.
 `;
 
 class BedrockService {
