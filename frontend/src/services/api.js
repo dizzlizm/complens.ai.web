@@ -35,6 +35,14 @@ apiClient.interceptors.response.use(
 
     if (error.response) {
       // Server responded with error status
+      // Log the full error response for debugging
+      console.error('Full error response:', error.response.data);
+
+      // In dev mode, log stack trace if available
+      if (error.response.data?.stack) {
+        console.error('Server stack trace:', error.response.data.stack);
+      }
+
       throw new Error(error.response.data?.error || error.response.data?.message || 'Server error');
     } else if (error.request) {
       // Request made but no response

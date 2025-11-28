@@ -966,6 +966,217 @@ Resources:
         - Name: Currency
           Value: USD
 
+  # ============================================================================
+  # CloudTrail - Audit and Compliance Logging
+  # ============================================================================
+
+  CloudTrailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-${Environment}-complens-cloudtrail'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: !If [IsProd, 365, 90]  # Keep prod logs for 1 year, dev for 90 days
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  CloudTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudTrailBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudTrailBucket.Arn
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CloudTrailBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  CloudTrail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn: CloudTrailBucketPolicy
+    Properties:
+      TrailName: !Sub '${Environment}-complens-trail'
+      S3BucketName: !Ref CloudTrailBucket
+      IncludeGlobalServiceEvents: true
+      IsLogging: true
+      IsMultiRegionTrail: !If [IsProd, true, false]
+      EnableLogFileValidation: true
+      EventSelectors:
+        - ReadWriteType: All
+          IncludeManagementEvents: true
+          DataResources:
+            # Log Lambda invocations
+            - Type: AWS::Lambda::Function
+              Values:
+                - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function/*'
+            # Log S3 data events
+            - Type: AWS::S3::Object
+              Values:
+                - !Sub '${FrontendBucket.Arn}/*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # CloudWatch Monitoring and Alarms
+  # ============================================================================
+
+  # Lambda Error Alarm
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts  # Reuse billing alert condition for notifications
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-lambda-errors'
+      AlarmDescription: Alert when Lambda function errors exceed threshold
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiLambdaFunction
+
+  # Lambda Duration Alarm
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-lambda-duration'
+      AlarmDescription: Alert when Lambda duration is high (approaching timeout)
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 2
+      Threshold: 25000  # 25 seconds (30s timeout)
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiLambdaFunction
+
+  # API Gateway 5xx Error Alarm
+  ApiGateway5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-api-5xx-errors'
+      AlarmDescription: Alert when API Gateway 5xx errors exceed threshold
+      MetricName: 5XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref ApiGateway
+
+  # API Gateway 4xx Error Alarm
+  ApiGateway4xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-api-4xx-errors'
+      AlarmDescription: Alert when API Gateway 4xx errors are high
+      MetricName: 4XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 2
+      Threshold: 50
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref ApiGateway
+
+  # RDS CPU Utilization Alarm
+  RDSCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-rds-cpu'
+      AlarmDescription: Alert when RDS CPU is high
+      MetricName: CPUUtilization
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: DBClusterIdentifier
+          Value: !Ref DBCluster
+
+  # CloudWatch Log Insights Query Definitions
+  LambdaErrorsQuery:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub '${Environment}-complens-lambda-errors'
+      QueryString: |
+        fields @timestamp, @message
+        | filter @message like /Error/
+        | sort @timestamp desc
+        | limit 100
+      LogGroupNames:
+        - !Sub '/aws/lambda/${Environment}-complens-api'
+
+  ApiGatewayErrorsQuery:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub '${Environment}-complens-api-gateway-errors'
+      QueryString: |
+        fields @timestamp, requestId, error.message, error.messageString
+        | filter @message like /error/
+        | sort @timestamp desc
+        | limit 100
+      LogGroupNames:
+        - !Ref ApiGatewayLogGroup
+
 # ============================================================================
 # Outputs
 # ============================================================================
