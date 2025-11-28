@@ -9,6 +9,7 @@ const { DatabaseService } = require('./services/database');
 const { SecretsService } = require('./services/secrets');
 const { GoogleOAuthService } = require('./services/google-oauth');
 const { UserManagementService } = require('./services/user-management');
+const { GoogleWorkspaceSecurityService } = require('./services/google-workspace-security');
 
 // Initialize services
 let bedrockService;
@@ -16,6 +17,7 @@ let databaseService;
 let secretsService;
 let googleOAuthService;
 let userManagementService;
+let googleWorkspaceSecurityService;
 let isInitialized = false;
 
 /**
@@ -59,6 +61,9 @@ async function initialize() {
 
     // Initialize User Management service
     userManagementService = new UserManagementService(databaseService);
+
+    // Initialize Google Workspace Security service
+    googleWorkspaceSecurityService = new GoogleWorkspaceSecurityService(databaseService);
 
     isInitialized = true;
     console.log('Services initialized successfully');
@@ -198,6 +203,26 @@ exports.handler = async (event) => {
       case path.startsWith('/admin/users/') && httpMethod === 'DELETE':
         const deleteUserId = path.split('/')[3];
         response = await handleDeleteUser(deleteUserId, event.queryStringParameters || {});
+        break;
+
+      case path === '/security/users-without-2fa' && httpMethod === 'GET':
+        response = await handleListUsersWithout2FA(event.queryStringParameters || {});
+        break;
+
+      case path === '/security/admin-accounts' && httpMethod === 'GET':
+        response = await handleFindAdminAccounts(event.queryStringParameters || {});
+        break;
+
+      case path === '/security/external-sharing' && httpMethod === 'GET':
+        response = await handleAnalyzeExternalSharing(event.queryStringParameters || {});
+        break;
+
+      case path === '/security/policies' && httpMethod === 'GET':
+        response = await handleCheckSecurityPolicies(event.queryStringParameters || {});
+        break;
+
+      case path === '/security/summary' && httpMethod === 'GET':
+        response = await handleGetSecuritySummary(event.queryStringParameters || {});
         break;
 
       default:
@@ -785,6 +810,160 @@ async function handleDeleteUser(userId, params) {
       statusCode: 400,
       body: JSON.stringify({
         error: 'Failed to delete user',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Google Workspace Security Analysis Handlers
+ */
+
+async function handleListUsersWithout2FA(params) {
+  try {
+    const { orgId } = params;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    const result = await googleWorkspaceSecurityService.listUsersWithoutTwoFactor(orgId);
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+    };
+
+  } catch (error) {
+    console.error('Error listing users without 2FA:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to list users without 2FA',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+async function handleFindAdminAccounts(params) {
+  try {
+    const { orgId } = params;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    const result = await googleWorkspaceSecurityService.findAdminAccounts(orgId);
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+    };
+
+  } catch (error) {
+    console.error('Error finding admin accounts:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to find admin accounts',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+async function handleAnalyzeExternalSharing(params) {
+  try {
+    const { orgId } = params;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    const result = await googleWorkspaceSecurityService.analyzeExternalSharing(orgId);
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+    };
+
+  } catch (error) {
+    console.error('Error analyzing external sharing:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to analyze external sharing',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+async function handleCheckSecurityPolicies(params) {
+  try {
+    const { orgId } = params;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    const result = await googleWorkspaceSecurityService.checkSecurityPolicies(orgId);
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+    };
+
+  } catch (error) {
+    console.error('Error checking security policies:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to check security policies',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+async function handleGetSecuritySummary(params) {
+  try {
+    const { orgId } = params;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    const result = await googleWorkspaceSecurityService.getSecuritySummary(orgId);
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+    };
+
+  } catch (error) {
+    console.error('Error getting security summary:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to get security summary',
         message: error.message,
       }),
     };

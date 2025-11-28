@@ -281,19 +281,19 @@ You should see:
 - Connection timestamp
 - `token_valid: true`
 
-## Step 10: Test MCP Server
+## Step 10: Test Security Analysis API
 
-Once connected, the MCP server can now access Google Workspace:
+Once connected, the security analysis endpoints can now access Google Workspace:
 
 ```bash
-# The MCP server will automatically fetch tokens from database
-# and refresh them if expired
-
-# Test a tool call via Claude in the UI:
-"Show me all users without 2FA"
+# Test the security analysis API endpoints:
+GET /api/security/users-without-2fa?orgId=YOUR_ORG_ID
+GET /api/security/admin-accounts?orgId=YOUR_ORG_ID
+GET /api/security/external-sharing?orgId=YOUR_ORG_ID
+GET /api/security/summary?orgId=YOUR_ORG_ID
 ```
 
-Claude will use the MCP server, which fetches OAuth tokens from the database.
+The API will automatically fetch OAuth tokens from the database and refresh them if expired.
 
 ## Troubleshooting
 
@@ -324,9 +324,9 @@ Claude will use the MCP server, which fetches OAuth tokens from the database.
 
 **Problem**: Access token expired and refresh failed.
 
-**Solution**: The MCP server should automatically refresh tokens. Check:
+**Solution**: The API should automatically refresh tokens. Check:
 1. Refresh token is stored in database
-2. MCP server has correct `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
+2. Lambda has correct `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in Secrets Manager
 3. Network connectivity to Google APIs
 
 ## Security Best Practices
