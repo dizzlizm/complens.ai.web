@@ -8,12 +8,20 @@ const { BedrockRuntimeClient, InvokeModelCommand } = require('@aws-sdk/client-be
 class BedrockService {
   constructor(region = 'us-east-1') {
     this.client = new BedrockRuntimeClient({ region });
-    this.modelId = 'us.anthropic.claude-sonnet-4-20250514-v1:0'; // Claude Sonnet 4
+
+    // Allow model selection via environment variable for flexibility
+    // Recommended models for security reasoning:
+    // - Claude 3.5 Sonnet v2 (best for security logic, stable)
+    // - Claude 3 Opus (best reasoning, more expensive)
+    // - Claude 3.5 Sonnet v1 (proven, reliable)
+    this.modelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'; // Claude 3.5 Sonnet v2
     this.defaultMaxTokens = 4096;
+
+    console.log(`BedrockService initialized with model: ${this.modelId}`);
   }
 
   /**
-   * Send a chat message to Claude Sonnet 4
+   * Send a chat message to Claude
    * @param {string} message - User message
    * @param {Array} conversationHistory - Previous messages in conversation
    * @param {Object} options - Additional options (temperature, max_tokens, etc.)
@@ -85,7 +93,7 @@ class BedrockService {
   }
 
   /**
-   * Stream chat response from Claude Sonnet 4 (for future implementation)
+   * Stream chat response from Claude (for future implementation)
    * @param {string} message - User message
    * @param {Array} conversationHistory - Previous messages
    * @param {Function} onChunk - Callback for each chunk
