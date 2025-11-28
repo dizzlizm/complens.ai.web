@@ -551,7 +551,7 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
                 Resource:
-                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-sonnet-4-*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-*'
         - PolicyName: SecretsManagerAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -661,7 +661,7 @@ Resources:
           ENVIRONMENT: !Ref Environment
           SECRETS_ARN: !Ref ApplicationSecrets
           REGION: !Ref AWS::Region
-      Timeout: 30
+      Timeout: 60  # Increased for VPC cold starts + database connection
       MemorySize: !If [IsProd, 512, 256]
       Tags:
         - Key: Environment
@@ -873,7 +873,7 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
                 Resource:
-                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-sonnet-4-*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-*'
         - PolicyName: S3Access
           PolicyDocument:
             Version: '2012-10-17'

@@ -16,7 +16,7 @@ class DatabaseService {
       password: config.password,
       max: 2, // Keep connections low for Lambda (cold starts)
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
+      connectionTimeoutMillis: 30000, // Increased for VPC Lambda cold starts
       ssl: {
         rejectUnauthorized: false
       }
@@ -27,17 +27,23 @@ class DatabaseService {
       console.error('Unexpected database error:', err);
     });
 
-    // Initialize database schema on first use
-    this.ensureSchema();
+    // Track if schema has been initialized
+    this.schemaInitialized = false;
   }
 
   /**
-   * Ensure database schema exists
+   * Ensure database schema exists (called lazily on first DB operation)
    */
   async ensureSchema() {
-    const client = await this.pool.connect();
+    // Only initialize once per Lambda container
+    if (this.schemaInitialized) {
+      return;
+    }
 
+    let client;
     try {
+      client = await this.pool.connect();
+
       // Create conversations table
       await client.query(`
         CREATE TABLE IF NOT EXISTS conversations (
@@ -73,13 +79,17 @@ class DatabaseService {
         ON messages(created_at);
       `);
 
-      console.log('Database schema initialized');
+      this.schemaInitialized = true;
+      console.log('Database schema initialized successfully');
 
     } catch (error) {
       console.error('Error ensuring schema:', error);
-      throw error;
+      // Don't throw - let the subsequent operations fail with proper error messages
+      // This prevents schema issues from blocking all requests
     } finally {
-      client.release();
+      if (client) {
+        client.release();
+      }
     }
   }
 
@@ -103,6 +113,9 @@ class DatabaseService {
    * Save a conversation turn (user message + assistant response)
    */
   async saveConversation({ conversationId, userMessage, assistantMessage, metadata = {} }) {
+    // Ensure schema exists before first operation
+    await this.ensureSchema();
+
     const client = await this.pool.connect();
 
     try {
@@ -158,6 +171,9 @@ class DatabaseService {
    * Get all conversations
    */
   async getConversations(limit = 50, offset = 0) {
+    // Ensure schema exists before first operation
+    await this.ensureSchema();
+
     const result = await this.query(`
       SELECT
         c.id,
@@ -180,6 +196,9 @@ class DatabaseService {
    * Get a specific conversation with all messages
    */
   async getConversation(conversationId) {
+    // Ensure schema exists before first operation
+    await this.ensureSchema();
+
     const convResult = await this.query(`
       SELECT id, title, created_at, updated_at, metadata
       FROM conversations
