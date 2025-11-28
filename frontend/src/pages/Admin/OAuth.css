@@ -1,0 +1,165 @@
+.oauth-page {
+  max-width: 800px;
+}
+
+.oauth-page h1 {
+  font-size: 2rem;
+  margin: 0 0 0.5rem 0;
+  color: #2c3e50;
+}
+
+.oauth-container {
+  margin-top: 2rem;
+}
+
+.oauth-card {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.oauth-status {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 2rem;
+  border-bottom: 1px solid #ecf0f1;
+}
+
+.status-icon {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.status-icon.success {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-icon.warning {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.status-text h2 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.5rem;
+  color: #2c3e50;
+}
+
+.status-text p {
+  margin: 0;
+  color: #7f8c8d;
+}
+
+.oauth-details {
+  padding: 2rem;
+  background: #f8f9fa;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.detail-row:last-child {
+  border-bottom: none;
+}
+
+.detail-label {
+  font-weight: 600;
+  color: #495057;
+}
+
+.detail-value {
+  color: #212529;
+}
+
+.oauth-actions {
+  padding: 2rem;
+  text-align: center;
+}
+
+.btn {
+  padding: 0.875rem 2rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+}
+
+.btn-danger {
+  background: #dc3545;
+  color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #c82333;
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(220, 53, 69, 0.4);
+}
+
+.oauth-info {
+  padding: 2rem;
+}
+
+.oauth-info h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+  color: #2c3e50;
+}
+
+.oauth-info ul {
+  margin: 0 0 1.5rem 0;
+  padding-left: 1.5rem;
+  color: #555;
+  line-height: 1.8;
+}
+
+.oauth-info ul:last-child {
+  margin-bottom: 0;
+}
+
+.oauth-info li {
+  margin: 0.5rem 0;
+}
+
+.oauth-note {
+  padding: 1.5rem 2rem 2rem 2rem;
+  background: #e7f3ff;
+  border-top: 1px solid #b3d9ff;
+}
+
+.oauth-note p {
+  margin: 0;
+  color: #004085;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}

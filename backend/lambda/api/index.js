@@ -422,7 +422,7 @@ async function handleGoogleOAuthCallback(params) {
       return {
         statusCode: 302,
         headers: {
-          Location: `${process.env.FRONTEND_URL}?oauth_error=${error}`,
+          Location: `${process.env.FRONTEND_URL}/oauth/callback?success=false&error=${encodeURIComponent(error)}`,
         },
         body: '',
       };
@@ -470,7 +470,7 @@ async function handleGoogleOAuthCallback(params) {
     return {
       statusCode: 302,
       headers: {
-        Location: `${process.env.FRONTEND_URL}?oauth_success=true&email=${encodeURIComponent(userInfo.email)}`,
+        Location: `${process.env.FRONTEND_URL}/oauth/callback?success=true&email=${encodeURIComponent(userInfo.email)}`,
       },
       body: '',
     };
@@ -480,7 +480,7 @@ async function handleGoogleOAuthCallback(params) {
     return {
       statusCode: 302,
       headers: {
-        Location: `${process.env.FRONTEND_URL}?oauth_error=callback_failed`,
+        Location: `${process.env.FRONTEND_URL}/oauth/callback?success=false&error=${encodeURIComponent('Authentication failed: ' + error.message)}`,
       },
       body: '',
     };

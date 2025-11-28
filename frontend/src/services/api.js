@@ -117,4 +117,37 @@ export async function healthCheck() {
   }
 }
 
+// Alias for consistency
+export const getHealth = healthCheck;
+
+/**
+ * Get Google Workspace OAuth status
+ * @param {number} orgId - Organization ID
+ * @returns {Promise<Object>} - OAuth connection status
+ */
+export async function getOAuthStatus(orgId) {
+  try {
+    const response = await apiClient.get(`/oauth/google/status?orgId=${orgId}`);
+    return response.data;
+  } catch (error) {
+    console.error('Error getting OAuth status:', error);
+    throw error;
+  }
+}
+
+/**
+ * Disconnect Google Workspace OAuth
+ * @param {number} orgId - Organization ID
+ * @returns {Promise<Object>} - Disconnect response
+ */
+export async function disconnectOAuth(orgId) {
+  try {
+    const response = await apiClient.post('/oauth/google/disconnect', { orgId });
+    return response.data;
+  } catch (error) {
+    console.error('Error disconnecting OAuth:', error);
+    throw error;
+  }
+}
+
 export default apiClient;
