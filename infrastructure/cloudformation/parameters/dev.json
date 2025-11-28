@@ -22,5 +22,9 @@
   {
     "ParameterKey": "HostedZoneId",
     "ParameterValue": "Z02373573N3XBHSZBERY6"
+  },
+  {
+    "ParameterKey": "BillingAlertEmail",
+    "ParameterValue": "REPLACED_BY_GITHUB_ACTIONS"
   }
 ]

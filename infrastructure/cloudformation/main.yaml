@@ -37,6 +37,11 @@ Parameters:
     Default: ''
     Description: '(Optional) Route53 Hosted Zone ID if domain is already in Route53. Leave empty if no domain or zone should be created.'
 
+  BillingAlertEmail:
+    Type: String
+    Default: ''
+    Description: '(Optional) Email address for billing alerts. Leave empty to skip billing alerts.'
+
 Conditions:
   IsProd: !Equals [!Ref Environment, 'prod']
   IsDev: !Equals [!Ref Environment, 'dev']
@@ -45,6 +50,7 @@ Conditions:
   CreateHostedZone: !And
     - !Condition HasDomain
     - !Not [!Condition HasHostedZone]
+  EnableBillingAlerts: !Not [!Equals [!Ref BillingAlertEmail, '']]
 
 Resources:
   # ============================================================================
@@ -585,6 +591,20 @@ Resources:
 
   ApiGatewayStage:
     Type: AWS::ApiGatewayV2::Stage
+    DependsOn:
+      - HealthRoute
+      - ChatRoute
+      - ChatOptionsRoute
+      - ConversationsRoute
+      - ConversationsOptionsRoute
+      - ConversationDetailRoute
+      - ConversationDetailOptionsRoute
+      - OAuthAuthorizeRoute
+      - OAuthCallbackRoute
+      - OAuthDisconnectRoute
+      - OAuthDisconnectOptionsRoute
+      - OAuthStatusRoute
+      - DefaultRoute
     Properties:
       ApiId: !Ref ApiGateway
       StageName: !Ref Environment
@@ -903,6 +923,47 @@ Resources:
           Value: !Ref Environment
         - Key: Project
           Value: Complens
+
+  # ============================================================================
+  # Billing Alerts
+  # ============================================================================
+
+  BillingAlertTopic:
+    Type: AWS::SNS::Topic
+    Condition: EnableBillingAlerts
+    Properties:
+      TopicName: !Sub '${Environment}-complens-billing-alerts'
+      DisplayName: Complens Billing Alerts
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  BillingAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: EnableBillingAlerts
+    Properties:
+      Protocol: email
+      TopicArn: !Ref BillingAlertTopic
+      Endpoint: !Ref BillingAlertEmail
+
+  BillingAlarm100:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-billing-alert-100'
+      AlarmDescription: Alert when estimated charges exceed $100
+      MetricName: EstimatedCharges
+      Namespace: AWS/Billing
+      Statistic: Maximum
+      Period: 21600  # 6 hours
+      EvaluationPeriods: 1
+      Threshold: 100
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: Currency
+          Value: USD
 
 # ============================================================================
 # Outputs
