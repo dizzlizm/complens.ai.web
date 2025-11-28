@@ -302,29 +302,10 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  LambdaCodeBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${AWS::AccountId}-${Environment}-complens-lambda-code'
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteOldVersions
-            Status: Enabled
-            NoncurrentVersionExpirationInDays: 30
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
+  # Lambda Code Bucket is created externally by GitHub Actions before stack deployment
+  # This avoids the chicken-and-egg problem: Lambda needs S3 code, but bucket is in same stack
+  # Bucket name: ${AWS::AccountId}-${Environment}-complens-lambda-code
+  # GitHub Actions creates this bucket and uploads placeholder code before deploying CloudFormation
 
   # ============================================================================
   # Route53 and SSL/TLS Certificate
@@ -565,7 +546,7 @@ Resources:
                   - s3:PutObject
                 Resource:
                   - !Sub '${FrontendBucket.Arn}/*'
-                  - !Sub '${LambdaCodeBucket.Arn}/*'
+                  - !Sub 'arn:aws:s3:::${AWS::AccountId}-${Environment}-complens-lambda-code/*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -629,7 +610,7 @@ Resources:
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
-        S3Bucket: !Ref LambdaCodeBucket
+        S3Bucket: !Sub '${AWS::AccountId}-${Environment}-complens-lambda-code'
         S3Key: api/latest.zip
       VpcConfig:
         SecurityGroupIds:
@@ -835,7 +816,7 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                 Resource:
-                  - !Sub '${LambdaCodeBucket.Arn}/*'
+                  - !Sub 'arn:aws:s3:::${AWS::AccountId}-${Environment}-complens-lambda-code/*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -925,8 +906,8 @@ Outputs:
       Name: !Sub '${Environment}-complens-frontend-bucket'
 
   LambdaCodeBucketName:
-    Description: S3 bucket for Lambda code
-    Value: !Ref LambdaCodeBucket
+    Description: S3 bucket for Lambda code (created externally by GitHub Actions)
+    Value: !Sub '${AWS::AccountId}-${Environment}-complens-lambda-code'
     Export:
       Name: !Sub '${Environment}-complens-lambda-bucket'
 
