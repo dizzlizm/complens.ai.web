@@ -1,7 +1,7 @@
 /**
- * AWS Bedrock Service (Universal & Security Enhanced)
- * Handles interactions with ANY Claude model (Legacy or V3/V3.5)
- * Implements strict Security Persona and Tool Use (MCP)
+ * AWS Bedrock Service (Nova, Titan & Claude Universal)
+ * Handles interactions with Amazon Nova, Amazon Titan, and Anthropic Claude
+ * Implements strict Security Persona and Tool Use
  */
 
 const { 
@@ -21,84 +21,113 @@ GUIDELINES:
 3. CLARITY: Explain complex security concepts simply, but do not omit technical details.
 4. REMEDIATION: Always provide specific CLI commands (AWS CLI, Terraform) or console steps to fix issues.
 5. TONE: Professional, objective, and vigilant.
-
-If asked to generate code, ensure it is free of hardcoded secrets, uses parameterization, and includes error handling.
 `;
 
 class BedrockService {
   constructor(region = 'us-east-1') {
     this.client = new BedrockRuntimeClient({ region });
-    // Defaults to Sonnet 3.5, but falls back gracefully if ENV is set to an older model
-    this.modelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-3-5-sonnet-20240620-v1:0'; 
+    this.modelId = process.env.BEDROCK_MODEL_ID || 'us.amazon.nova-lite-v1:0'; 
     this.defaultMaxTokens = 4096;
   }
 
+  // --- MODEL DETECTION HELPERS ---
+  _isNovaModel() { return this.modelId.includes('amazon.nova'); }
+  _isTitanModel() { return this.modelId.includes('amazon.titan'); }
+  _isClaudeModel() { return this.modelId.includes('anthropic.claude'); }
+
   /**
-   * Helper: Detects if we are using a legacy model (Claude 2.x or Instant)
-   * This prevents the "extraneous key" error.
+   * Builder: Payload for AMAZON NOVA (Converse-style Schema)
+   * Structure: { messages: [], system: [], inferenceConfig: { maxTokens: ... } }
    */
-  _isLegacyModel() {
-    return this.modelId.includes('claude-v2') || this.modelId.includes('claude-instant');
+  _buildNovaPayload(message, conversationHistory, options) {
+    // 1. Format Messages (Nova requires 'content' to be an array of objects)
+    const messages = [
+      ...conversationHistory.map(msg => ({
+        role: msg.role,
+        content: [{ text: msg.content }] // Nova requires strict content blocks
+      })),
+      { role: 'user', content: [{ text: message }] }
+    ];
+
+    // 2. Format System Prompt (List of text blocks)
+    const system = [{ text: `${SECURITY_SYSTEM_PROMPT}\n${options.systemPrompt || ''}` }];
+
+    // 3. Construct Payload
+    return {
+      messages: messages,
+      system: system,
+      inferenceConfig: {
+        maxTokens: options.maxTokens || this.defaultMaxTokens,
+        temperature: options.temperature || 0.1,
+        topP: options.topP || 0.9
+      },
+      // Nova supports tools via 'toolConfig' (Future implementation)
+      toolConfig: options.tools ? { tools: options.tools } : undefined 
+    };
   }
 
   /**
-   * Core helper to construct the payload dynamically based on Model Version
+   * Builder: Payload for AMAZON TITAN
+   * Structure: { inputText: "...", textGenerationConfig: { ... } }
    */
-  _buildPayload(message, conversationHistory, options) {
-    // A. LEGACY PAYLOAD (Claude 2 / Instant)
-    if (this._isLegacyModel()) {
-      // Convert history to string format for legacy models
-      const historyText = conversationHistory.map(m => 
-        `\n\n${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`
-      ).join('');
-      
-      // Inject System Prompt manually into the start of the prompt
-      const fullPrompt = `${SECURITY_SYSTEM_PROMPT}\n${options.systemPrompt || ''}\n${historyText}\n\nHuman: ${message}\n\nAssistant:`;
+  _buildTitanPayload(message, conversationHistory, options) {
+    const historyText = conversationHistory.map(m => 
+      `\n${m.role === 'user' ? 'User' : 'Bot'}: ${m.content}`
+    ).join('');
 
-      return {
-        prompt: fullPrompt,
-        max_tokens_to_sample: options.maxTokens || this.defaultMaxTokens, // Legacy param
+    const fullPrompt = `${SECURITY_SYSTEM_PROMPT}\n${options.systemPrompt || ''}\n${historyText}\nUser: ${message}\nBot:`;
+
+    return {
+      inputText: fullPrompt,
+      textGenerationConfig: {
+        maxTokenCount: options.maxTokens || this.defaultMaxTokens,
+        stopSequences: ["User:"],
         temperature: options.temperature || 0.1,
-        top_p: options.topP || 0.9,
-      };
-    }
+        topP: options.topP || 0.9,
+      }
+    };
+  }
 
-    // B. MODERN PAYLOAD (Claude 3 / 3.5)
+  /**
+   * Builder: Payload for ANTHROPIC CLAUDE 3/3.5
+   * Structure: { messages: [], max_tokens: ..., system: ... }
+   */
+  _buildClaudePayload(message, conversationHistory, options) {
     const messages = [
       ...conversationHistory.map(msg => ({
         role: msg.role,
         content: msg.content,
       })),
-      {
-        role: 'user',
-        content: message,
-      },
+      { role: 'user', content: message },
     ];
-
-    // Filter out empty system prompts to be clean
-    const systemPrompts = [SECURITY_SYSTEM_PROMPT];
-    if (options.systemPrompt) systemPrompts.push(options.systemPrompt);
 
     return {
       anthropic_version: 'bedrock-2023-05-31',
-      max_tokens: options.maxTokens || this.defaultMaxTokens, // Modern param
+      max_tokens: options.maxTokens || this.defaultMaxTokens,
       messages: messages,
       temperature: options.temperature || 0.1,
-      system: options.systemPrompt ? 
-              [{ text: `${SECURITY_SYSTEM_PROMPT}\n${options.systemPrompt}` }] : 
-              [{ text: SECURITY_SYSTEM_PROMPT }], // Claude 3 expects object array or string
+      system: [{ text: `${SECURITY_SYSTEM_PROMPT}\n${options.systemPrompt || ''}` }],
       tools: options.tools || undefined, 
     };
   }
 
   /**
-   * Standard Chat (Waiting for full response)
+   * Master Payload Router
+   */
+  _buildPayload(message, conversationHistory, options) {
+    if (this._isNovaModel()) return this._buildNovaPayload(message, conversationHistory, options);
+    if (this._isTitanModel()) return this._buildTitanPayload(message, conversationHistory, options);
+    return this._buildClaudePayload(message, conversationHistory, options);
+  }
+
+  /**
+   * Standard Chat
    */
   async chat(message, conversationHistory = [], options = {}) {
     try {
       const requestBody = this._buildPayload(message, conversationHistory, options);
-
-      console.log(`[Bedrock] Invoking ${this.modelId} (Legacy Mode: ${this._isLegacyModel()})`);
+      
+      console.log(`[Bedrock] Invoking ${this.modelId}`);
 
       const command = new InvokeModelCommand({
         modelId: this.modelId,
@@ -110,19 +139,34 @@ class BedrockService {
       const response = await this.client.send(command);
       const responseBody = JSON.parse(new TextDecoder().decode(response.body));
 
-      // Handle response format differences
-      if (this._isLegacyModel()) {
+      // --- NOVA RESPONSE PARSING ---
+      if (this._isNovaModel()) {
+        // Nova returns: { output: { message: { content: [{ text: "..." }] } } }
         return {
-          content: responseBody.completion || '',
-          stopReason: responseBody.stop_reason,
-          usage: { input_tokens: 0, output_tokens: 0 } // Legacy doesn't always return usage
+          content: responseBody.output?.message?.content?.[0]?.text || '',
+          stopReason: responseBody.stopReason,
+          usage: {
+            input_tokens: responseBody.usage?.inputTokens || 0,
+            output_tokens: responseBody.usage?.outputTokens || 0
+          }
         };
       }
 
-      // Modern Response
+      // --- TITAN RESPONSE PARSING ---
+      if (this._isTitanModel()) {
+        return {
+          content: responseBody.results[0].outputText,
+          stopReason: responseBody.results[0].completionReason,
+          usage: {
+            input_tokens: responseBody.inputTextTokenCount,
+            output_tokens: responseBody.results[0].tokenCount
+          }
+        };
+      }
+
+      // --- CLAUDE RESPONSE PARSING ---
       return {
         content: responseBody.content.find(c => c.type === 'text')?.text || '',
-        toolCalls: responseBody.content.filter(c => c.type === 'tool_use'),
         stopReason: responseBody.stop_reason,
         usage: {
           input_tokens: responseBody.usage?.input_tokens || 0,
@@ -132,12 +176,12 @@ class BedrockService {
 
     } catch (error) {
       console.error('[Bedrock] Error:', error);
-      throw new Error(`Bedrock Security Analysis failed: ${error.message}`);
+      throw new Error(`Bedrock Analysis failed: ${error.message}`);
     }
   }
 
   /**
-   * Stream Chat (Real-time response)
+   * Stream Chat
    */
   async streamChat(message, conversationHistory = [], onChunk) {
     try {
@@ -152,19 +196,22 @@ class BedrockService {
 
       const response = await this.client.send(command);
 
-      // Process the stream
       for await (const item of response.body) {
         if (item.chunk) {
           const chunkData = JSON.parse(new TextDecoder().decode(item.chunk.bytes));
           
-          // Legacy Stream Handler
-          if (chunkData.completion) {
-             onChunk(chunkData.completion);
+          // NOVA & CLAUDE share 'content_block_delta' for text, but Nova wraps differently sometimes
+          // Check for standard delta first
+          if (chunkData.contentBlockDelta?.delta?.text) {
+             onChunk(chunkData.contentBlockDelta.delta.text);
           }
-          
-          // Modern Stream Handler (Claude 3)
+          // Claude 3 style
           else if (chunkData.type === 'content_block_delta' && chunkData.delta.text) {
              onChunk(chunkData.delta.text);
+          }
+          // Titan Style
+          else if (chunkData.outputText) {
+             onChunk(chunkData.outputText);
           }
         }
       }
@@ -174,16 +221,9 @@ class BedrockService {
     }
   }
 
-  /**
-   * Security Analysis Helper
-   */
   async analyzeConfig(cloudConfigJson) {
-    const prompt = `Analyze this cloud configuration JSON for critical security vulnerabilities (Focus on IAM, S3 Public Access, and Unencrypted EBS). JSON: ${JSON.stringify(cloudConfigJson)}`;
-    
-    return await this.chat(prompt, [], {
-      temperature: 0,
-      systemPrompt: 'Provide output in Markdown format with High/Medium/Low risk categorization.',
-    });
+    const prompt = `Analyze this cloud configuration JSON for critical security vulnerabilities. JSON: ${JSON.stringify(cloudConfigJson)}`;
+    return await this.chat(prompt, [], { temperature: 0 });
   }
 }
 
