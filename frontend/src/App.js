@@ -4,6 +4,7 @@ import Chat from './pages/Chat';
 import AdminLayout from './pages/Admin/AdminLayout';
 import Dashboard from './pages/Admin/Dashboard';
 import OAuth from './pages/Admin/OAuth';
+import UserManagement from './pages/Admin/UserManagement';
 import './App.css';
 
 function App() {
@@ -16,6 +17,7 @@ function App() {
       <Route path="/admin" element={<AdminLayout />}>
         <Route index element={<Dashboard />} />
         <Route path="oauth" element={<OAuth />} />
+        <Route path="users" element={<UserManagement />} />
         {/* Add more admin routes here as needed */}
       </Route>
 

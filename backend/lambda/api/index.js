@@ -8,12 +8,14 @@ const { BedrockService } = require('./services/bedrock');
 const { DatabaseService } = require('./services/database');
 const { SecretsService } = require('./services/secrets');
 const { GoogleOAuthService } = require('./services/google-oauth');
+const { UserManagementService } = require('./services/user-management');
 
 // Initialize services
 let bedrockService;
 let databaseService;
 let secretsService;
 let googleOAuthService;
+let userManagementService;
 let isInitialized = false;
 
 /**
@@ -54,6 +56,9 @@ async function initialize() {
 
     // Initialize Google OAuth service
     googleOAuthService = new GoogleOAuthService();
+
+    // Initialize User Management service
+    userManagementService = new UserManagementService(databaseService);
 
     isInitialized = true;
     console.log('Services initialized successfully');
@@ -175,6 +180,24 @@ exports.handler = async (event) => {
 
       case path === '/oauth/google/status' && httpMethod === 'GET':
         response = await handleGoogleOAuthStatus(event.queryStringParameters || {});
+        break;
+
+      case path === '/admin/users' && httpMethod === 'GET':
+        response = await handleGetUsers(event.queryStringParameters || {});
+        break;
+
+      case path === '/admin/users' && httpMethod === 'POST':
+        response = await handleCreateUser(body);
+        break;
+
+      case path.startsWith('/admin/users/') && httpMethod === 'PUT':
+        const updateUserId = path.split('/')[3];
+        response = await handleUpdateUser(updateUserId, body);
+        break;
+
+      case path.startsWith('/admin/users/') && httpMethod === 'DELETE':
+        const deleteUserId = path.split('/')[3];
+        response = await handleDeleteUser(deleteUserId, event.queryStringParameters || {});
         break;
 
       default:
@@ -589,6 +612,179 @@ async function handleGoogleOAuthStatus(params) {
       statusCode: 500,
       body: JSON.stringify({
         error: 'Failed to check status',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Get all users for an organization
+ */
+async function handleGetUsers(params) {
+  try {
+    const { orgId } = params;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    const users = await userManagementService.listUsers(orgId);
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        users,
+        count: users.length,
+      }),
+    };
+
+  } catch (error) {
+    console.error('Error getting users:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to get users',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Create a new user
+ */
+async function handleCreateUser(body) {
+  try {
+    const { orgId, email, name, role, isActive, createdBy } = body;
+
+    if (!orgId || !email || !name || !role) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({
+          error: 'Missing required fields',
+          required: ['orgId', 'email', 'name', 'role'],
+        }),
+      };
+    }
+
+    const user = await userManagementService.createUser({
+      orgId,
+      email,
+      name,
+      role,
+      isActive,
+      createdBy,
+    });
+
+    return {
+      statusCode: 201,
+      body: JSON.stringify({
+        message: 'User created successfully',
+        user,
+      }),
+    };
+
+  } catch (error) {
+    console.error('Error creating user:', error);
+    return {
+      statusCode: 400,
+      body: JSON.stringify({
+        error: 'Failed to create user',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Update a user
+ */
+async function handleUpdateUser(userId, body) {
+  try {
+    const { orgId, email, name, role, isActive, updatedBy } = body;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    if (!userId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'userId is required' }),
+      };
+    }
+
+    const user = await userManagementService.updateUser(
+      userId,
+      orgId,
+      { email, name, role, isActive },
+      updatedBy
+    );
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        message: 'User updated successfully',
+        user,
+      }),
+    };
+
+  } catch (error) {
+    console.error('Error updating user:', error);
+    return {
+      statusCode: 400,
+      body: JSON.stringify({
+        error: 'Failed to update user',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Delete a user
+ */
+async function handleDeleteUser(userId, params) {
+  try {
+    const { orgId } = params;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    if (!userId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'userId is required' }),
+      };
+    }
+
+    const result = await userManagementService.deleteUser(userId, orgId);
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        message: 'User deleted successfully',
+        ...result,
+      }),
+    };
+
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    return {
+      statusCode: 400,
+      body: JSON.stringify({
+        error: 'Failed to delete user',
         message: error.message,
       }),
     };

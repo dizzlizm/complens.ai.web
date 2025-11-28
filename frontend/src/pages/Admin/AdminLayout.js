@@ -32,6 +32,14 @@ function AdminLayout() {
             Google Workspace
           </Link>
 
+          <Link
+            to="/admin/users"
+            className={`nav-item ${isActive('/admin/users') ? 'active' : ''}`}
+          >
+            <span className="nav-icon">👥</span>
+            User Management
+          </Link>
+
           <div className="nav-section-title">Coming Soon</div>
 
           <div className="nav-item disabled">
@@ -42,11 +50,6 @@ function AdminLayout() {
           <div className="nav-item disabled">
             <span className="nav-icon">🔔</span>
             Event Notifications
-          </div>
-
-          <div className="nav-item disabled">
-            <span className="nav-icon">👥</span>
-            User Management
           </div>
         </nav>
 

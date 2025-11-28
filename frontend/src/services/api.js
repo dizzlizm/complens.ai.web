@@ -150,4 +150,66 @@ export async function disconnectOAuth(orgId) {
   }
 }
 
+/**
+ * Get all users for an organization
+ * @param {number} orgId - Organization ID
+ * @returns {Promise<Array>} - List of users
+ */
+export async function getUsers(orgId) {
+  try {
+    const response = await apiClient.get(`/admin/users?orgId=${orgId}`);
+    return response.data;
+  } catch (error) {
+    console.error('Error getting users:', error);
+    throw error;
+  }
+}
+
+/**
+ * Create a new user
+ * @param {Object} userData - User data (orgId, email, name, role, isActive)
+ * @returns {Promise<Object>} - Created user
+ */
+export async function createUser(userData) {
+  try {
+    const response = await apiClient.post('/admin/users', userData);
+    return response.data;
+  } catch (error) {
+    console.error('Error creating user:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update a user
+ * @param {string} userId - User ID
+ * @param {Object} userData - Updated user data
+ * @returns {Promise<Object>} - Updated user
+ */
+export async function updateUser(userId, userData) {
+  try {
+    const response = await apiClient.put(`/admin/users/${userId}`, userData);
+    return response.data;
+  } catch (error) {
+    console.error('Error updating user:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a user
+ * @param {string} userId - User ID
+ * @param {number} orgId - Organization ID
+ * @returns {Promise<Object>} - Delete response
+ */
+export async function deleteUser(userId, orgId) {
+  try {
+    const response = await apiClient.delete(`/admin/users/${userId}?orgId=${orgId}`);
+    return response.data;
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    throw error;
+  }
+}
+
 export default apiClient;
