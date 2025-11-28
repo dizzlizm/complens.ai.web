@@ -17,10 +17,10 @@
   },
   {
     "ParameterKey": "DomainName",
-    "ParameterValue": ""
+    "ParameterValue": "dev.complens.ai"
   },
   {
     "ParameterKey": "HostedZoneId",
-    "ParameterValue": ""
+    "ParameterValue": "REPLACE_WITH_ZONE_ID"
   }
 ]

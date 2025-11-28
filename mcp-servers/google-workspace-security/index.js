@@ -38,33 +38,59 @@ const pool = new Pool({
   idleTimeoutMillis: 30000,
 });
 
-// Initialize Google Workspace Admin SDK
-let adminClient = null;
-
 /**
- * Initialize Google Workspace Admin SDK with service account credentials
+ * Get OAuth tokens from database and create authenticated client
  */
-async function initializeGoogleClient() {
-  if (adminClient) return adminClient;
-
+async function getAuthenticatedClient() {
   try {
-    const auth = new google.auth.GoogleAuth({
-      credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY),
-      scopes: [
-        'https://www.googleapis.com/auth/admin.directory.user.readonly',
-        'https://www.googleapis.com/auth/admin.directory.group.readonly',
-        'https://www.googleapis.com/auth/drive.readonly',
-      ],
+    // Get OAuth tokens from database
+    const result = await pool.query(
+      `SELECT access_token, refresh_token, token_expiry
+       FROM google_workspace_connections
+       WHERE org_id = $1 AND disconnected_at IS NULL`,
+      [process.env.ORG_ID]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('Google Workspace not connected. Please connect via the Complens.ai dashboard.');
+    }
+
+    const { access_token, refresh_token, token_expiry } = result.rows[0];
+
+    // Check if token is expired
+    const isExpired = new Date(token_expiry) < new Date();
+
+    // Create OAuth2 client
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_REDIRECT_URI
+    );
+
+    oauth2Client.setCredentials({
+      access_token: access_token,
+      refresh_token: refresh_token,
     });
 
-    adminClient = google.admin({
-      version: 'directory_v1',
-      auth,
-    });
+    // Refresh token if expired
+    if (isExpired) {
+      console.error('Access token expired, refreshing...');
+      const { credentials } = await oauth2Client.refreshAccessToken();
 
-    return adminClient;
+      // Update tokens in database
+      await pool.query(
+        `UPDATE google_workspace_connections
+         SET access_token = $1, token_expiry = $2
+         WHERE org_id = $3`,
+        [credentials.access_token, new Date(credentials.expiry_date), process.env.ORG_ID]
+      );
+
+      console.error('Token refreshed successfully');
+    }
+
+    return oauth2Client;
   } catch (error) {
-    console.error('Failed to initialize Google client:', error);
+    console.error('Failed to get authenticated client:', error);
     throw error;
   }
 }
@@ -74,7 +100,8 @@ async function initializeGoogleClient() {
  */
 
 async function listUsersWithoutTwoFactor() {
-  const admin = await initializeGoogleClient();
+  const auth = await getAuthenticatedClient();
+  const admin = google.admin({ version: 'directory_v1', auth });
 
   try {
     const response = await admin.users.list({
@@ -129,7 +156,8 @@ async function listUsersWithoutTwoFactor() {
 }
 
 async function findAdminAccounts() {
-  const admin = await initializeGoogleClient();
+  const auth = await getAuthenticatedClient();
+  const admin = google.admin({ version: 'directory_v1', auth });
 
   try {
     const response = await admin.users.list({
@@ -159,8 +187,8 @@ async function findAdminAccounts() {
 }
 
 async function analyzeExternalSharing() {
-  const admin = await initializeGoogleClient();
-  const drive = google.drive({ version: 'v3', auth: admin });
+  const auth = await getAuthenticatedClient();
+  const drive = google.drive({ version: 'v3', auth });
 
   try {
     // List files shared with external users
@@ -210,7 +238,8 @@ async function analyzeExternalSharing() {
 }
 
 async function checkSecurityPolicies() {
-  const admin = await initializeGoogleClient();
+  const auth = await getAuthenticatedClient();
+  const admin = google.admin({ version: 'directory_v1', auth });
 
   try {
     // Get domain-wide delegation settings

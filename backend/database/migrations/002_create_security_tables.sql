@@ -160,6 +160,21 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_org_id ON audit_events(org_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_events_action ON audit_events(action);
 
+-- Google Workspace OAuth Connections table
+CREATE TABLE IF NOT EXISTS google_workspace_connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID UNIQUE NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  token_expiry TIMESTAMP NOT NULL,
+  connected_email TEXT NOT NULL,
+  connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  disconnected_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_gws_connections_org_id ON google_workspace_connections(org_id);
+CREATE INDEX IF NOT EXISTS idx_gws_connections_connected_at ON google_workspace_connections(connected_at DESC);
+
 -- Create default demo organization for testing
 INSERT INTO organizations (name, domain, settings)
 VALUES (
