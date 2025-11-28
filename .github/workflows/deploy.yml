@@ -190,6 +190,67 @@ jobs:
           echo "lambda-bucket=${LAMBDA_BUCKET}" >> $GITHUB_OUTPUT
           echo "cloudfront-id=${CLOUDFRONT_ID}" >> $GITHUB_OUTPUT
 
+      - name: Update Secrets Manager with OAuth credentials
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          STACK_NAME="complens-${{ needs.setup.outputs.environment }}"
+
+          # Get Secrets ARN from stack outputs
+          SECRETS_ARN=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`SecretsArn`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          # Get CloudFront URL for redirect URI
+          CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          # Get API Gateway URL for frontend
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayURL`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          # Get current secret value
+          CURRENT_SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id "${SECRETS_ARN}" \
+            --query SecretString \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          # Merge with Google OAuth credentials (only if they exist)
+          if [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ]; then
+            echo "Updating secret with Google OAuth credentials..."
+            NEW_SECRET=$(echo "$CURRENT_SECRET" | jq --arg cid "$GOOGLE_CLIENT_ID" \
+              --arg csec "$GOOGLE_CLIENT_SECRET" \
+              --arg ruri "${CLOUDFRONT_URL}/api/oauth/google/callback" \
+              --arg furl "${CLOUDFRONT_URL}" \
+              '. + {
+                googleClientId: $cid,
+                googleClientSecret: $csec,
+                googleRedirectUri: $ruri,
+                frontendUrl: $furl
+              }')
+
+            # Update the secret
+            aws secretsmanager update-secret \
+              --secret-id "${SECRETS_ARN}" \
+              --secret-string "$NEW_SECRET" \
+              --region ${{ env.AWS_REGION }}
+
+            echo "✅ Google OAuth credentials added to Secrets Manager"
+          else
+            echo "⚠️  Google OAuth credentials not found in GitHub Secrets - skipping"
+            echo "    Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to GitHub Secrets"
+          fi
+
   # Deploy Lambda backend
   deploy-backend:
     name: Deploy Backend
