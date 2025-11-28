@@ -640,6 +640,7 @@ Resources:
           - !Ref PrivateSubnet2
       Environment:
         Variables:
+          ENVIRONMENT: !Ref Environment
           SECRETS_ARN: !Ref ApplicationSecrets
           REGION: !Ref AWS::Region
       Timeout: 30

@@ -70,9 +70,6 @@ exports.handler = async (event) => {
   console.log('Event:', JSON.stringify(event, null, 2));
 
   try {
-    // Initialize services if needed
-    await initialize();
-
     // Parse request
     const httpMethod = event.httpMethod || event.requestContext?.http?.method;
     let path = event.rawPath || event.path || event.requestContext?.http?.path;
@@ -84,9 +81,7 @@ exports.handler = async (event) => {
       path = path.substring(`/${stage}`.length);
     }
 
-    const body = event.body ? JSON.parse(event.body) : {};
-
-    // Handle CORS preflight OPTIONS requests
+    // Handle CORS preflight OPTIONS requests (no initialization needed)
     if (httpMethod === 'OPTIONS') {
       return {
         statusCode: 200,
@@ -99,6 +94,50 @@ exports.handler = async (event) => {
         },
         body: '',
       };
+    }
+
+    // Parse body (handle non-JSON gracefully)
+    let body = {};
+    if (event.body) {
+      try {
+        body = JSON.parse(event.body);
+      } catch (parseError) {
+        console.warn('Failed to parse body as JSON:', parseError);
+        return {
+          statusCode: 400,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+          body: JSON.stringify({ error: 'Invalid JSON in request body' }),
+        };
+      }
+    }
+
+    // Initialize services if needed (after OPTIONS check)
+    try {
+      await initialize();
+    } catch (initError) {
+      console.error('Service initialization failed:', initError);
+
+      // Allow health check to work even if initialization fails
+      if (path === '/health' && httpMethod === 'GET') {
+        return {
+          statusCode: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+          body: JSON.stringify({
+            status: 'unavailable',
+            message: 'Services are initializing',
+            error: initError.message,
+          }),
+        };
+      }
+
+      // For other routes, initialization is required
+      throw initError;
     }
 
     // Route to appropriate handler
@@ -160,6 +199,11 @@ exports.handler = async (event) => {
 
   } catch (error) {
     console.error('Error processing request:', error);
+    console.error('Error stack:', error.stack);
+
+    // Include more debugging info in dev environment
+    const isDev = process.env.ENVIRONMENT === 'dev';
+
     return {
       statusCode: 500,
       headers: {
@@ -172,6 +216,7 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         error: 'Internal server error',
         message: error.message,
+        ...(isDev && { stack: error.stack, name: error.name }),
       }),
     };
   }
