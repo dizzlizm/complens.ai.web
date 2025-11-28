@@ -56,15 +56,25 @@ class BedrockService {
       const isNova = this.isNovaModel(modelId);
       const isClaude = this.isClaudeModel(modelId);
 
-      // Build messages array
+      // Helper function to format content based on model type
+      const formatContent = (content) => {
+        if (typeof content === 'string') {
+          // Nova requires array format, Claude accepts string
+          return isNova ? [{ text: content }] : content;
+        }
+        // Already formatted (from conversation history)
+        return content;
+      };
+
+      // Build messages array with proper format for each model
       const messages = [
         ...conversationHistory.map(msg => ({
           role: msg.role,
-          content: isNova ? msg.content : msg.content, // Both use same format
+          content: formatContent(msg.content),
         })),
         {
           role: 'user',
-          content: message,
+          content: formatContent(message),
         },
       ];
 

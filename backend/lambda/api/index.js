@@ -301,7 +301,7 @@ async function handleHealth() {
 }
 
 /**
- * Chat handler - sends message to Claude Sonnet 4 via Bedrock
+ * Chat handler - sends message to Bedrock model (Nova or Claude)
  */
 async function handleChat(body) {
   const { message, conversationId } = body;
@@ -321,7 +321,7 @@ async function handleChat(body) {
       conversationHistory = conversation.messages || [];
     }
 
-    // Call Bedrock with Claude Sonnet 4
+    // Call Bedrock (uses chat model by default, security model for analysis)
     const response = await bedrockService.chat(message, conversationHistory);
 
     // Save conversation to database
