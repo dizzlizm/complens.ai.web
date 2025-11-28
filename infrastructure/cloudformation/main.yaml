@@ -42,6 +42,24 @@ Parameters:
     Default: ''
     Description: '(Optional) Email address for billing alerts. Leave empty to skip billing alerts.'
 
+# ============================================================================
+# Mappings - Network Configuration
+# ============================================================================
+Mappings:
+  NetworkConfig:
+    dev:
+      VpcCidr: '10.10.0.0/16'
+      PublicSubnet1: '10.10.1.0/24'
+      PublicSubnet2: '10.10.2.0/24'
+      PrivateSubnet1: '10.10.11.0/24'
+      PrivateSubnet2: '10.10.12.0/24'
+    prod:
+      VpcCidr: '10.20.0.0/16'
+      PublicSubnet1: '10.20.1.0/24'
+      PublicSubnet2: '10.20.2.0/24'
+      PrivateSubnet1: '10.20.11.0/24'
+      PrivateSubnet2: '10.20.12.0/24'
+
 Conditions:
   IsProd: !Equals [!Ref Environment, 'prod']
   IsDev: !Equals [!Ref Environment, 'dev']
@@ -60,7 +78,7 @@ Resources:
   VPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: 10.0.0.0/16
+      CidrBlock: !FindInMap [NetworkConfig, !Ref Environment, VpcCidr]
       EnableDnsHostnames: true
       EnableDnsSupport: true
       Tags:
@@ -87,7 +105,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
+      CidrBlock: !FindInMap [NetworkConfig, !Ref Environment, PublicSubnet1]
       AvailabilityZone: !Select [0, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
@@ -98,7 +116,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.2.0/24
+      CidrBlock: !FindInMap [NetworkConfig, !Ref Environment, PublicSubnet2]
       AvailabilityZone: !Select [1, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
@@ -110,7 +128,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.11.0/24
+      CidrBlock: !FindInMap [NetworkConfig, !Ref Environment, PrivateSubnet1]
       AvailabilityZone: !Select [0, !GetAZs '']
       Tags:
         - Key: Name
@@ -120,7 +138,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.12.0/24
+      CidrBlock: !FindInMap [NetworkConfig, !Ref Environment, PrivateSubnet2]
       AvailabilityZone: !Select [1, !GetAZs '']
       Tags:
         - Key: Name
