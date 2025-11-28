@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Complens.ai - Serverless Application Infrastructure with Claude Sonnet 4 via Bedrock'
+Description: 'Complens.ai - Serverless AI Security Platform with Amazon Bedrock'
 
 Parameters:
   Environment:

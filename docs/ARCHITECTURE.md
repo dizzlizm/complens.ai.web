@@ -58,8 +58,8 @@
 │  │  │  │  Services Layer                          │    │        │   │
 │  │  │  │  ┌────────────────────────────────────┐  │    │        │   │
 │  │  │  │  │ Bedrock Service                    │  │    │        │   │
-│  │  │  │  │ - Claude Sonnet 4 integration      │  │    │        │   │
-│  │  │  │  │ - Message formatting               │  │    │        │   │
+│  │  │  │  │ - Dual-model architecture          │  │    │        │   │
+│  │  │  │  │ - Dynamic format conversion        │  │    │        │   │
 │  │  │  │  │ - Token usage tracking             │  │    │        │   │
 │  │  │  │  └────────────────────────────────────┘  │    │        │   │
 │  │  │  │  ┌────────────────────────────────────┐  │    │        │   │
@@ -84,9 +84,9 @@
 │  │  │           │  │ (VPC      │  │ (VPC Endpoint)   │         │   │
 │  │  │ - Encrypted│ │ Endpoint) │  │                  │         │   │
 │  │  │ - Multi-AZ│  │           │  │ - DB Credentials │         │   │
-│  │  │   (prod)  │  │ - Claude  │  │ - API Keys       │         │   │
-│  │  │ - Auto    │  │   Sonnet 4│  │                  │         │   │
-│  │  │   Backup  │  │           │  │                  │         │   │
+│  │  │   (prod)  │  │ - Nova &  │  │ - API Keys       │         │   │
+│  │  │ - Auto    │  │   Claude  │  │                  │         │   │
+│  │  │   Backup  │  │   Models  │  │                  │         │   │
 │  │  └───────────┘  └───────────┘  └──────────────────┘         │   │
 │  │                                                               │   │
 │  └───────────────────────────────────────────────────────────────┘   │
@@ -200,21 +200,29 @@ CREATE INDEX idx_messages_conversation_id ON messages(conversation_id);
 CREATE INDEX idx_messages_created_at ON messages(created_at);
 ```
 
-### AI Model (Bedrock)
+### AI Models (Bedrock)
 
-**Model**: Claude Sonnet 4
-- Model ID: `anthropic.claude-sonnet-4-20250514-v1:0`
+**Dual-Model Architecture**:
+1. **Chat Model** (default: Amazon Nova Lite)
+   - Model ID: `us.amazon.nova-lite-v1:0`
+   - Cost: ~$0.06 input / $0.24 output per 1M tokens
+   - Use case: General conversations
+
+2. **Security Model** (default: Claude 3.5 Sonnet v2)
+   - Model ID: `us.anthropic.claude-3-5-sonnet-20241022-v2:0`
+   - Cost: ~$3 input / $15 output per 1M tokens
+   - Use case: Security analysis, threat detection
+
+**Configuration**:
 - Max tokens: 4096 (configurable)
-- Temperature: 0.7 (default)
+- Temperature: 0.7 (default), 0.3 (analysis)
+- Configurable via environment variables
 
 **Integration**:
 - VPC Endpoint for private access
 - IAM role-based authentication
+- Dynamic model selection based on task
 - Request/response streaming support (planned)
-
-**Pricing** (as of 2024):
-- Input: ~$3 per 1M tokens
-- Output: ~$15 per 1M tokens
 
 ### Networking
 
@@ -307,7 +315,7 @@ VPC Endpoint SG:
    ↓
 6. Lambda sends message + history to Bedrock
    ↓
-7. Bedrock (Claude Sonnet 4) generates response
+7. Bedrock (Nova or Claude) generates response
    ↓
 8. Lambda saves conversation turn to RDS
    ↓
@@ -315,7 +323,7 @@ VPC Endpoint SG:
    ↓
 10. API Gateway returns to Frontend
     ↓
-11. Frontend displays Claude's response
+11. Frontend displays AI response
 ```
 
 ### Database Query Flow

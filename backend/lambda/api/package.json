@@ -1,7 +1,7 @@
 {
   "name": "complens-api",
   "version": "1.0.0",
-  "description": "Complens.ai API Lambda Functions with Bedrock Claude Sonnet 4",
+  "description": "Complens.ai API Lambda Functions with Amazon Bedrock AI",
   "main": "index.js",
   "scripts": {
     "test": "jest",
