@@ -21,6 +21,6 @@
   },
   {
     "ParameterKey": "HostedZoneId",
-    "ParameterValue": "REPLACE_WITH_ZONE_ID"
+    "ParameterValue": "/hostedzone/Z02373573N3XBHSZBERY6"
   }
 ]
