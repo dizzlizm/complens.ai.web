@@ -581,14 +581,17 @@ Resources:
       ProtocolType: HTTP
       CorsConfiguration:
         AllowOrigins:
-          - !Sub 'https://${CloudFrontDistribution.DomainName}'
+          - !If
+            - HasDomain
+            - !Sub 'https://${DomainName}'
+            - !Sub 'https://${CloudFrontDistribution.DomainName}'
           - !If
             - IsDev
-            - 'http://localhost:3000'  # Allow local dev
+            - 'http://localhost:3000'
             - !Ref AWS::NoValue
           - !If
             - IsDev
-            - '*'  # Allow all origins in dev for flexibility
+            - '*'
             - !Ref AWS::NoValue
         AllowMethods:
           - GET
