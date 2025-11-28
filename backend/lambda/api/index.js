@@ -8,12 +8,14 @@ const { BedrockService } = require('./services/bedrock');
 const { DatabaseService } = require('./services/database');
 const { SecretsService } = require('./services/secrets');
 const { GoogleOAuthService } = require('./services/google-oauth');
+const { UserManagementService } = require('./services/user-management');
 
 // Initialize services
 let bedrockService;
 let databaseService;
 let secretsService;
 let googleOAuthService;
+let userManagementService;
 let isInitialized = false;
 
 /**
@@ -55,6 +57,9 @@ async function initialize() {
     // Initialize Google OAuth service
     googleOAuthService = new GoogleOAuthService();
 
+    // Initialize User Management service
+    userManagementService = new UserManagementService(databaseService);
+
     isInitialized = true;
     console.log('Services initialized successfully');
   } catch (error) {
@@ -70,13 +75,75 @@ exports.handler = async (event) => {
   console.log('Event:', JSON.stringify(event, null, 2));
 
   try {
-    // Initialize services if needed
-    await initialize();
-
     // Parse request
     const httpMethod = event.httpMethod || event.requestContext?.http?.method;
-    const path = event.path || event.requestContext?.http?.path;
-    const body = event.body ? JSON.parse(event.body) : {};
+    let path = event.rawPath || event.path || event.requestContext?.http?.path;
+
+    // Strip stage prefix from path (e.g., /dev/chat -> /chat)
+    // API Gateway includes stage in path for HTTP API v2
+    const stage = event.requestContext?.stage;
+    if (stage && path.startsWith(`/${stage}/`)) {
+      path = path.substring(`/${stage}`.length);
+    }
+
+    // Handle CORS preflight OPTIONS requests (no initialization needed)
+    if (httpMethod === 'OPTIONS') {
+      return {
+        statusCode: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+          'Access-Control-Max-Age': '86400', // Cache preflight for 24 hours
+          'Cache-Control': 'public, max-age=86400', // Cache preflight responses
+        },
+        body: '',
+      };
+    }
+
+    // Parse body (handle non-JSON gracefully)
+    let body = {};
+    if (event.body) {
+      try {
+        body = JSON.parse(event.body);
+      } catch (parseError) {
+        console.warn('Failed to parse body as JSON:', parseError);
+        return {
+          statusCode: 400,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+          body: JSON.stringify({ error: 'Invalid JSON in request body' }),
+        };
+      }
+    }
+
+    // Initialize services if needed (after OPTIONS check)
+    try {
+      await initialize();
+    } catch (initError) {
+      console.error('Service initialization failed:', initError);
+
+      // Allow health check to work even if initialization fails
+      if (path === '/health' && httpMethod === 'GET') {
+        return {
+          statusCode: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+          body: JSON.stringify({
+            status: 'unavailable',
+            message: 'Services are initializing',
+            error: initError.message,
+          }),
+        };
+      }
+
+      // For other routes, initialization is required
+      throw initError;
+    }
 
     // Route to appropriate handler
     let response;
@@ -115,6 +182,24 @@ exports.handler = async (event) => {
         response = await handleGoogleOAuthStatus(event.queryStringParameters || {});
         break;
 
+      case path === '/admin/users' && httpMethod === 'GET':
+        response = await handleGetUsers(event.queryStringParameters || {});
+        break;
+
+      case path === '/admin/users' && httpMethod === 'POST':
+        response = await handleCreateUser(body);
+        break;
+
+      case path.startsWith('/admin/users/') && httpMethod === 'PUT':
+        const updateUserId = path.split('/')[3];
+        response = await handleUpdateUser(updateUserId, body);
+        break;
+
+      case path.startsWith('/admin/users/') && httpMethod === 'DELETE':
+        const deleteUserId = path.split('/')[3];
+        response = await handleDeleteUser(deleteUserId, event.queryStringParameters || {});
+        break;
+
       default:
         response = {
           statusCode: 404,
@@ -129,22 +214,32 @@ exports.handler = async (event) => {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+        'Cache-Control': 'no-cache, no-store, must-revalidate', // Don't cache API responses
         ...response.headers,
       },
     };
 
   } catch (error) {
     console.error('Error processing request:', error);
+    console.error('Error stack:', error.stack);
+
+    // Include more debugging info in dev environment
+    const isDev = process.env.ENVIRONMENT === 'dev';
+
     return {
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
       body: JSON.stringify({
         error: 'Internal server error',
         message: error.message,
+        ...(isDev && { stack: error.stack, name: error.name }),
       }),
     };
   }
@@ -350,7 +445,7 @@ async function handleGoogleOAuthCallback(params) {
       return {
         statusCode: 302,
         headers: {
-          Location: `${process.env.FRONTEND_URL}?oauth_error=${error}`,
+          Location: `${process.env.FRONTEND_URL}/oauth/callback?success=false&error=${encodeURIComponent(error)}`,
         },
         body: '',
       };
@@ -398,7 +493,7 @@ async function handleGoogleOAuthCallback(params) {
     return {
       statusCode: 302,
       headers: {
-        Location: `${process.env.FRONTEND_URL}?oauth_success=true&email=${encodeURIComponent(userInfo.email)}`,
+        Location: `${process.env.FRONTEND_URL}/oauth/callback?success=true&email=${encodeURIComponent(userInfo.email)}`,
       },
       body: '',
     };
@@ -408,7 +503,7 @@ async function handleGoogleOAuthCallback(params) {
     return {
       statusCode: 302,
       headers: {
-        Location: `${process.env.FRONTEND_URL}?oauth_error=callback_failed`,
+        Location: `${process.env.FRONTEND_URL}/oauth/callback?success=false&error=${encodeURIComponent('Authentication failed: ' + error.message)}`,
       },
       body: '',
     };
@@ -517,6 +612,179 @@ async function handleGoogleOAuthStatus(params) {
       statusCode: 500,
       body: JSON.stringify({
         error: 'Failed to check status',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Get all users for an organization
+ */
+async function handleGetUsers(params) {
+  try {
+    const { orgId } = params;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    const users = await userManagementService.listUsers(orgId);
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        users,
+        count: users.length,
+      }),
+    };
+
+  } catch (error) {
+    console.error('Error getting users:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to get users',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Create a new user
+ */
+async function handleCreateUser(body) {
+  try {
+    const { orgId, email, name, role, isActive, createdBy } = body;
+
+    if (!orgId || !email || !name || !role) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({
+          error: 'Missing required fields',
+          required: ['orgId', 'email', 'name', 'role'],
+        }),
+      };
+    }
+
+    const user = await userManagementService.createUser({
+      orgId,
+      email,
+      name,
+      role,
+      isActive,
+      createdBy,
+    });
+
+    return {
+      statusCode: 201,
+      body: JSON.stringify({
+        message: 'User created successfully',
+        user,
+      }),
+    };
+
+  } catch (error) {
+    console.error('Error creating user:', error);
+    return {
+      statusCode: 400,
+      body: JSON.stringify({
+        error: 'Failed to create user',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Update a user
+ */
+async function handleUpdateUser(userId, body) {
+  try {
+    const { orgId, email, name, role, isActive, updatedBy } = body;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    if (!userId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'userId is required' }),
+      };
+    }
+
+    const user = await userManagementService.updateUser(
+      userId,
+      orgId,
+      { email, name, role, isActive },
+      updatedBy
+    );
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        message: 'User updated successfully',
+        user,
+      }),
+    };
+
+  } catch (error) {
+    console.error('Error updating user:', error);
+    return {
+      statusCode: 400,
+      body: JSON.stringify({
+        error: 'Failed to update user',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Delete a user
+ */
+async function handleDeleteUser(userId, params) {
+  try {
+    const { orgId } = params;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    if (!userId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'userId is required' }),
+      };
+    }
+
+    const result = await userManagementService.deleteUser(userId, orgId);
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        message: 'User deleted successfully',
+        ...result,
+      }),
+    };
+
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    return {
+      statusCode: 400,
+      body: JSON.stringify({
+        error: 'Failed to delete user',
         message: error.message,
       }),
     };

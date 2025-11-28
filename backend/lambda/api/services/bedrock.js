@@ -8,7 +8,7 @@ const { BedrockRuntimeClient, InvokeModelCommand } = require('@aws-sdk/client-be
 class BedrockService {
   constructor(region = 'us-east-1') {
     this.client = new BedrockRuntimeClient({ region });
-    this.modelId = 'anthropic.claude-sonnet-4-20250514-v1:0'; // Claude Sonnet 4
+    this.modelId = 'us.anthropic.claude-sonnet-4-20250514-v1:0'; // Claude Sonnet 4
     this.defaultMaxTokens = 4096;
   }
 

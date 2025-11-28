@@ -37,6 +37,29 @@ Parameters:
     Default: ''
     Description: '(Optional) Route53 Hosted Zone ID if domain is already in Route53. Leave empty if no domain or zone should be created.'
 
+  BillingAlertEmail:
+    Type: String
+    Default: ''
+    Description: '(Optional) Email address for billing alerts. Leave empty to skip billing alerts.'
+
+# ============================================================================
+# Mappings - Network Configuration
+# ============================================================================
+Mappings:
+  NetworkConfig:
+    dev:
+      VpcCidr: '10.10.0.0/16'
+      PublicSubnet1: '10.10.1.0/24'
+      PublicSubnet2: '10.10.2.0/24'
+      PrivateSubnet1: '10.10.11.0/24'
+      PrivateSubnet2: '10.10.12.0/24'
+    prod:
+      VpcCidr: '10.20.0.0/16'
+      PublicSubnet1: '10.20.1.0/24'
+      PublicSubnet2: '10.20.2.0/24'
+      PrivateSubnet1: '10.20.11.0/24'
+      PrivateSubnet2: '10.20.12.0/24'
+
 Conditions:
   IsProd: !Equals [!Ref Environment, 'prod']
   IsDev: !Equals [!Ref Environment, 'dev']
@@ -45,6 +68,7 @@ Conditions:
   CreateHostedZone: !And
     - !Condition HasDomain
     - !Not [!Condition HasHostedZone]
+  EnableBillingAlerts: !Not [!Equals [!Ref BillingAlertEmail, '']]
 
 Resources:
   # ============================================================================
@@ -54,7 +78,7 @@ Resources:
   VPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: 10.0.0.0/16
+      CidrBlock: !FindInMap [NetworkConfig, !Ref Environment, VpcCidr]
       EnableDnsHostnames: true
       EnableDnsSupport: true
       Tags:
@@ -81,7 +105,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
+      CidrBlock: !FindInMap [NetworkConfig, !Ref Environment, PublicSubnet1]
       AvailabilityZone: !Select [0, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
@@ -92,7 +116,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.2.0/24
+      CidrBlock: !FindInMap [NetworkConfig, !Ref Environment, PublicSubnet2]
       AvailabilityZone: !Select [1, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
@@ -104,7 +128,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.11.0/24
+      CidrBlock: !FindInMap [NetworkConfig, !Ref Environment, PrivateSubnet1]
       AvailabilityZone: !Select [0, !GetAZs '']
       Tags:
         - Key: Name
@@ -114,7 +138,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.12.0/24
+      CidrBlock: !FindInMap [NetworkConfig, !Ref Environment, PrivateSubnet2]
       AvailabilityZone: !Select [1, !GetAZs '']
       Tags:
         - Key: Name
@@ -302,29 +326,10 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  LambdaCodeBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${AWS::AccountId}-${Environment}-complens-lambda-code'
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteOldVersions
-            Status: Enabled
-            NoncurrentVersionExpirationInDays: 30
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
+  # Lambda Code Bucket is created externally by GitHub Actions before stack deployment
+  # This avoids the chicken-and-egg problem: Lambda needs S3 code, but bucket is in same stack
+  # Bucket name: ${AWS::AccountId}-${Environment}-complens-lambda-code
+  # GitHub Actions creates this bucket and uploads placeholder code before deploying CloudFormation
 
   # ============================================================================
   # Route53 and SSL/TLS Certificate
@@ -473,7 +478,7 @@ Resources:
           Value: !Ref Environment
 
   # ============================================================================
-  # RDS PostgreSQL - Aurora Serverless v2 for cost optimization
+  # RDS PostgreSQL - Standard Instance
   # ============================================================================
 
   DBSubnetGroup:
@@ -487,14 +492,14 @@ Resources:
         - Key: Name
           Value: !Sub '${Environment}-complens-db-subnet-group'
 
-  # For dev: use small RDS instance. For prod: consider Aurora Serverless v2
+  # Note: This creates a Standard RDS Instance. 
   PostgresDB:
     Type: AWS::RDS::DBInstance
     DeletionPolicy: !If [IsProd, Snapshot, Delete]
     Properties:
       DBInstanceIdentifier: !Sub '${Environment}-complens-postgres'
       Engine: postgres
-      EngineVersion: '15.7'  # Using 15.7 - change to just '15' for latest minor version
+      EngineVersion: '15.7'
       DBInstanceClass: !If [IsProd, db.t4g.medium, db.t4g.micro]
       AllocatedStorage: !If [IsProd, 100, 20]
       StorageType: gp3
@@ -546,7 +551,8 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
                 Resource:
-                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-sonnet-4-*'
+                  - !Sub 'arn:aws:bedrock:*::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
         - PolicyName: SecretsManagerAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -565,7 +571,7 @@ Resources:
                   - s3:PutObject
                 Resource:
                   - !Sub '${FrontendBucket.Arn}/*'
-                  - !Sub '${LambdaCodeBucket.Arn}/*'
+                  - !Sub 'arn:aws:s3:::${AWS::AccountId}-${Environment}-complens-lambda-code/*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -580,19 +586,15 @@ Resources:
       Name: !Sub '${Environment}-complens-api'
       ProtocolType: HTTP
       CorsConfiguration:
-        AllowOrigins:
-          - !If
-            - HasDomain
-            - !Sub 'https://${DomainName}'
-            - !Sub 'https://${CloudFrontDistribution.DomainName}'
-          - !If
-            - IsDev
+        AllowOrigins: !If
+          - IsDev
+          - - 'https://dev.complens.ai'
             - 'http://localhost:3000'
-            - !Ref AWS::NoValue
-          - !If
-            - IsDev
             - '*'
-            - !Ref AWS::NoValue
+          - - !If
+              - HasDomain
+              - !Sub 'https://${DomainName}'
+              - !Sub 'https://${CloudFrontDistribution.DomainName}'
         AllowMethods:
           - GET
           - POST
@@ -608,6 +610,20 @@ Resources:
 
   ApiGatewayStage:
     Type: AWS::ApiGatewayV2::Stage
+    DependsOn:
+      - HealthRoute
+      - ChatRoute
+      - ChatOptionsRoute
+      - ConversationsRoute
+      - ConversationsOptionsRoute
+      - ConversationDetailRoute
+      - ConversationDetailOptionsRoute
+      - OAuthAuthorizeRoute
+      - OAuthCallbackRoute
+      - OAuthDisconnectRoute
+      - OAuthDisconnectOptionsRoute
+      - OAuthStatusRoute
+      - DefaultRoute
     Properties:
       ApiId: !Ref ApiGateway
       StageName: !Ref Environment
@@ -624,30 +640,145 @@ Resources:
       LogGroupName: !Sub '/aws/apigateway/${Environment}-complens-api'
       RetentionInDays: !If [IsProd, 30, 7]
 
-  # Lambda function placeholder - will be created via deployment
-  # Uncomment and configure once Lambda code is ready
-  # ApiLambdaFunction:
-  #   Type: AWS::Lambda::Function
-  #   Properties:
-  #     FunctionName: !Sub '${Environment}-complens-api'
-  #     Runtime: nodejs20.x
-  #     Handler: index.handler
-  #     Role: !GetAtt LambdaExecutionRole.Arn
-  #     Code:
-  #       S3Bucket: !Ref LambdaCodeBucket
-  #       S3Key: api/latest.zip
-  #     VpcConfig:
-  #       SecurityGroupIds:
-  #         - !Ref LambdaSecurityGroup
-  #       SubnetIds:
-  #         - !Ref PrivateSubnet1
-  #         - !Ref PrivateSubnet2
-  #     Environment:
-  #       Variables:
-  #         SECRETS_ARN: !Ref ApplicationSecrets
-  #         REGION: !Ref AWS::Region
-  #     Timeout: 30
-  #     MemorySize: !If [IsProd, 512, 256]
+  # Lambda function
+  ApiLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-complens-api'
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Sub '${AWS::AccountId}-${Environment}-complens-lambda-code'
+        S3Key: api/latest.zip
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          SECRETS_ARN: !Ref ApplicationSecrets
+          REGION: !Ref AWS::Region
+      Timeout: 60  # Increased for VPC cold starts + database connection
+      MemorySize: !If [IsProd, 512, 256]
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Lambda permission for API Gateway
+  ApiGatewayLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
+
+  # API Gateway Integration
+  ApiGatewayIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiLambdaFunction.Arn}/invocations'
+      IntegrationMethod: POST
+      PayloadFormatVersion: '2.0'
+
+  # API Gateway Routes
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /health'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  ChatRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /chat'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  ChatOptionsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'OPTIONS /chat'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  ConversationsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /conversations'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  ConversationsOptionsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'OPTIONS /conversations'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  ConversationDetailRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /conversations/{id}'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  ConversationDetailOptionsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'OPTIONS /conversations/{id}'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  OAuthAuthorizeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /oauth/google/authorize'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  OAuthCallbackRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /oauth/google/callback'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  OAuthDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /oauth/google/disconnect'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  OAuthDisconnectOptionsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'OPTIONS /oauth/google/disconnect'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  OAuthStatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /oauth/google/status'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  # Catch-all route for other paths
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
 
   # ============================================================================
   # MCP (Model Context Protocol) Infrastructure
@@ -743,7 +874,8 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
                 Resource:
-                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-sonnet-4-*'
+                  - !Sub 'arn:aws:bedrock:*::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
         - PolicyName: S3Access
           PolicyDocument:
             Version: '2012-10-17'
@@ -753,7 +885,7 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                 Resource:
-                  - !Sub '${LambdaCodeBucket.Arn}/*'
+                  - !Sub 'arn:aws:s3:::${AWS::AccountId}-${Environment}-complens-lambda-code/*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -813,6 +945,259 @@ Resources:
         - Key: Project
           Value: Complens
 
+  # ============================================================================
+  # Billing Alerts
+  # ============================================================================
+
+  BillingAlertTopic:
+    Type: AWS::SNS::Topic
+    Condition: EnableBillingAlerts
+    Properties:
+      TopicName: !Sub '${Environment}-complens-billing-alerts'
+      DisplayName: Complens Billing Alerts
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  BillingAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: EnableBillingAlerts
+    Properties:
+      Protocol: email
+      TopicArn: !Ref BillingAlertTopic
+      Endpoint: !Ref BillingAlertEmail
+
+  BillingAlarm100:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-billing-alert-100'
+      AlarmDescription: Alert when estimated charges exceed $100
+      MetricName: EstimatedCharges
+      Namespace: AWS/Billing
+      Statistic: Maximum
+      Period: 21600  # 6 hours
+      EvaluationPeriods: 1
+      Threshold: 100
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: Currency
+          Value: USD
+
+  # ============================================================================
+  # CloudTrail - Audit and Compliance Logging
+  # ============================================================================
+
+  CloudTrailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-${Environment}-complens-cloudtrail'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: !If [IsProd, 365, 90]  # Keep prod logs for 1 year, dev for 90 days
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  CloudTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudTrailBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudTrailBucket.Arn
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CloudTrailBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  CloudTrail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn: CloudTrailBucketPolicy
+    Properties:
+      TrailName: !Sub '${Environment}-complens-trail'
+      S3BucketName: !Ref CloudTrailBucket
+      IncludeGlobalServiceEvents: true
+      IsLogging: true
+      IsMultiRegionTrail: !If [IsProd, true, false]
+      EnableLogFileValidation: true
+      EventSelectors:
+        - ReadWriteType: All
+          IncludeManagementEvents: true
+          DataResources:
+            # Log Lambda invocations
+            - Type: AWS::Lambda::Function
+              Values:
+                - !Sub 'arn:aws:lambda'
+            # Log S3 data events
+            - Type: AWS::S3::Object
+              Values:
+                - !Sub '${FrontendBucket.Arn}/*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # CloudWatch Monitoring and Alarms
+  # ============================================================================
+
+  # Lambda Error Alarm
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts  # Reuse billing alert condition for notifications
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-lambda-errors'
+      AlarmDescription: Alert when Lambda function errors exceed threshold
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiLambdaFunction
+
+  # Lambda Duration Alarm
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-lambda-duration'
+      AlarmDescription: Alert when Lambda duration is high (approaching timeout)
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 2
+      Threshold: 25000  # 25 seconds (30s timeout)
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiLambdaFunction
+
+  # API Gateway 5xx Error Alarm
+  ApiGateway5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-api-5xx-errors'
+      AlarmDescription: Alert when API Gateway 5xx errors exceed threshold
+      MetricName: 5XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref ApiGateway
+
+  # API Gateway 4xx Error Alarm
+  ApiGateway4xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-api-4xx-errors'
+      AlarmDescription: Alert when API Gateway 4xx errors are high
+      MetricName: 4XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 2
+      Threshold: 50
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref ApiGateway
+
+  # RDS CPU Utilization Alarm
+  # FIXED: Pointed to DBInstance instead of non-existent DBCluster
+  RDSCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-rds-cpu'
+      AlarmDescription: Alert when RDS CPU is high
+      MetricName: CPUUtilization
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref PostgresDB
+
+  # CloudWatch Log Insights Query Definitions
+  LambdaErrorsQuery:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub '${Environment}-complens-lambda-errors'
+      QueryString: |
+        fields @timestamp, @message
+        | filter @message like /Error/
+        | sort @timestamp desc
+        | limit 100
+      LogGroupNames:
+        - !Sub '/aws/lambda/${Environment}-complens-api'
+
+  ApiGatewayErrorsQuery:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub '${Environment}-complens-api-gateway-errors'
+      QueryString: |
+        fields @timestamp, requestId, error.message, error.messageString
+        | filter @message like /error/
+        | sort @timestamp desc
+        | limit 100
+      LogGroupNames:
+        - !Ref ApiGatewayLogGroup
+
 # ============================================================================
 # Outputs
 # ============================================================================
@@ -843,8 +1228,8 @@ Outputs:
       Name: !Sub '${Environment}-complens-frontend-bucket'
 
   LambdaCodeBucketName:
-    Description: S3 bucket for Lambda code
-    Value: !Ref LambdaCodeBucket
+    Description: S3 bucket for Lambda code (created externally by GitHub Actions)
+    Value: !Sub '${AWS::AccountId}-${Environment}-complens-lambda-code'
     Export:
       Name: !Sub '${Environment}-complens-lambda-bucket'
 
