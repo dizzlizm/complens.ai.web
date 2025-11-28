@@ -14,5 +14,13 @@
   {
     "ParameterKey": "DBMasterPassword",
     "ParameterValue": "RyyKRUU9R@MNEr4CYRDE"
+  },
+  {
+    "ParameterKey": "DomainName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "HostedZoneId",
+    "ParameterValue": ""
   }
 ]
