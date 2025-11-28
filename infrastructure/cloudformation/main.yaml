@@ -585,6 +585,20 @@ Resources:
 
   ApiGatewayStage:
     Type: AWS::ApiGatewayV2::Stage
+    DependsOn:
+      - HealthRoute
+      - ChatRoute
+      - ChatOptionsRoute
+      - ConversationsRoute
+      - ConversationsOptionsRoute
+      - ConversationDetailRoute
+      - ConversationDetailOptionsRoute
+      - OAuthAuthorizeRoute
+      - OAuthCallbackRoute
+      - OAuthDisconnectRoute
+      - OAuthDisconnectOptionsRoute
+      - OAuthStatusRoute
+      - DefaultRoute
     Properties:
       ApiId: !Ref ApiGateway
       StageName: !Ref Environment
