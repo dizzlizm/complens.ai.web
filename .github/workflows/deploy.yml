@@ -160,6 +160,8 @@ jobs:
         env:
           DB_PASSWORD: ${{ secrets.DB_MASTER_PASSWORD }}
           BILLING_EMAIL: ${{ secrets.BILLING_ALERT_EMAIL }}
+          BEDROCK_MODEL_ID: ${{ secrets.BEDROCK_MODEL_ID }}
+          BEDROCK_SECURITY_MODEL_ID: ${{ secrets.BEDROCK_SECURITY_MODEL_ID }}
         run: |
           cd infrastructure/cloudformation
 
@@ -167,10 +169,16 @@ jobs:
           ENV="${{ needs.setup.outputs.environment }}"
 
           # Prepare parameters with overrides from secrets
-          PARAMS=$(jq --arg pwd "$DB_PASSWORD" --arg email "$BILLING_EMAIL" \
+          PARAMS=$(jq \
+            --arg pwd "$DB_PASSWORD" \
+            --arg email "$BILLING_EMAIL" \
+            --arg model "${BEDROCK_MODEL_ID:-us.amazon.nova-lite-v1:0}" \
+            --arg secmodel "${BEDROCK_SECURITY_MODEL_ID:-us.anthropic.claude-3-5-sonnet-20241022-v2:0}" \
             'map(
               if .ParameterKey == "DBMasterPassword" then .ParameterValue = $pwd
               elif .ParameterKey == "BillingAlertEmail" then .ParameterValue = $email
+              elif .ParameterKey == "BedrockModelId" then .ParameterValue = $model
+              elif .ParameterKey == "BedrockSecurityModelId" then .ParameterValue = $secmodel
               else . end
             )' \
             parameters/${ENV}.json)

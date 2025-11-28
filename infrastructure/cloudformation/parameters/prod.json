@@ -14,5 +14,13 @@
   {
     "ParameterKey": "DBMasterPassword",
     "ParameterValue": "CHANGE_ME_SECURE_PASSWORD"
+  },
+  {
+    "ParameterKey": "BedrockModelId",
+    "ParameterValue": "us.amazon.nova-lite-v1:0"
+  },
+  {
+    "ParameterKey": "BedrockSecurityModelId",
+    "ParameterValue": "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
   }
 ]
