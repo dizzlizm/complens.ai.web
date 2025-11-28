@@ -78,6 +78,21 @@ exports.handler = async (event) => {
     const path = event.path || event.requestContext?.http?.path;
     const body = event.body ? JSON.parse(event.body) : {};
 
+    // Handle CORS preflight OPTIONS requests
+    if (httpMethod === 'OPTIONS') {
+      return {
+        statusCode: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+          'Access-Control-Max-Age': '86400', // Cache preflight for 24 hours
+          'Cache-Control': 'public, max-age=86400', // Cache preflight responses
+        },
+        body: '',
+      };
+    }
+
     // Route to appropriate handler
     let response;
 
@@ -129,7 +144,8 @@ exports.handler = async (event) => {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+        'Cache-Control': 'no-cache, no-store, must-revalidate', // Don't cache API responses
         ...response.headers,
       },
     };
@@ -141,6 +157,9 @@ exports.handler = async (event) => {
       headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
       body: JSON.stringify({
         error: 'Internal server error',

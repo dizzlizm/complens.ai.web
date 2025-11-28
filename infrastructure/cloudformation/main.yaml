@@ -662,6 +662,13 @@ Resources:
       RouteKey: 'POST /chat'
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
 
+  ChatOptionsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'OPTIONS /chat'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
   ConversationsRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -669,11 +676,25 @@ Resources:
       RouteKey: 'GET /conversations'
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
 
+  ConversationsOptionsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'OPTIONS /conversations'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
   ConversationDetailRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref ApiGateway
       RouteKey: 'GET /conversations/{id}'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  ConversationDetailOptionsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'OPTIONS /conversations/{id}'
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
 
   OAuthAuthorizeRoute:
@@ -695,6 +716,13 @@ Resources:
     Properties:
       ApiId: !Ref ApiGateway
       RouteKey: 'POST /oauth/google/disconnect'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  OAuthDisconnectOptionsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'OPTIONS /oauth/google/disconnect'
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
 
   OAuthStatusRoute:
