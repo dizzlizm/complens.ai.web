@@ -13,6 +13,14 @@
   },
   {
     "ParameterKey": "DBMasterPassword",
-    "ParameterValue": "RyyKRUU9R@MNEr4CYRDE"
+    "ParameterValue": "REPLACED_BY_GITHUB_ACTIONS"
+  },
+  {
+    "ParameterKey": "DomainName",
+    "ParameterValue": "dev.complens.ai"
+  },
+  {
+    "ParameterKey": "HostedZoneId",
+    "ParameterValue": "/hostedzone/Z02373573N3XBHSZBERY6"
   }
 ]

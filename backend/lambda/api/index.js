@@ -7,11 +7,13 @@
 const { BedrockService } = require('./services/bedrock');
 const { DatabaseService } = require('./services/database');
 const { SecretsService } = require('./services/secrets');
+const { GoogleOAuthService } = require('./services/google-oauth');
 
 // Initialize services
 let bedrockService;
 let databaseService;
 let secretsService;
+let googleOAuthService;
 let isInitialized = false;
 
 /**
@@ -38,6 +40,20 @@ async function initialize() {
       user: secrets.dbUsername,
       password: secrets.dbPassword,
     });
+
+    // Set Google OAuth credentials as environment variables (if they exist)
+    if (secrets.googleClientId && secrets.googleClientSecret) {
+      process.env.GOOGLE_CLIENT_ID = secrets.googleClientId;
+      process.env.GOOGLE_CLIENT_SECRET = secrets.googleClientSecret;
+      process.env.GOOGLE_REDIRECT_URI = secrets.googleRedirectUri;
+      process.env.FRONTEND_URL = secrets.frontendUrl;
+      console.log('Google OAuth credentials loaded from Secrets Manager');
+    } else {
+      console.warn('Google OAuth credentials not found in Secrets Manager');
+    }
+
+    // Initialize Google OAuth service
+    googleOAuthService = new GoogleOAuthService();
 
     isInitialized = true;
     console.log('Services initialized successfully');
@@ -81,6 +97,22 @@ exports.handler = async (event) => {
       case path.startsWith('/conversations/') && httpMethod === 'GET':
         const conversationId = path.split('/')[2];
         response = await handleGetConversation(conversationId);
+        break;
+
+      case path === '/oauth/google/authorize' && httpMethod === 'GET':
+        response = await handleGoogleOAuthAuthorize(event.queryStringParameters || {});
+        break;
+
+      case path === '/oauth/google/callback' && httpMethod === 'GET':
+        response = await handleGoogleOAuthCallback(event.queryStringParameters || {});
+        break;
+
+      case path === '/oauth/google/disconnect' && httpMethod === 'POST':
+        response = await handleGoogleOAuthDisconnect(body);
+        break;
+
+      case path === '/oauth/google/status' && httpMethod === 'GET':
+        response = await handleGoogleOAuthStatus(event.queryStringParameters || {});
         break;
 
       default:
@@ -257,6 +289,234 @@ async function handleGetConversation(conversationId) {
       statusCode: 500,
       body: JSON.stringify({
         error: 'Failed to get conversation',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Google OAuth Authorization - Step 1
+ * Redirects user to Google consent screen
+ */
+async function handleGoogleOAuthAuthorize(params) {
+  try {
+    const { orgId } = params;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    // Generate state parameter (used to prevent CSRF and track org)
+    const state = Buffer.from(JSON.stringify({ orgId, timestamp: Date.now() })).toString('base64');
+
+    // Get authorization URL
+    const authUrl = googleOAuthService.getAuthorizationUrl(state);
+
+    // Redirect to Google consent screen
+    return {
+      statusCode: 302,
+      headers: {
+        Location: authUrl,
+      },
+      body: '',
+    };
+
+  } catch (error) {
+    console.error('Error in OAuth authorize:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to initialize OAuth flow',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Google OAuth Callback - Step 2
+ * Handles redirect from Google after user approves/denies
+ */
+async function handleGoogleOAuthCallback(params) {
+  try {
+    const { code, state, error } = params;
+
+    // User denied access
+    if (error) {
+      return {
+        statusCode: 302,
+        headers: {
+          Location: `${process.env.FRONTEND_URL}?oauth_error=${error}`,
+        },
+        body: '',
+      };
+    }
+
+    if (!code || !state) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'Missing code or state parameter' }),
+      };
+    }
+
+    // Decode state to get orgId
+    const stateData = JSON.parse(Buffer.from(state, 'base64').toString());
+    const { orgId } = stateData;
+
+    // Exchange code for tokens
+    const tokens = await googleOAuthService.getTokens(code);
+
+    // Get user info
+    const userInfo = await googleOAuthService.getUserInfo(tokens.access_token);
+
+    // Store tokens in database
+    await databaseService.query(
+      `INSERT INTO google_workspace_connections (org_id, access_token, refresh_token, token_expiry, connected_email, connected_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (org_id)
+       DO UPDATE SET
+         access_token = $2,
+         refresh_token = $3,
+         token_expiry = $4,
+         connected_email = $5,
+         connected_at = NOW(),
+         disconnected_at = NULL`,
+      [
+        orgId,
+        tokens.access_token,
+        tokens.refresh_token,
+        new Date(Date.now() + tokens.expiry_date),
+        userInfo.email,
+      ]
+    );
+
+    // Redirect back to frontend with success
+    return {
+      statusCode: 302,
+      headers: {
+        Location: `${process.env.FRONTEND_URL}?oauth_success=true&email=${encodeURIComponent(userInfo.email)}`,
+      },
+      body: '',
+    };
+
+  } catch (error) {
+    console.error('Error in OAuth callback:', error);
+    return {
+      statusCode: 302,
+      headers: {
+        Location: `${process.env.FRONTEND_URL}?oauth_error=callback_failed`,
+      },
+      body: '',
+    };
+  }
+}
+
+/**
+ * Disconnect Google Workspace
+ */
+async function handleGoogleOAuthDisconnect(body) {
+  try {
+    const { orgId } = body;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    // Get current tokens
+    const result = await databaseService.query(
+      'SELECT access_token FROM google_workspace_connections WHERE org_id = $1',
+      [orgId]
+    );
+
+    if (result.rows.length > 0) {
+      // Revoke tokens with Google
+      try {
+        await googleOAuthService.revokeTokens(result.rows[0].access_token);
+      } catch (revokeError) {
+        console.error('Error revoking tokens:', revokeError);
+        // Continue anyway to mark as disconnected
+      }
+    }
+
+    // Mark as disconnected in database
+    await databaseService.query(
+      'UPDATE google_workspace_connections SET disconnected_at = NOW() WHERE org_id = $1',
+      [orgId]
+    );
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ message: 'Google Workspace disconnected successfully' }),
+    };
+
+  } catch (error) {
+    console.error('Error disconnecting Google Workspace:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to disconnect',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * Check Google Workspace connection status
+ */
+async function handleGoogleOAuthStatus(params) {
+  try {
+    const { orgId } = params;
+
+    if (!orgId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'orgId is required' }),
+      };
+    }
+
+    const result = await databaseService.query(
+      `SELECT connected_email, connected_at, disconnected_at, token_expiry
+       FROM google_workspace_connections
+       WHERE org_id = $1 AND disconnected_at IS NULL`,
+      [orgId]
+    );
+
+    if (result.rows.length === 0) {
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
+          connected: false,
+        }),
+      };
+    }
+
+    const connection = result.rows[0];
+    const isExpired = new Date(connection.token_expiry) < new Date();
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        connected: true,
+        email: connection.connected_email,
+        connectedAt: connection.connected_at,
+        tokenExpired: isExpired,
+      }),
+    };
+
+  } catch (error) {
+    console.error('Error checking OAuth status:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to check status',
         message: error.message,
       }),
     };

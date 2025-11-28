@@ -27,9 +27,24 @@ Parameters:
     MinLength: 8
     Description: Master password for PostgreSQL (min 8 characters)
 
+  DomainName:
+    Type: String
+    Default: ''
+    Description: '(Optional) Custom domain name (e.g., complens.ai or dev.complens.ai). Leave empty to use CloudFront default domain.'
+
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: '(Optional) Route53 Hosted Zone ID if domain is already in Route53. Leave empty if no domain or zone should be created.'
+
 Conditions:
   IsProd: !Equals [!Ref Environment, 'prod']
   IsDev: !Equals [!Ref Environment, 'dev']
+  HasDomain: !Not [!Equals [!Ref DomainName, '']]
+  HasHostedZone: !Not [!Equals [!Ref HostedZoneId, '']]
+  CreateHostedZone: !And
+    - !Condition HasDomain
+    - !Not [!Condition HasHostedZone]
 
 Resources:
   # ============================================================================
@@ -105,24 +120,30 @@ Resources:
         - Key: Name
           Value: !Sub '${Environment}-private-subnet-2'
 
-  # NAT Gateway - COMMENTED OUT TO SAVE ~$32/MONTH
-  # Uncomment when you need Lambda to call external APIs (Google Workspace, Chrome Web Store, etc.)
-  # For now, Lambda only uses AWS services via VPC endpoints (no external internet needed)
+  # NAT Gateway - REQUIRED for MCP servers to call external APIs
+  # (Google Workspace, Chrome Web Store, etc.)
+  # Cost: ~$32/month + data transfer
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-nat-eip'
+        - Key: Environment
+          Value: !Ref Environment
 
-  # NatGatewayEIP:
-  #   Type: AWS::EC2::EIP
-  #   DependsOn: AttachGateway
-  #   Properties:
-  #     Domain: vpc
-  #
-  # NatGateway:
-  #   Type: AWS::EC2::NatGateway
-  #   Properties:
-  #     AllocationId: !GetAtt NatGatewayEIP.AllocationId
-  #     SubnetId: !Ref PublicSubnet1
-  #     Tags:
-  #       - Key: Name
-  #         Value: !Sub '${Environment}-nat-gateway'
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-nat-gateway'
+        - Key: Environment
+          Value: !Ref Environment
 
   # Route Tables
   PublicRouteTable:
@@ -161,16 +182,13 @@ Resources:
         - Key: Name
           Value: !Sub '${Environment}-private-rt'
 
-  # PrivateRoute - COMMENTED OUT (no NAT Gateway = no internet for private subnets)
-  # Private subnets use VPC endpoints only (S3, Secrets Manager, Bedrock, etc.)
-  # Uncomment when NAT Gateway is enabled for external API calls
-  #
-  # PrivateRoute:
-  #   Type: AWS::EC2::Route
-  #   Properties:
-  #     RouteTableId: !Ref PrivateRouteTable
-  #     DestinationCidrBlock: 0.0.0.0/0
-  #     NatGatewayId: !Ref NatGateway
+  # Private route through NAT Gateway for external API calls
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
 
   PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -309,6 +327,43 @@ Resources:
           Value: !Ref Environment
 
   # ============================================================================
+  # Route53 and SSL/TLS Certificate
+  # ============================================================================
+
+  # Route53 Hosted Zone (created only if domain provided and zone doesn't exist)
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    Condition: CreateHostedZone
+    Properties:
+      Name: !Ref DomainName
+      HostedZoneConfig:
+        Comment: !Sub 'Hosted zone for ${DomainName}'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: Complens
+
+  # ACM Certificate for CloudFront (must be in us-east-1)
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasDomain
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !If
+            - CreateHostedZone
+            - !Ref HostedZone
+            - !Ref HostedZoneId
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: Complens
+
+  # ============================================================================
   # CloudFront Distribution for Frontend
   # ============================================================================
 
@@ -338,6 +393,10 @@ Resources:
         Enabled: true
         DefaultRootObject: index.html
         Comment: !Sub '${Environment} Complens.ai Frontend'
+        Aliases: !If
+          - HasDomain
+          - [!Ref DomainName]
+          - !Ref AWS::NoValue
         Origins:
           - Id: S3Origin
             DomainName: !GetAtt FrontendBucket.RegionalDomainName
@@ -369,12 +428,28 @@ Resources:
             ResponseCode: 200
             ResponsePagePath: /index.html
         PriceClass: PriceClass_100
-        ViewerCertificate:
-          CloudFrontDefaultCertificate: true
-          # Add custom certificate when domain is configured:
-          # AcmCertificateArn: !Ref Certificate
-          # SslSupportMethod: sni-only
-          # MinimumProtocolVersion: TLSv1.2_2021
+        ViewerCertificate: !If
+          - HasDomain
+          - AcmCertificateArn: !Ref Certificate
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+
+  # Route53 DNS Record pointing to CloudFront
+  DNSRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDomain
+    Properties:
+      HostedZoneId: !If
+        - CreateHostedZone
+        - !Ref HostedZone
+        - !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (constant)
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        EvaluateTargetHealth: false
 
   # ============================================================================
   # Secrets Manager
@@ -506,7 +581,18 @@ Resources:
       ProtocolType: HTTP
       CorsConfiguration:
         AllowOrigins:
-          - !Sub 'https://${CloudFrontDistribution.DomainName}'
+          - !If
+            - HasDomain
+            - !Sub 'https://${DomainName}'
+            - !Sub 'https://${CloudFrontDistribution.DomainName}'
+          - !If
+            - IsDev
+            - 'http://localhost:3000'
+            - !Ref AWS::NoValue
+          - !If
+            - IsDev
+            - '*'
+            - !Ref AWS::NoValue
         AllowMethods:
           - GET
           - POST
@@ -515,6 +601,7 @@ Resources:
           - OPTIONS
         AllowHeaders:
           - '*'
+        AllowCredentials: false
         MaxAge: 300
       Tags:
         Environment: !Ref Environment
@@ -561,6 +648,170 @@ Resources:
   #         REGION: !Ref AWS::Region
   #     Timeout: 30
   #     MemorySize: !If [IsProd, 512, 256]
+
+  # ============================================================================
+  # MCP (Model Context Protocol) Infrastructure
+  # ============================================================================
+
+  # ECS Cluster for MCP Servers
+  MCPCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${Environment}-complens-mcp-cluster'
+      ClusterSettings:
+        - Name: containerInsights
+          Value: !If [IsProd, enabled, disabled]
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: Complens
+
+  # Security Group for MCP ECS Tasks
+  MCPSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for MCP server ECS tasks
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic for external API calls
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-mcp-sg'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # CloudWatch Log Group for MCP Servers
+  MCPLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${Environment}/complens-mcp'
+      RetentionInDays: !If [IsProd, 30, 7]
+
+  # ECS Task Execution Role (for pulling images, writing logs)
+  MCPTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-complens-mcp-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref ApplicationSecrets
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ECS Task Role (for MCP server operations - DB access, external APIs, etc.)
+  MCPTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-complens-mcp-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: DatabaseAndSecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref ApplicationSecrets
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-sonnet-4-*'
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub '${LambdaCodeBucket.Arn}/*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # S3 Bucket for MCP Server Code/Images
+  MCPCodeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-${Environment}-complens-mcp-code'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: Complens
+
+  # ECR Repository for MCP Server Docker Images
+  MCPRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${Environment}-complens-mcp-servers'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: Complens
 
 # ============================================================================
 # Outputs
@@ -614,3 +865,44 @@ Outputs:
     Value: !GetAtt LambdaExecutionRole.Arn
     Export:
       Name: !Sub '${Environment}-complens-lambda-role-arn'
+
+  CustomDomainName:
+    Condition: HasDomain
+    Description: Custom domain name for the application
+    Value: !Ref DomainName
+    Export:
+      Name: !Sub '${Environment}-complens-domain'
+
+  HostedZoneId:
+    Condition: HasDomain
+    Description: Route53 Hosted Zone ID
+    Value: !If
+      - CreateHostedZone
+      - !Ref HostedZone
+      - !Ref HostedZoneId
+    Export:
+      Name: !Sub '${Environment}-complens-hosted-zone-id'
+
+  MCPClusterName:
+    Description: ECS Cluster name for MCP servers
+    Value: !Ref MCPCluster
+    Export:
+      Name: !Sub '${Environment}-complens-mcp-cluster'
+
+  MCPRepositoryUri:
+    Description: ECR Repository URI for MCP server images
+    Value: !GetAtt MCPRepository.RepositoryUri
+    Export:
+      Name: !Sub '${Environment}-complens-mcp-repo-uri'
+
+  MCPTaskRoleArn:
+    Description: ARN of MCP task role
+    Value: !GetAtt MCPTaskRole.Arn
+    Export:
+      Name: !Sub '${Environment}-complens-mcp-task-role-arn'
+
+  MCPTaskExecutionRoleArn:
+    Description: ARN of MCP task execution role
+    Value: !GetAtt MCPTaskExecutionRole.Arn
+    Export:
+      Name: !Sub '${Environment}-complens-mcp-execution-role-arn'
