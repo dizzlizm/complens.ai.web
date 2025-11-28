@@ -17,6 +17,9 @@ class DatabaseService {
       max: 2, // Keep connections low for Lambda (cold starts)
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
+      ssl: {
+        rejectUnauthorized: false
+      }
     });
 
     // Handle pool errors
