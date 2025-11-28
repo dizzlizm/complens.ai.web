@@ -6,8 +6,6 @@ import Dashboard from './pages/Admin/Dashboard';
 import OAuth from './pages/Admin/OAuth';
 import UserManagement from './pages/Admin/UserManagement';
 import './App.css';
-import ChatMessage from './components/ChatMessage';
-import { sendMessage } from './services/api';
 
 function App() {
   return (
