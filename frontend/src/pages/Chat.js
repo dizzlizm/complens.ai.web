@@ -74,7 +74,7 @@ function Chat() {
       <header className="chat-header">
         <div className="header-content">
           <h1>Complens.ai</h1>
-          <p>Powered by Claude Sonnet 4 via AWS Bedrock</p>
+          <p>Powered by AWS Bedrock</p>
         </div>
         <div className="header-actions">
           <button onClick={handleNewConversation} className="new-conversation-btn">
@@ -91,7 +91,7 @@ function Chat() {
           {messages.length === 0 && (
             <div className="welcome-message">
               <h2>Welcome to Complens.ai</h2>
-              <p>Start a conversation with Claude Sonnet 4</p>
+              <p>Start a conversation</p>
               <div className="example-prompts">
                 <p>Try asking:</p>
                 <ul>
@@ -114,7 +114,7 @@ function Chat() {
                 <span>.</span>
                 <span>.</span>
               </div>
-              <p>Claude is thinking...</p>
+              <p>Complens is thinking...</p>
             </div>
           )}
 
