@@ -5,6 +5,13 @@ exports.handler = async (event) => {
   console.log('Placeholder Lambda - waiting for actual code deployment');
 
   const httpMethod = event.httpMethod || event.requestContext?.http?.method;
+  let path = event.rawPath || event.path || event.requestContext?.http?.path;
+
+  // Strip stage prefix from path (e.g., /dev/chat -> /chat)
+  const stage = event.requestContext?.stage;
+  if (stage && path.startsWith(`/${stage}/`)) {
+    path = path.substring(`/${stage}`.length);
+  }
 
   // Handle CORS preflight OPTIONS requests
   if (httpMethod === 'OPTIONS') {
