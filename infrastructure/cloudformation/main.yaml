@@ -1052,7 +1052,7 @@ Resources:
             # Log Lambda invocations
             - Type: AWS::Lambda::Function
               Values:
-                - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function/*'
+                - !Sub 'arn:aws:lambda'
             # Log S3 data events
             - Type: AWS::S3::Object
               Values:
