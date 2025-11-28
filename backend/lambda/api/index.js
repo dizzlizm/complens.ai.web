@@ -41,6 +41,17 @@ async function initialize() {
       password: secrets.dbPassword,
     });
 
+    // Set Google OAuth credentials as environment variables (if they exist)
+    if (secrets.googleClientId && secrets.googleClientSecret) {
+      process.env.GOOGLE_CLIENT_ID = secrets.googleClientId;
+      process.env.GOOGLE_CLIENT_SECRET = secrets.googleClientSecret;
+      process.env.GOOGLE_REDIRECT_URI = secrets.googleRedirectUri;
+      process.env.FRONTEND_URL = secrets.frontendUrl;
+      console.log('Google OAuth credentials loaded from Secrets Manager');
+    } else {
+      console.warn('Google OAuth credentials not found in Secrets Manager');
+    }
+
     // Initialize Google OAuth service
     googleOAuthService = new GoogleOAuthService();
 
