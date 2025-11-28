@@ -99,6 +99,60 @@ jobs:
             --template-body file://main.yaml \
             --region ${{ env.AWS_REGION }}
 
+      - name: Prepare Lambda code bucket and placeholder
+        run: |
+          # Get AWS account ID
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ENV="${{ needs.setup.outputs.environment }}"
+          BUCKET_NAME="${ACCOUNT_ID}-${ENV}-complens-lambda-code"
+
+          echo "🔑 AWS Account: ${ACCOUNT_ID}"
+          echo "📦 Lambda bucket name: ${BUCKET_NAME}"
+
+          # Check if bucket exists
+          if aws s3 ls "s3://${BUCKET_NAME}" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "✅ Lambda code bucket already exists: ${BUCKET_NAME}"
+          else
+            echo "📦 Creating Lambda code bucket: ${BUCKET_NAME}"
+            aws s3 mb "s3://${BUCKET_NAME}" --region ${{ env.AWS_REGION }}
+
+            # Enable versioning for Lambda deployments
+            aws s3api put-bucket-versioning \
+              --bucket ${BUCKET_NAME} \
+              --versioning-configuration Status=Enabled \
+              --region ${{ env.AWS_REGION }}
+
+            # Enable encryption
+            aws s3api put-bucket-encryption \
+              --bucket ${BUCKET_NAME} \
+              --server-side-encryption-configuration '{
+                "Rules": [{
+                  "ApplyServerSideEncryptionByDefault": {
+                    "SSEAlgorithm": "AES256"
+                  }
+                }]
+              }' \
+              --region ${{ env.AWS_REGION }}
+
+            # Block public access
+            aws s3api put-public-access-block \
+              --bucket ${BUCKET_NAME} \
+              --public-access-block-configuration \
+                "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" \
+              --region ${{ env.AWS_REGION }}
+          fi
+
+          # Check if placeholder or real code exists
+          if aws s3 ls "s3://${BUCKET_NAME}/api/latest.zip" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "✅ Lambda code already exists in bucket"
+          else
+            echo "📤 Uploading placeholder Lambda code..."
+            aws s3 cp infrastructure/lambda-placeholder.zip \
+              "s3://${BUCKET_NAME}/api/latest.zip" \
+              --region ${{ env.AWS_REGION }}
+            echo "⚠️  Placeholder uploaded - real code will be deployed later"
+          fi
+
       - name: Deploy CloudFormation stack
         id: deploy-stack
         env:
@@ -385,6 +439,23 @@ jobs:
           echo "api-url=${API_URL}" >> $GITHUB_OUTPUT
           echo "frontend-bucket=${FRONTEND_BUCKET}" >> $GITHUB_OUTPUT
           echo "cloudfront-url=${CLOUDFRONT_URL}" >> $GITHUB_OUTPUT
+
+          # Verify bucket exists before proceeding
+          if [ -z "$FRONTEND_BUCKET" ] || [ "$FRONTEND_BUCKET" = "None" ]; then
+            echo "ERROR: Frontend bucket output not found in stack"
+            exit 1
+          fi
+
+          echo "Verifying frontend bucket exists: ${FRONTEND_BUCKET}"
+          if ! aws s3 ls "s3://${FRONTEND_BUCKET}" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "ERROR: Frontend bucket ${FRONTEND_BUCKET} does not exist!"
+            echo "Stack outputs show the bucket but it's not accessible."
+            echo "Check CloudFormation stack status:"
+            aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query 'Stacks[0].StackStatus'
+            exit 1
+          fi
+
+          echo "✅ Frontend bucket verified: ${FRONTEND_BUCKET}"
 
       - name: Install dependencies
         run: |

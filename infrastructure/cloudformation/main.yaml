@@ -302,29 +302,10 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  LambdaCodeBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${AWS::AccountId}-${Environment}-complens-lambda-code'
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteOldVersions
-            Status: Enabled
-            NoncurrentVersionExpirationInDays: 30
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
+  # Lambda Code Bucket is created externally by GitHub Actions before stack deployment
+  # This avoids the chicken-and-egg problem: Lambda needs S3 code, but bucket is in same stack
+  # Bucket name: ${AWS::AccountId}-${Environment}-complens-lambda-code
+  # GitHub Actions creates this bucket and uploads placeholder code before deploying CloudFormation
 
   # ============================================================================
   # Route53 and SSL/TLS Certificate
@@ -565,7 +546,7 @@ Resources:
                   - s3:PutObject
                 Resource:
                   - !Sub '${FrontendBucket.Arn}/*'
-                  - !Sub '${LambdaCodeBucket.Arn}/*'
+                  - !Sub 'arn:aws:s3:::${AWS::AccountId}-${Environment}-complens-lambda-code/*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -580,19 +561,15 @@ Resources:
       Name: !Sub '${Environment}-complens-api'
       ProtocolType: HTTP
       CorsConfiguration:
-        AllowOrigins:
-          - !If
-            - HasDomain
-            - !Sub 'https://${DomainName}'
-            - !Sub 'https://${CloudFrontDistribution.DomainName}'
-          - !If
-            - IsDev
+        AllowOrigins: !If
+          - IsDev
+          - - 'https://dev.complens.ai'
             - 'http://localhost:3000'
-            - !Ref AWS::NoValue
-          - !If
-            - IsDev
             - '*'
-            - !Ref AWS::NoValue
+          - - !If
+              - HasDomain
+              - !Sub 'https://${DomainName}'
+              - !Sub 'https://${CloudFrontDistribution.DomainName}'
         AllowMethods:
           - GET
           - POST
@@ -624,30 +601,116 @@ Resources:
       LogGroupName: !Sub '/aws/apigateway/${Environment}-complens-api'
       RetentionInDays: !If [IsProd, 30, 7]
 
-  # Lambda function placeholder - will be created via deployment
-  # Uncomment and configure once Lambda code is ready
-  # ApiLambdaFunction:
-  #   Type: AWS::Lambda::Function
-  #   Properties:
-  #     FunctionName: !Sub '${Environment}-complens-api'
-  #     Runtime: nodejs20.x
-  #     Handler: index.handler
-  #     Role: !GetAtt LambdaExecutionRole.Arn
-  #     Code:
-  #       S3Bucket: !Ref LambdaCodeBucket
-  #       S3Key: api/latest.zip
-  #     VpcConfig:
-  #       SecurityGroupIds:
-  #         - !Ref LambdaSecurityGroup
-  #       SubnetIds:
-  #         - !Ref PrivateSubnet1
-  #         - !Ref PrivateSubnet2
-  #     Environment:
-  #       Variables:
-  #         SECRETS_ARN: !Ref ApplicationSecrets
-  #         REGION: !Ref AWS::Region
-  #     Timeout: 30
-  #     MemorySize: !If [IsProd, 512, 256]
+  # Lambda function
+  ApiLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-complens-api'
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Sub '${AWS::AccountId}-${Environment}-complens-lambda-code'
+        S3Key: api/latest.zip
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Environment:
+        Variables:
+          SECRETS_ARN: !Ref ApplicationSecrets
+          REGION: !Ref AWS::Region
+      Timeout: 30
+      MemorySize: !If [IsProd, 512, 256]
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Lambda permission for API Gateway
+  ApiGatewayLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
+
+  # API Gateway Integration
+  ApiGatewayIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiLambdaFunction.Arn}/invocations'
+      IntegrationMethod: POST
+      PayloadFormatVersion: '2.0'
+
+  # API Gateway Routes
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /health'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  ChatRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /chat'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  ConversationsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /conversations'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  ConversationDetailRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /conversations/{id}'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  OAuthAuthorizeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /oauth/google/authorize'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  OAuthCallbackRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /oauth/google/callback'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  OAuthDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /oauth/google/disconnect'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  OAuthStatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /oauth/google/status'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  # Catch-all route for other paths
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
 
   # ============================================================================
   # MCP (Model Context Protocol) Infrastructure
@@ -753,7 +816,7 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                 Resource:
-                  - !Sub '${LambdaCodeBucket.Arn}/*'
+                  - !Sub 'arn:aws:s3:::${AWS::AccountId}-${Environment}-complens-lambda-code/*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -843,8 +906,8 @@ Outputs:
       Name: !Sub '${Environment}-complens-frontend-bucket'
 
   LambdaCodeBucketName:
-    Description: S3 bucket for Lambda code
-    Value: !Ref LambdaCodeBucket
+    Description: S3 bucket for Lambda code (created externally by GitHub Actions)
+    Value: !Sub '${AWS::AccountId}-${Environment}-complens-lambda-code'
     Export:
       Name: !Sub '${Environment}-complens-lambda-bucket'
 
