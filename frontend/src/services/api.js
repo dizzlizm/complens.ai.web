@@ -1,4 +1,5 @@
 import axios from 'axios';
+import authService from './auth';
 
 // Get API endpoint from environment variable or use placeholder
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/dev';
@@ -10,12 +11,27 @@ const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
   timeout: 30000, // 30 second timeout
+  withCredentials: true, // Allow credentials for CORS
 });
 
-// Add request interceptor for logging (optional)
+// Add request interceptor to attach auth token
 apiClient.interceptors.request.use(
-  (config) => {
+  async (config) => {
     console.log('API Request:', config.method.toUpperCase(), config.url);
+
+    // Get ID token and attach to Authorization header
+    try {
+      const idToken = await authService.getIdToken();
+      if (idToken) {
+        config.headers.Authorization = `Bearer ${idToken}`;
+        console.log('Authorization header added');
+      } else {
+        console.log('No auth token available');
+      }
+    } catch (error) {
+      console.warn('Failed to get auth token:', error.message);
+    }
+
     return config;
   },
   (error) => {
@@ -34,7 +50,16 @@ apiClient.interceptors.response.use(
     console.error('API Error:', error.response?.status, error.message);
 
     if (error.response) {
-      // Server responded with error status
+      // Handle authentication errors
+      if (error.response.status === 401) {
+        console.warn('Unauthorized - clearing auth tokens');
+        authService.clearTokens();
+        // Redirect to login if not already there
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname);
+        }
+      }
+
       // Log the full error response for debugging
       console.error('Full error response:', error.response.data);
 
