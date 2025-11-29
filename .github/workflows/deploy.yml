@@ -203,21 +203,44 @@ jobs:
               --region ${{ env.AWS_REGION }}
           else
             echo "Updating existing stack..."
-            UPDATE_OUTPUT=$(aws cloudformation update-stack \
+
+            # Create a changeset first to see what will change
+            echo "Creating changeset..."
+            CHANGESET_NAME="deploy-$(date +%s)"
+            aws cloudformation create-change-set \
               --stack-name ${STACK_NAME} \
+              --change-set-name ${CHANGESET_NAME} \
               --template-body file://main.yaml \
               --parameters "$PARAMS" \
               --capabilities CAPABILITY_NAMED_IAM \
-              --region ${{ env.AWS_REGION }} 2>&1 || true)
+              --region ${{ env.AWS_REGION }}
 
-            if echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
-              echo "No updates needed"
-            else
-              echo "Waiting for stack update..."
-              aws cloudformation wait stack-update-complete \
-                --stack-name ${STACK_NAME} \
-                --region ${{ env.AWS_REGION }}
-            fi
+            echo "Waiting for changeset creation..."
+            aws cloudformation wait change-set-create-complete \
+              --stack-name ${STACK_NAME} \
+              --change-set-name ${CHANGESET_NAME} \
+              --region ${{ env.AWS_REGION }} 2>&1 || true
+
+            # Describe the changeset
+            echo "Changeset contents:"
+            aws cloudformation describe-change-set \
+              --stack-name ${STACK_NAME} \
+              --change-set-name ${CHANGESET_NAME} \
+              --region ${{ env.AWS_REGION }} \
+              --query 'Changes[].{Action:ResourceChange.Action,Resource:ResourceChange.LogicalResourceId,Type:ResourceChange.ResourceType}' \
+              --output table
+
+            # Execute the changeset
+            echo "Executing changeset..."
+            aws cloudformation execute-change-set \
+              --stack-name ${STACK_NAME} \
+              --change-set-name ${CHANGESET_NAME} \
+              --region ${{ env.AWS_REGION }}
+
+            echo "Waiting for stack update..."
+            aws cloudformation wait stack-update-complete \
+              --stack-name ${STACK_NAME} \
+              --region ${{ env.AWS_REGION }}
           fi
 
       - name: Get stack outputs
