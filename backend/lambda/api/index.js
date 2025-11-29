@@ -11,6 +11,7 @@ const { GoogleOAuthService } = require('./services/google-oauth');
 const { UserManagementService } = require('./services/user-management');
 const { GoogleWorkspaceSecurityService } = require('./services/google-workspace-security');
 const { ExternalSecurityService } = require('./services/external-security');
+const { ChromeWebStoreService } = require('./services/chrome-web-store');
 
 // Initialize services
 let bedrockService;
@@ -20,6 +21,7 @@ let googleOAuthService;
 let userManagementService;
 let googleWorkspaceSecurityService;
 let externalSecurityService;
+let chromeWebStoreService;
 let isInitialized = false;
 
 /**
@@ -96,6 +98,9 @@ async function initialize() {
 
     // Initialize External Security Intelligence service
     externalSecurityService = new ExternalSecurityService(databaseService);
+
+    // Initialize Chrome Web Store service
+    chromeWebStoreService = new ChromeWebStoreService(databaseService);
 
     isInitialized = true;
     console.log('Services initialized successfully');
@@ -274,6 +279,11 @@ exports.handler = async (event) => {
       case path.startsWith('/security/cve/') && httpMethod === 'GET':
         const cveId = path.split('/')[3];
         response = await handleCVELookup(cveId, event.queryStringParameters || {});
+        break;
+
+      case path.startsWith('/security/chrome-extension/') && httpMethod === 'GET':
+        const extensionId = path.split('/')[3];
+        response = await handleChromeExtensionLookup(extensionId, event.queryStringParameters || {});
         break;
 
       default:
@@ -1127,6 +1137,50 @@ async function handleCVELookup(cveId, params) {
       statusCode: 500,
       body: JSON.stringify({
         error: 'Failed to lookup CVE',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+async function handleChromeExtensionLookup(extensionId, params) {
+  try {
+    if (!extensionId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'Extension ID is required' }),
+      };
+    }
+
+    const { useCache, orgId } = params;
+
+    // Fetch extension details (with caching)
+    const result = await chromeWebStoreService.getExtension(extensionId, {
+      useCache: useCache !== 'false',
+      orgId,
+    });
+
+    // If not cached and no AI analysis yet, generate it
+    if (!result.cached && !result.aiAnalysis && result.name) {
+      const analysis = await chromeWebStoreService.analyzeExtensionSecurity(result, bedrockService);
+
+      // Update cache with AI analysis
+      await chromeWebStoreService.updateAIAnalysis('chrome_store', 'extension_id', extensionId, analysis, orgId);
+
+      result.aiAnalysis = analysis;
+    }
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+    };
+
+  } catch (error) {
+    console.error('Error looking up Chrome extension:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to lookup Chrome extension',
         message: error.message,
       }),
     };
