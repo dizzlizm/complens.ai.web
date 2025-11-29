@@ -216,10 +216,43 @@ jobs:
               --region ${{ env.AWS_REGION }}
 
             echo "Waiting for changeset creation..."
-            aws cloudformation wait change-set-create-complete \
+            if ! aws cloudformation wait change-set-create-complete \
               --stack-name ${STACK_NAME} \
               --change-set-name ${CHANGESET_NAME} \
-              --region ${{ env.AWS_REGION }} 2>&1 || true
+              --region ${{ env.AWS_REGION }} 2>&1; then
+
+              echo "⚠️ Changeset wait failed - checking status..."
+              STATUS=$(aws cloudformation describe-change-set \
+                --stack-name ${STACK_NAME} \
+                --change-set-name ${CHANGESET_NAME} \
+                --region ${{ env.AWS_REGION }} \
+                --query 'Status' \
+                --output text)
+
+              STATUS_REASON=$(aws cloudformation describe-change-set \
+                --stack-name ${STACK_NAME} \
+                --change-set-name ${CHANGESET_NAME} \
+                --region ${{ env.AWS_REGION }} \
+                --query 'StatusReason' \
+                --output text)
+
+              echo "Changeset Status: $STATUS"
+              echo "Changeset Status Reason: $STATUS_REASON"
+
+              # If no changes, that's OK
+              if echo "$STATUS_REASON" | grep -qi "didn't contain changes\|no updates"; then
+                echo "✅ No changes to deploy - stack is up to date"
+                exit 0
+              else
+                echo "❌ Changeset creation failed!"
+                echo "Full changeset details:"
+                aws cloudformation describe-change-set \
+                  --stack-name ${STACK_NAME} \
+                  --change-set-name ${CHANGESET_NAME} \
+                  --region ${{ env.AWS_REGION }}
+                exit 1
+              fi
+            fi
 
             # Describe the changeset
             echo "Changeset contents:"
