@@ -711,6 +711,16 @@ Resources:
                 Action:
                   - secretsmanager:GetSecretValue
                 Resource: !Ref ApplicationSecrets
+        - PolicyName: CloudFormationReadOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - CloudFormation:DescribeStacks
+                  - cloudformation:ListStacks
+                Resource:
+                  - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
