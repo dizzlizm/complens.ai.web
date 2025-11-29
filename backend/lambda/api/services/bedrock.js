@@ -388,6 +388,8 @@ class BedrockService {
       console.error('[Bedrock] Stream Error:', error);
       throw error;
     }
+  }
+
   /**
    * Analyze text or perform specific tasks
    * @param {string} prompt - Task prompt
