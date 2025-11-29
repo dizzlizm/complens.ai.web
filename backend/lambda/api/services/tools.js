@@ -42,8 +42,8 @@ const SECURITY_TOOLS = [
     },
   },
   {
-    name: 'lookup_cve',
-    description: 'Get detailed information about a specific CVE (Common Vulnerabilities and Exposures). Use this when user provides a CVE ID or asks about a specific vulnerability.',
+    name: 'get_vulnerability_intelligence',
+    description: 'Get comprehensive intelligence for a specific CVE ID. Includes technical details from NIST, active exploitation status from CISA KEV, and probability scoring from EPSS. Use this for deep dives into specific vulnerabilities.',
     input_schema: {
       type: 'object',
       properties: {
@@ -55,6 +55,34 @@ const SECURITY_TOOLS = [
       required: ['cve_id'],
     },
   },
+  {
+    name: 'check_exploitation_status',
+    description: 'Quickly check if a specific vulnerability is listed in the CISA Known Exploited Vulnerabilities (KEV) catalog. Use this to verify if a vulnerability is actively being used in attacks.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        cve_id: {
+          type: 'string',
+          description: 'The CVE ID to check',
+        },
+      },
+      required: ['cve_id'],
+    },
+  },
+  {
+    name: 'predict_exploitability',
+    description: 'Retrieve the EPSS (Exploit Prediction Scoring System) score. Returns a probability (0-1) that the vulnerability will be exploited in the wild in the next 30 days.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        cve_id: {
+          type: 'string',
+          description: 'The CVE ID to check',
+        },
+      },
+      required: ['cve_id'],
+    },
+  }
 ];
 
 /**
@@ -136,10 +164,13 @@ async function executeTool(toolName, toolInput, services) {
       };
     }
 
+    // Renamed from 'lookup_cve' to 'get_vulnerability_intelligence' to match new definition,
+    // though typically one might keep 'lookup_cve' as an alias.
+    case 'get_vulnerability_intelligence': 
     case 'lookup_cve': {
       const { cve_id } = toolInput;
 
-      // Get CVE details
+      // Get Comprehensive CVE details (NIST + CISA + EPSS)
       const cveData = await externalSecurityService.getCVEDetails(cve_id, {
         useCache: true,
       });
@@ -154,7 +185,7 @@ async function executeTool(toolName, toolInput, services) {
 
         // Cache the analysis
         await externalSecurityService.updateAIAnalysis(
-          'nist',
+          'combined_intel',
           'cve_id',
           cve_id.toUpperCase(),
           analysis
@@ -164,6 +195,24 @@ async function executeTool(toolName, toolInput, services) {
       return {
         success: true,
         data: cveData,
+      };
+    }
+
+    case 'check_exploitation_status': {
+      const { cve_id } = toolInput;
+      const data = await externalSecurityService.checkCISAExploits(cve_id);
+      return {
+        success: true,
+        data: data,
+      };
+    }
+
+    case 'predict_exploitability': {
+      const { cve_id } = toolInput;
+      const data = await externalSecurityService.getEPSSScore(cve_id);
+      return {
+        success: true,
+        data: data,
       };
     }
 

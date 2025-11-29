@@ -1,6 +1,6 @@
 /**
  * External Security Intelligence Service
- * Fetches vulnerability data from NIST NVD, CVE.org, and other sources
+ * Fetches vulnerability data from NIST NVD, CISA KEV, and EPSS
  */
 
 const https = require('https');
@@ -151,7 +151,7 @@ class ExternalSecurityService {
         cachedAt: new Date(),
         expiresAt: new Date(Date.now() + this.cacheExpiration),
         results: vulnerabilities,
-        aiAnalysis: null, // Will be added separately
+        aiAnalysis: null,
       };
 
     } catch (error) {
@@ -161,56 +161,23 @@ class ExternalSecurityService {
   }
 
   /**
-   * Get CVE details by ID
+   * Internal: Fetch raw NIST data for a single CVE
    */
-  async getCVEDetails(cveId, options = {}) {
-    const {
-      useCache = true,
-      orgId = null,
-    } = options;
-
-    // Normalize CVE ID
-    const normalizedCveId = cveId.toUpperCase();
-
-    // Check cache
-    if (useCache) {
-      const cached = await this.getFromCache('nist', 'cve_id', normalizedCveId, orgId);
-      if (cached) {
-        console.log('Returning cached CVE data');
-        return {
-          ...cached.raw_data,
-          cached: true,
-          cachedAt: cached.cached_at,
-          aiAnalysis: cached.ai_analysis,
-        };
-      }
-    }
-
-    // Fetch from NIST API
-    console.log(`Fetching CVE from NIST: ${normalizedCveId}`);
-
+  async _fetchNISTDetails(cveId) {
     const baseUrl = 'https://services.nvd.nist.gov/rest/json/cves/2.0';
-    const params = new URLSearchParams({
-      cveId: normalizedCveId,
-    });
-
-    const headers = {};
-    if (this.nistApiKey) {
-      headers['apiKey'] = this.nistApiKey;
-    }
-
+    const headers = this.nistApiKey ? { 'apiKey': this.nistApiKey } : {};
+    
     try {
-      const data = await this.httpGet(`${baseUrl}?${params}`, headers);
-
+      const data = await this.httpGet(`${baseUrl}?cveId=${cveId}`, headers);
+      
       if (!data.vulnerabilities || data.vulnerabilities.length === 0) {
-        throw new Error(`CVE ${normalizedCveId} not found`);
+        throw new Error('CVE not found in NIST');
       }
-
+      
       const cve = data.vulnerabilities[0].cve;
       const metrics = cve.metrics?.cvssMetricV31?.[0] || cve.metrics?.cvssMetricV2?.[0];
-
-      const cveDetails = {
-        cveId: cve.id,
+      
+      return {
         description: cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description',
         severity: metrics?.cvssData?.baseSeverity || 'UNKNOWN',
         cvssScore: metrics?.cvssData?.baseScore || 0,
@@ -225,36 +192,159 @@ class ExternalSecurityService {
           node.cpeMatch?.map(cpe => cpe.criteria) || []
         ) || [],
       };
-
-      // Save to cache
-      await this.saveToCache('nist', 'cve_id', normalizedCveId, cveDetails, null, orgId);
-
-      return {
-        ...cveDetails,
-        cached: false,
-        cachedAt: new Date(),
-        aiAnalysis: null,
-      };
-
     } catch (error) {
-      console.error('Error fetching CVE:', error);
-      throw new Error(`CVE lookup error: ${error.message}`);
+      console.error(`NIST fetch failed for ${cveId}:`, error.message);
+      throw error;
     }
   }
 
   /**
-   * Analyze security data with AI
+   * Check CISA Known Exploited Vulnerabilities (KEV)
+   * Source: https://www.cisa.gov/known-exploited-vulnerabilities-catalog
+   */
+  async checkCISAExploits(cveId) {
+    const KEV_URL = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
+    
+    try {
+      // In a production environment, this file should be cached/downloaded periodically
+      // rather than fetched on every request due to its size.
+      const data = await this.httpGet(KEV_URL);
+      const entry = data.vulnerabilities.find(v => v.cveID === cveId.toUpperCase());
+
+      if (entry) {
+        return {
+          isExploited: true,
+          dateAdded: entry.dateAdded,
+          requiredAction: entry.requiredAction,
+          vendorProject: entry.vendorProject,
+          product: entry.product,
+          notes: entry.notes
+        };
+      }
+      return { isExploited: false, message: "Not found in CISA KEV catalog" };
+    } catch (error) {
+      console.error('CISA KEV fetch failed:', error);
+      return { isExploited: false, error: 'Failed to check CISA database' };
+    }
+  }
+
+  /**
+   * Get EPSS (Exploit Prediction Scoring System) Score
+   * Source: https://www.first.org/epss/
+   */
+  async getEPSSScore(cveId) {
+    const EPSS_URL = `https://api.first.org/data/v1/epss?cve=${cveId}`;
+    
+    try {
+      const data = await this.httpGet(EPSS_URL);
+      if (data.data && data.data.length > 0) {
+        return {
+          score: parseFloat(data.data[0].epss), // Probability (0-1)
+          percentile: parseFloat(data.data[0].percentile), // Relative ranking
+          date: data.data[0].date
+        };
+      }
+      return { score: 0, percentile: 0, message: "No EPSS data found" };
+    } catch (error) {
+      console.error('EPSS fetch failed:', error);
+      return { score: 0, percentile: 0, error: 'Failed to fetch EPSS' };
+    }
+  }
+
+  /**
+   * Get Comprehensive CVE details (NIST + CISA + EPSS)
+   */
+  async getCVEDetails(cveId, options = {}) {
+    const {
+      useCache = true,
+      orgId = null,
+    } = options;
+
+    // Normalize CVE ID
+    const normalizedCveId = cveId.toUpperCase();
+
+    // Check cache
+    if (useCache) {
+      const cached = await this.getFromCache('combined_intel', 'cve_id', normalizedCveId, orgId);
+      if (cached) {
+        console.log('Returning cached CVE data');
+        return {
+          ...cached.raw_data,
+          cached: true,
+          cachedAt: cached.cached_at,
+          aiAnalysis: cached.ai_analysis,
+        };
+      }
+    }
+
+    // Parallel fetch from all sources
+    console.log(`Fetching comprehensive data for: ${normalizedCveId}`);
+    
+    const [nistData, cisaData, epssData] = await Promise.allSettled([
+      this._fetchNISTDetails(normalizedCveId),
+      this.checkCISAExploits(normalizedCveId),
+      this.getEPSSScore(normalizedCveId)
+    ]);
+
+    const result = {
+      cveId: normalizedCveId,
+      nist: nistData.status === 'fulfilled' ? nistData.value : { error: 'Failed to fetch NIST data' },
+      cisa_kev: cisaData.status === 'fulfilled' ? cisaData.value : { isExploited: false },
+      epss: epssData.status === 'fulfilled' ? epssData.value : { score: 0, percentile: 0 },
+      fetchedAt: new Date()
+    };
+
+    // Save to cache
+    await this.saveToCache('combined_intel', 'cve_id', normalizedCveId, result, null, orgId);
+
+    return {
+      ...result,
+      cached: false,
+      cachedAt: new Date(),
+      aiAnalysis: null,
+    };
+  }
+
+  /**
+   * Analyze security data with AI (Updated for Multi-source)
    */
   async analyzeWithAI(data, bedrockService) {
-    const prompt = `Analyze this security vulnerability data and provide:
+    // Determine if this is a list (searchNIST) or a single detailed CVE (getCVEDetails)
+    const isSingleCVE = !!data.cisa_kev; 
+
+    let prompt;
+    
+    if (isSingleCVE) {
+        prompt = `Analyze this comprehensive vulnerability intelligence and provide a security assessment.
+
+Data:
+- CVE ID: ${data.cveId}
+- NIST Score: ${data.nist.cvssScore} (${data.nist.severity})
+- CISA KEV Status: ${data.cisa_kev.isExploited ? 'ACTIVELY EXPLOITED' : 'Not currently in KEV'}
+- EPSS Probability: ${(data.epss.score * 100).toFixed(2)}% (Percentile: ${(data.epss.percentile * 100).toFixed(2)}%)
+- Description: ${data.nist.description}
+${data.cisa_kev.isExploited ? `- Required Action: ${data.cisa_kev.requiredAction}` : ''}
+
+Provide:
+1. Threat Reality: Is this theoretically dangerous or actually being used in the wild?
+2. Impact Assessment: What is at risk?
+3. Recommended Priority (Critical/High/Medium/Low) based on active exploitation evidence vs theoretical severity.
+4. Immediate Mitigation Steps.
+
+Be concise and actionable.`;
+
+    } else {
+        // Fallback for list analysis (existing behavior)
+        prompt = `Analyze this security vulnerability data and provide:
 1. Risk level (Low/Medium/High/Critical)
 2. Impact summary (what systems/users are affected)
 3. Recommended actions
-4. Whether this is relevant to Google Workspace, Chrome extensions, or cloud applications
+4. Relevance to common enterprise environments
 
 Data: ${JSON.stringify(data, null, 2)}
 
 Provide a concise, actionable security assessment.`;
+    }
 
     const response = await bedrockService.chat(prompt, [], {
       systemPrompt: 'You are a cybersecurity expert analyzing vulnerabilities. Provide clear, actionable security assessments.',
