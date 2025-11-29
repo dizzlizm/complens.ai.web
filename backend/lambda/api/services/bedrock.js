@@ -342,11 +342,23 @@ class BedrockService {
       console.log(`[Agent] Tool Requested: ${toolName}`);
       console.log(`[Agent] Tool Input:`, JSON.stringify(toolInput));
 
-      // A. Append Assistant's Tool Use Request to History
+      // A. First, add the user message to history if this was the first iteration
+      // This ensures the conversation always starts with a user message
+      if (loopCount === 1) {
+        const userMsg = {
+          role: 'user',
+          content: typeof currentInput === 'string'
+            ? (this.isNovaModel(this.modelId) ? [{ text: currentInput }] : currentInput)
+            : currentInput
+        };
+        currentHistory.push(userMsg);
+      }
+
+      // B. Append Assistant's Tool Use Request to History
       const assistantMsg = this._formatAssistantToolUseMessage(response);
       currentHistory.push(assistantMsg);
 
-      // B. Execute the Tool
+      // C. Execute the Tool
       let toolResultData;
       let toolExecutionError = false;
 
@@ -383,7 +395,7 @@ class BedrockService {
         });
       }
 
-      // C. Format Tool Result for Next Turn
+      // D. Format Tool Result for Next Turn
       currentInput = this._formatToolResult(response.toolUse.id, toolResultData, toolExecutionError);
 
       // If tool execution failed critically, we might want to give model a chance to recover
