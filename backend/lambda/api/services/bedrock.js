@@ -153,13 +153,6 @@ class BedrockService {
   }
 
   /**
-   * Standard Chat
-   */
-  async chat(message, conversationHistory = [], options = {}) {
-    try {
-      const requestBody = this._buildPayload(message, conversationHistory, options);
-      
-      console.log(`[Bedrock] Invoking ${this.modelId}`);
    * Send a chat message to Bedrock model
    * @param {string} message - User message
    * @param {Array} conversationHistory - Previous messages in conversation
@@ -282,14 +275,6 @@ class BedrockService {
         };
       }
 
-      // --- CLAUDE RESPONSE PARSING ---
-      return {
-        content: responseBody.content.find(c => c.type === 'text')?.text || '',
-        stopReason: responseBody.stop_reason,
-        usage: {
-          input_tokens: responseBody.usage?.input_tokens || 0,
-          output_tokens: responseBody.usage?.output_tokens || 0,
-        },
       // Parse response based on model type
       let content, usage, stopReason, toolUse;
 
