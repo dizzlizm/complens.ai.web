@@ -12,6 +12,8 @@ const { UserManagementService } = require('./services/user-management');
 const { GoogleWorkspaceSecurityService } = require('./services/google-workspace-security');
 const { ExternalSecurityService } = require('./services/external-security');
 const { ChromeWebStoreService } = require('./services/chrome-web-store');
+const { TenantContextService } = require('./services/tenant-context');
+const { AuditLoggerService } = require('./services/audit-logger');
 const { getToolDefinitions, executeTool } = require('./services/tools');
 
 // CORS Configuration - must match CloudFormation main.yaml
@@ -29,6 +31,8 @@ let userManagementService;
 let googleWorkspaceSecurityService;
 let externalSecurityService;
 let chromeWebStoreService;
+let tenantContextService;
+let auditLoggerService;
 let isInitialized = false;
 
 /**
@@ -56,6 +60,108 @@ function extractUserFromJWT(event) {
     console.error('Error extracting user from JWT:', error);
     return null;
   }
+}
+
+/**
+ * Extract tenant context for authenticated user
+ * This looks up the user's organization mapping and validates access
+ * @param {object} user - User object from JWT
+ * @param {string} requestedOrgId - Optional org ID from request (for multi-org users)
+ * @returns {Promise<object|null>} Tenant context with orgId and role, or null
+ */
+async function extractTenantContext(user, requestedOrgId = null) {
+  if (!user || !user.userId) {
+    return null;
+  }
+
+  try {
+    // Get user's organizations
+    const userOrgs = await tenantContextService.getUserOrganizations(user.userId, 'cognito');
+
+    if (userOrgs.length === 0) {
+      console.warn(`User ${user.userId} has no organization mapping. Creating default org...`);
+
+      // Auto-provision: Create organization for first-time user
+      const result = await tenantContextService.createOrganizationWithOwner({
+        name: `${user.name || user.email}'s Organization`,
+        domain: user.email.split('@')[1] || 'example.com',
+        userId: user.userId,
+        authProvider: 'cognito',
+        tier: 'free'
+      });
+
+      return {
+        orgId: result.organization.id,
+        role: 'owner',
+        orgName: result.organization.name,
+        orgTier: result.organization.tier,
+        isPrimary: true
+      };
+    }
+
+    // If specific org requested, validate user has access
+    if (requestedOrgId) {
+      const requestedOrg = userOrgs.find(org => org.org_id === requestedOrgId);
+      if (!requestedOrg) {
+        throw new Error('Access denied: User does not belong to requested organization');
+      }
+      return {
+        orgId: requestedOrg.org_id,
+        role: requestedOrg.role,
+        orgName: requestedOrg.org_name,
+        orgTier: requestedOrg.org_tier,
+        isPrimary: requestedOrg.is_primary
+      };
+    }
+
+    // Return primary org (or first org if no primary set)
+    const primaryOrg = userOrgs.find(org => org.is_primary) || userOrgs[0];
+    return {
+      orgId: primaryOrg.org_id,
+      role: primaryOrg.role,
+      orgName: primaryOrg.org_name,
+      orgTier: primaryOrg.org_tier,
+      isPrimary: primaryOrg.is_primary
+    };
+
+  } catch (error) {
+    console.error('Error extracting tenant context:', error);
+    return null;
+  }
+}
+
+/**
+ * Require authentication middleware
+ * Returns 401 if user is not authenticated
+ */
+function requireAuth(user) {
+  if (!user) {
+    return {
+      statusCode: 401,
+      body: JSON.stringify({
+        error: 'Unauthorized',
+        message: 'Authentication required. Please provide a valid JWT token.'
+      })
+    };
+  }
+  return null;
+}
+
+/**
+ * Require tenant context middleware
+ * Returns 403 if user doesn't have valid org mapping
+ */
+function requireTenantContext(tenantContext) {
+  if (!tenantContext || !tenantContext.orgId) {
+    return {
+      statusCode: 403,
+      body: JSON.stringify({
+        error: 'Forbidden',
+        message: 'No organization access. Please contact support.'
+      })
+    };
+  }
+  return null;
 }
 
 /**
@@ -133,8 +239,14 @@ async function initialize() {
     // Initialize Chrome Web Store service
     chromeWebStoreService = new ChromeWebStoreService(databaseService);
 
+    // Initialize Tenant Context service
+    tenantContextService = new TenantContextService(databaseService);
+
+    // Initialize Audit Logger service
+    auditLoggerService = new AuditLoggerService(databaseService);
+
     isInitialized = true;
-    console.log('Services initialized successfully');
+    console.log('Services initialized successfully (including tenant context and audit logging)');
   } catch (error) {
     console.error('Error initializing services:', error);
     throw error;
@@ -239,18 +351,54 @@ exports.handler = async (event) => {
         response = await handleHealth();
         break;
 
-      case path === '/chat' && httpMethod === 'POST':
-        response = await handleChat(body, user);
+      case path === '/chat' && httpMethod === 'POST': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, body.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleChat(body, user, tenantContext, event);
         break;
+      }
 
-      case path === '/conversations' && httpMethod === 'GET':
-        response = await handleGetConversations(user);
+      case path === '/conversations' && httpMethod === 'GET': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleGetConversations(user, tenantContext);
         break;
+      }
 
-      case path.startsWith('/conversations/') && httpMethod === 'GET':
+      case path.startsWith('/conversations/') && httpMethod === 'GET': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
         const conversationId = path.split('/')[2];
-        response = await handleGetConversation(conversationId, user);
+        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleGetConversation(conversationId, user, tenantContext);
         break;
+      }
 
       case path === '/oauth/google/authorize' && httpMethod === 'GET':
         response = await handleGoogleOAuthAuthorize(event.queryStringParameters || {});
@@ -268,57 +416,174 @@ exports.handler = async (event) => {
         response = await handleGoogleOAuthStatus(event.queryStringParameters || {});
         break;
 
-      case path === '/admin/users' && httpMethod === 'GET':
-        response = await handleGetUsers(event.queryStringParameters || {});
+      case path === '/admin/users' && httpMethod === 'GET': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleGetUsers(event.queryStringParameters || {}, tenantContext);
         break;
+      }
 
-      case path === '/admin/users' && httpMethod === 'POST':
-        response = await handleCreateUser(body);
+      case path === '/admin/users' && httpMethod === 'POST': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, body.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleCreateUser(body, tenantContext, user);
         break;
+      }
 
-      case path.startsWith('/admin/users/') && httpMethod === 'PUT':
+      case path.startsWith('/admin/users/') && httpMethod === 'PUT': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
         const updateUserId = path.split('/')[3];
-        response = await handleUpdateUser(updateUserId, body);
+        const tenantContext = await extractTenantContext(user, body.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleUpdateUser(updateUserId, body, tenantContext, user);
         break;
+      }
 
-      case path.startsWith('/admin/users/') && httpMethod === 'DELETE':
+      case path.startsWith('/admin/users/') && httpMethod === 'DELETE': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
         const deleteUserId = path.split('/')[3];
-        response = await handleDeleteUser(deleteUserId, event.queryStringParameters || {});
+        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleDeleteUser(deleteUserId, event.queryStringParameters || {}, tenantContext, user);
         break;
+      }
 
-      case path === '/security/users-without-2fa' && httpMethod === 'GET':
-        response = await handleListUsersWithout2FA(event.queryStringParameters || {});
+      case path === '/security/users-without-2fa' && httpMethod === 'GET': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleListUsersWithout2FA(event.queryStringParameters || {}, tenantContext);
         break;
+      }
 
-      case path === '/security/admin-accounts' && httpMethod === 'GET':
-        response = await handleFindAdminAccounts(event.queryStringParameters || {});
+      case path === '/security/admin-accounts' && httpMethod === 'GET': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleFindAdminAccounts(event.queryStringParameters || {}, tenantContext);
         break;
+      }
 
-      case path === '/security/external-sharing' && httpMethod === 'GET':
-        response = await handleAnalyzeExternalSharing(event.queryStringParameters || {});
+      case path === '/security/external-sharing' && httpMethod === 'GET': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleAnalyzeExternalSharing(event.queryStringParameters || {}, tenantContext);
         break;
+      }
 
-      case path === '/security/policies' && httpMethod === 'GET':
-        response = await handleCheckSecurityPolicies(event.queryStringParameters || {});
+      case path === '/security/policies' && httpMethod === 'GET': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleCheckSecurityPolicies(event.queryStringParameters || {}, tenantContext);
         break;
+      }
 
-      case path === '/security/summary' && httpMethod === 'GET':
-        response = await handleGetSecuritySummary(event.queryStringParameters || {});
+      case path === '/security/summary' && httpMethod === 'GET': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleGetSecuritySummary(event.queryStringParameters || {}, tenantContext);
         break;
+      }
 
-      case path === '/security/nist/search' && httpMethod === 'GET':
-        response = await handleNISTSearch(event.queryStringParameters || {});
+      case path === '/security/nist/search' && httpMethod === 'GET': {
+        // NIST search can be public or authenticated - keep flexible for now
+        const tenantContext = user ? await extractTenantContext(user, event.queryStringParameters?.orgId) : null;
+        response = await handleNISTSearch(event.queryStringParameters || {}, tenantContext);
         break;
+      }
 
-      case path.startsWith('/security/cve/') && httpMethod === 'GET':
+      case path.startsWith('/security/cve/') && httpMethod === 'GET': {
+        // CVE lookup can be public or authenticated - keep flexible for now
         const cveId = path.split('/')[3];
-        response = await handleCVELookup(cveId, event.queryStringParameters || {});
+        const tenantContext = user ? await extractTenantContext(user, event.queryStringParameters?.orgId) : null;
+        response = await handleCVELookup(cveId, event.queryStringParameters || {}, tenantContext);
         break;
+      }
 
-      case path.startsWith('/security/chrome-extension/') && httpMethod === 'GET':
+      case path.startsWith('/security/chrome-extension/') && httpMethod === 'GET': {
+        // Extension lookup can be public or authenticated - keep flexible for now
         const extensionId = path.split('/')[3];
-        response = await handleChromeExtensionLookup(extensionId, event.queryStringParameters || {});
+        const tenantContext = user ? await extractTenantContext(user, event.queryStringParameters?.orgId) : null;
+        response = await handleChromeExtensionLookup(extensionId, event.queryStringParameters || {}, tenantContext);
         break;
+      }
 
       default:
         response = {
@@ -400,7 +665,7 @@ async function handleHealth() {
 /**
  * Chat handler - sends message to Bedrock model (Nova or Claude)
  */
-async function handleChat(body, user) {
+async function handleChat(body, user, tenantContext, event) {
   const { message, conversationId } = body;
 
   if (!message) {
@@ -414,10 +679,35 @@ async function handleChat(body, user) {
     // Get conversation history if conversationId provided
     let conversationHistory = [];
     if (conversationId) {
-      const conversation = await databaseService.getConversation(conversationId);
+      // Validate conversation belongs to user's organization
+      const conversation = await databaseService.getConversation(conversationId, tenantContext.orgId);
 
-      // Verify conversation belongs to user (if user is authenticated)
-      if (user && conversation.user_id && conversation.user_id !== user.userId) {
+      if (!conversation) {
+        // Log unauthorized access attempt
+        await auditLoggerService.logUnauthorized({
+          ...AuditLoggerService.createAuditContext(event, user, tenantContext.orgId),
+          action: 'conversation.access',
+          resourceType: 'conversation',
+          resourceId: conversationId,
+          errorMessage: 'Conversation not found or access denied'
+        });
+
+        return {
+          statusCode: 403,
+          body: JSON.stringify({ error: 'Access denied to this conversation' }),
+        };
+      }
+
+      // Verify conversation belongs to user (double check)
+      if (conversation.user_id && conversation.user_id !== user.userId) {
+        await auditLoggerService.logUnauthorized({
+          ...AuditLoggerService.createAuditContext(event, user, tenantContext.orgId),
+          action: 'conversation.access',
+          resourceType: 'conversation',
+          resourceId: conversationId,
+          errorMessage: 'User does not own this conversation'
+        });
+
         return {
           statusCode: 403,
           body: JSON.stringify({ error: 'Access denied to this conversation' }),
@@ -469,6 +759,7 @@ Use these tools proactively when users ask about security topics.`;
     const savedConversation = await databaseService.saveConversation({
       conversationId,
       userId: user?.userId,
+      orgId: tenantContext.orgId, // Critical: Associate with organization
       userMessage: message,
       assistantMessage: response.content,
       metadata: {
@@ -479,6 +770,18 @@ Use these tools proactively when users ask about security topics.`;
         toolIterations: response.iterations - 1,
         stopReason: response.stopReason,
       },
+    });
+
+    // Audit log the chat interaction
+    await auditLoggerService.logSuccess({
+      ...AuditLoggerService.createAuditContext(event, user, tenantContext.orgId),
+      action: conversationId ? 'conversation.message' : 'conversation.create',
+      resourceType: 'conversation',
+      resourceId: savedConversation.id,
+      metadata: {
+        messageLength: message.length,
+        tokensUsed: totalInputTokens + totalOutputTokens
+      }
     });
 
     return {
@@ -507,18 +810,26 @@ Use these tools proactively when users ask about security topics.`;
 }
 
 /**
- * Get all conversations
+ * Get all conversations (filtered by org and user)
  */
-async function handleGetConversations(user) {
+async function handleGetConversations(user, tenantContext) {
   try {
-    // Get conversations for the authenticated user only
-    const conversations = await databaseService.getConversations(user?.userId);
+    // Get conversations for the authenticated user within their organization
+    const conversations = await databaseService.getConversations(
+      user.userId,
+      tenantContext.orgId
+    );
 
     return {
       statusCode: 200,
       body: JSON.stringify({
         conversations,
         count: conversations.length,
+        organization: {
+          id: tenantContext.orgId,
+          name: tenantContext.orgName,
+          tier: tenantContext.orgTier
+        }
       }),
     };
 
@@ -535,21 +846,22 @@ async function handleGetConversations(user) {
 }
 
 /**
- * Get specific conversation by ID
+ * Get specific conversation by ID (with org validation)
  */
-async function handleGetConversation(conversationId, user) {
+async function handleGetConversation(conversationId, user, tenantContext) {
   try {
-    const conversation = await databaseService.getConversation(conversationId);
+    // Get conversation with org_id validation
+    const conversation = await databaseService.getConversation(conversationId, tenantContext.orgId);
 
     if (!conversation) {
       return {
         statusCode: 404,
-        body: JSON.stringify({ error: 'Conversation not found' }),
+        body: JSON.stringify({ error: 'Conversation not found or access denied' }),
       };
     }
 
-    // Verify conversation belongs to user (if user is authenticated)
-    if (user && conversation.user_id && conversation.user_id !== user.userId) {
+    // Verify conversation belongs to user (double check)
+    if (conversation.user_id && conversation.user_id !== user.userId) {
       return {
         statusCode: 403,
         body: JSON.stringify({ error: 'Access denied to this conversation' }),
