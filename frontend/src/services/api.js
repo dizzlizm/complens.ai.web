@@ -176,13 +176,12 @@ export async function disconnectOAuth(orgId) {
 }
 
 /**
- * Get all users for an organization
- * @param {number} orgId - Organization ID
+ * Get all users for current user's organization (uses tenantContext from JWT)
  * @returns {Promise<Array>} - List of users
  */
-export async function getUsers(orgId) {
+export async function getUsers() {
   try {
-    const response = await apiClient.get(`/admin/users?orgId=${orgId}`);
+    const response = await apiClient.get('/admin/users');
     return response.data;
   } catch (error) {
     console.error('Error getting users:', error);
@@ -191,8 +190,8 @@ export async function getUsers(orgId) {
 }
 
 /**
- * Create a new user
- * @param {Object} userData - User data (orgId, email, name, role, isActive)
+ * Create a new user (orgId comes from tenantContext in JWT)
+ * @param {Object} userData - User data (email, name, role, isActive)
  * @returns {Promise<Object>} - Created user
  */
 export async function createUser(userData) {
@@ -222,14 +221,13 @@ export async function updateUser(userId, userData) {
 }
 
 /**
- * Delete a user
+ * Delete a user (orgId comes from tenantContext in JWT)
  * @param {string} userId - User ID
- * @param {number} orgId - Organization ID
  * @returns {Promise<Object>} - Delete response
  */
-export async function deleteUser(userId, orgId) {
+export async function deleteUser(userId) {
   try {
-    const response = await apiClient.delete(`/admin/users/${userId}?orgId=${orgId}`);
+    const response = await apiClient.delete(`/admin/users/${userId}`);
     return response.data;
   } catch (error) {
     console.error('Error deleting user:', error);
