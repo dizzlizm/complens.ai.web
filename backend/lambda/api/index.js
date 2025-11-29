@@ -448,19 +448,28 @@ Use these tools proactively when users ask about security topics.`;
 
         console.log(`Tool executed: ${name}`, { success: toolResult.success });
 
-        // Add assistant's tool use to conversation history
+        // Add assistant's tool use to conversation history (Nova format)
         fullConversationHistory.push({
           role: 'assistant',
-          content: [{ toolUse: { toolUseId: id, name, input } }],
+          content: [{
+            toolUse: {
+              toolUseId: id,
+              name: name,
+              input: input,
+            },
+          }],
         });
 
-        // Add tool result to conversation history
+        // Add tool result to conversation history (Nova format)
         fullConversationHistory.push({
           role: 'user',
           content: [{
             toolResult: {
               toolUseId: id,
-              content: [{ json: toolResult }],
+              content: [{
+                json: toolResult,
+              }],
+              status: toolResult.success ? 'success' : 'error',
             },
           }],
         });
