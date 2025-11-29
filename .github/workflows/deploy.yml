@@ -3,9 +3,9 @@ name: Deploy Complens.ai
 on:
   push:
     branches:
-      - main
+      # - main  # DISABLED: Prevent auto-deploy to prod on merge
       - 'claude/**'  # Allow deployments from claude branches for testing
-  workflow_dispatch:  # Allow manual triggers
+  workflow_dispatch:  # Manual triggers only for prod
     inputs:
       environment:
         description: 'Environment to deploy to'
@@ -42,7 +42,9 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "environment=prod" >> $GITHUB_OUTPUT
+            # Main branch pushes no longer trigger automatic deployment
+            # Use workflow_dispatch (manual trigger) to deploy to prod
+            echo "environment=dev" >> $GITHUB_OUTPUT
           else
             echo "environment=dev" >> $GITHUB_OUTPUT
           fi
@@ -158,6 +160,8 @@ jobs:
         env:
           DB_PASSWORD: ${{ secrets.DB_MASTER_PASSWORD }}
           BILLING_EMAIL: ${{ secrets.BILLING_ALERT_EMAIL }}
+          BEDROCK_MODEL_ID: ${{ secrets.BEDROCK_MODEL_ID }}
+          BEDROCK_SECURITY_MODEL_ID: ${{ secrets.BEDROCK_SECURITY_MODEL_ID }}
         run: |
           cd infrastructure/cloudformation
 
@@ -165,10 +169,16 @@ jobs:
           ENV="${{ needs.setup.outputs.environment }}"
 
           # Prepare parameters with overrides from secrets
-          PARAMS=$(jq --arg pwd "$DB_PASSWORD" --arg email "$BILLING_EMAIL" \
+          PARAMS=$(jq \
+            --arg pwd "$DB_PASSWORD" \
+            --arg email "$BILLING_EMAIL" \
+            --arg model "${BEDROCK_MODEL_ID:-us.amazon.nova-lite-v1:0}" \
+            --arg secmodel "${BEDROCK_SECURITY_MODEL_ID:-us.anthropic.claude-3-5-sonnet-20241022-v2:0}" \
             'map(
               if .ParameterKey == "DBMasterPassword" then .ParameterValue = $pwd
               elif .ParameterKey == "BillingAlertEmail" then .ParameterValue = $email
+              elif .ParameterKey == "BedrockModelId" then .ParameterValue = $model
+              elif .ParameterKey == "BedrockSecurityModelId" then .ParameterValue = $secmodel
               else . end
             )' \
             parameters/${ENV}.json)
