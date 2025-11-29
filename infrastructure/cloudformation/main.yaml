@@ -401,6 +401,16 @@ Resources:
       SourceSecurityGroupId: !Ref BastionSecurityGroup
       Description: Allow PostgreSQL access from bastion host
 
+  VPCEndpointFromBastionIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref VPCEndpointSecurityGroup # Target: The SG attached to the Endpoints
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref BastionSecurityGroup # Source: The SG attached to the Bastion Host
+      Description: Allow inbound 443 from Bastion Host for VPC Endpoints (SSM, Secrets Manager)
+
   # ============================================================================
   # S3 Buckets
   # ============================================================================
