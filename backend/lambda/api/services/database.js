@@ -48,11 +48,18 @@ class DatabaseService {
       await client.query(`
         CREATE TABLE IF NOT EXISTS conversations (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id VARCHAR(255), -- Cognito User ID (sub claim)
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           title TEXT,
           metadata JSONB DEFAULT '{}'::jsonb
         );
+      `);
+
+      // Add index on user_id for faster lookups
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_conversations_user_id
+        ON conversations(user_id);
       `);
 
       // Create messages table
@@ -145,7 +152,7 @@ class DatabaseService {
   /**
    * Save a conversation turn (user message + assistant response)
    */
-  async saveConversation({ conversationId, userMessage, assistantMessage, metadata = {} }) {
+  async saveConversation({ conversationId, userId, userMessage, assistantMessage, metadata = {} }) {
     // Ensure schema exists before first operation
     await this.ensureSchema();
 
@@ -158,10 +165,11 @@ class DatabaseService {
       let convId = conversationId;
       if (!convId) {
         const result = await client.query(`
-          INSERT INTO conversations (title, metadata)
-          VALUES ($1, $2)
+          INSERT INTO conversations (user_id, title, metadata)
+          VALUES ($1, $2, $3)
           RETURNING id
         `, [
+          userId || null, // Associate with user if authenticated
           userMessage.substring(0, 100), // Use first 100 chars as title
           JSON.stringify(metadata),
         ]);

@@ -23,6 +23,33 @@ let externalSecurityService;
 let isInitialized = false;
 
 /**
+ * Extract user information from JWT claims (validated by API Gateway)
+ * @param {object} event - Lambda event object
+ * @returns {object|null} User info object or null if not authenticated
+ */
+function extractUserFromJWT(event) {
+  try {
+    // API Gateway JWT authorizer adds claims to requestContext
+    const claims = event.requestContext?.authorizer?.jwt?.claims;
+
+    if (!claims) {
+      return null;
+    }
+
+    return {
+      userId: claims.sub, // Cognito User ID (UUID)
+      email: claims.email,
+      emailVerified: claims.email_verified === 'true',
+      username: claims['cognito:username'],
+      name: claims.name,
+    };
+  } catch (error) {
+    console.error('Error extracting user from JWT:', error);
+    return null;
+  }
+}
+
+/**
  * Initialize services (outside handler for Lambda container reuse)
  */
 async function initialize() {
@@ -155,6 +182,16 @@ exports.handler = async (event) => {
       throw initError;
     }
 
+    // Extract user information from JWT (if authenticated)
+    const user = extractUserFromJWT(event);
+
+    // Log user info for debugging (remove in production)
+    if (user) {
+      console.log('Authenticated user:', { userId: user.userId, email: user.email });
+    } else {
+      console.log('Unauthenticated request');
+    }
+
     // Route to appropriate handler
     let response;
 
@@ -164,7 +201,7 @@ exports.handler = async (event) => {
         break;
 
       case path === '/chat' && httpMethod === 'POST':
-        response = await handleChat(body);
+        response = await handleChat(body, user);
         break;
 
       case path === '/conversations' && httpMethod === 'GET':
@@ -317,7 +354,7 @@ async function handleHealth() {
 /**
  * Chat handler - sends message to Bedrock model (Nova or Claude)
  */
-async function handleChat(body) {
+async function handleChat(body, user) {
   const { message, conversationId } = body;
 
   if (!message) {
@@ -332,6 +369,15 @@ async function handleChat(body) {
     let conversationHistory = [];
     if (conversationId) {
       const conversation = await databaseService.getConversation(conversationId);
+
+      // Verify conversation belongs to user (if user is authenticated)
+      if (user && conversation.user_id && conversation.user_id !== user.userId) {
+        return {
+          statusCode: 403,
+          body: JSON.stringify({ error: 'Access denied to this conversation' }),
+        };
+      }
+
       conversationHistory = conversation.messages || [];
     }
 
@@ -341,6 +387,7 @@ async function handleChat(body) {
     // Save conversation to database
     const savedConversation = await databaseService.saveConversation({
       conversationId,
+      userId: user?.userId, // Associate with authenticated user (if logged in)
       userMessage: message,
       assistantMessage: response.content,
       metadata: {
