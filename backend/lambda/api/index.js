@@ -381,6 +381,12 @@ exports.handler = async (event) => {
         response = await handleHealth();
         break;
 
+      case path === '/debug/me' && httpMethod === 'GET': {
+        // Debug endpoint - shows user info and tenant status (NO auth required for debugging)
+        response = await handleDebugMe(event, user);
+        break;
+      }
+
       case path === '/chat' && httpMethod === 'POST': {
         const authError = requireAuth(user);
         if (authError) {
@@ -708,6 +714,93 @@ async function handleHealth() {
         status: 'unhealthy',
         error: error.message,
       }),
+    };
+  }
+}
+
+/**
+ * Debug endpoint to check user and tenant status
+ */
+async function handleDebugMe(event, user) {
+  try {
+    const debugInfo = {
+      timestamp: new Date().toISOString(),
+      jwt: {
+        present: !!event.requestContext?.authorizer?.jwt,
+        claims: event.requestContext?.authorizer?.jwt?.claims || null
+      },
+      user: user || null,
+      requestContext: {
+        requestId: event.requestContext?.requestId,
+        stage: event.requestContext?.stage,
+        path: event.requestContext?.http?.path
+      }
+    };
+
+    // Try to get tenant context
+    if (user) {
+      try {
+        const userOrgs = await tenantContextService.getUserOrganizations(user.userId, 'cognito');
+        debugInfo.tenantStatus = {
+          hasOrganizations: userOrgs.length > 0,
+          organizationCount: userOrgs.length,
+          organizations: userOrgs.map(org => ({
+            orgId: org.org_id,
+            orgName: org.org_name,
+            role: org.role,
+            isPrimary: org.is_primary,
+            tier: org.org_tier,
+            status: org.org_status
+          }))
+        };
+
+        // Try auto-provisioning check
+        if (userOrgs.length === 0) {
+          debugInfo.tenantStatus.message = 'No organizations found - auto-provision will trigger on first API call';
+        }
+      } catch (tenantError) {
+        debugInfo.tenantStatus = {
+          error: tenantError.message,
+          stack: tenantError.stack
+        };
+      }
+
+      // Check if migration tables exist
+      try {
+        const tablesCheck = await databaseService.query(`
+          SELECT table_name
+          FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name IN ('user_organizations', 'organizations', 'conversations')
+          ORDER BY table_name
+        `);
+        debugInfo.databaseTables = {
+          found: tablesCheck.rows.map(r => r.table_name),
+          migrationStatus: tablesCheck.rows.length === 3 ? 'complete' : 'incomplete'
+        };
+      } catch (dbError) {
+        debugInfo.databaseTables = {
+          error: dbError.message
+        };
+      }
+    } else {
+      debugInfo.tenantStatus = {
+        message: 'User not authenticated - JWT token missing or invalid'
+      };
+    }
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(debugInfo, null, 2),
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Debug endpoint failed',
+        message: error.message,
+        stack: error.stack
+      }, null, 2),
     };
   }
 }
