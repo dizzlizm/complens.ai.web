@@ -688,42 +688,54 @@ Resources:
   # Bastion Host IAM Role and EC2 Instance
   # ============================================================================
 
-  BastionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub '${Environment}-complens-bastion-role'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ec2.amazonaws.com
-            Action: 'sts:AssumeRole'
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
-      Policies:
-        - PolicyName: SecretsManagerAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - secretsmanager:GetSecretValue
-                Resource: !Ref ApplicationSecrets
-        - PolicyName: CloudFormationReadOnly
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - CloudFormation:DescribeStacks
-                  - cloudformation:ListStacks
-                Resource:
-                  - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*'
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
+
+BastionRole:
+		Type: AWS::IAM::Role
+		Properties:
+			RoleName: !Sub '${Environment}-complens-bastion-role'
+			AssumeRolePolicyDocument:
+				Version: '2012-10-17'
+				Statement:
+					- Effect: Allow
+						Principal:
+							Service: ec2.amazonaws.com
+						Action: 'sts:AssumeRole'
+			ManagedPolicyArns:
+				- arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+				- arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+			Policies:
+				- PolicyName: SecretsManagerAccess
+					PolicyDocument:
+						Version: '2012-10-17'
+						Statement:
+							- Effect: Allow
+								Action:
+									- secretsmanager:GetSecretValue 
+								Resource: !Ref ApplicationSecrets
+							- Effect: Allow
+								Action:
+									- secretsmanager:ListSecrets
+								Resource: '*'
+				- PolicyName: CloudFormationReadOnly
+					PolicyDocument:
+						Version: '2012-10-17'
+						Statement:
+							- Effect: Allow
+								Action:
+									- cloudformation:DescribeStacks 
+								Resource:
+									- !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*'
+				- PolicyName: RDSReadOnly
+					PolicyDocument:
+						Version: '2012-10-17'
+						Statement:
+							- Effect: Allow
+								Action:
+									- rds:DescribeDBInstances
+								Resource: '*' 
+			Tags:
+				- Key: Environment
+					Value: !Ref Environment
 
   BastionInstanceProfile:
     Type: AWS::IAM::InstanceProfile
