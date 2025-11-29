@@ -231,36 +231,71 @@ class TenantContextService {
     try {
       await client.query('BEGIN');
 
-      // Create organization
-      const orgQuery = `
-        INSERT INTO organizations (name, domain, tier, settings, features)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING *
+      // Check if organization with this domain already exists
+      const existingOrgQuery = `
+        SELECT * FROM organizations WHERE domain = $1
       `;
+      const existingOrgResult = await client.query(existingOrgQuery, [domain]);
 
-      const orgResult = await client.query(orgQuery, [
-        name,
-        domain,
-        tier,
-        JSON.stringify(settings),
-        JSON.stringify(features)
-      ]);
+      let organization;
+      if (existingOrgResult.rows.length > 0) {
+        // Organization already exists, use it
+        organization = existingOrgResult.rows[0];
+        console.log(`Organization with domain ${domain} already exists (id: ${organization.id}). Using existing org.`);
+      } else {
+        // Create new organization
+        const orgQuery = `
+          INSERT INTO organizations (name, domain, tier, settings, features)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING *
+        `;
 
-      const organization = orgResult.rows[0];
+        const orgResult = await client.query(orgQuery, [
+          name,
+          domain,
+          tier,
+          JSON.stringify(settings),
+          JSON.stringify(features)
+        ]);
 
-      // Create user-org mapping with owner role and metadata
-      const mappingQuery = `
-        INSERT INTO user_organizations (user_id, org_id, role, auth_provider, is_primary, metadata)
-        VALUES ($1, $2, 'owner', $3, true, $4)
-        RETURNING *
+        organization = orgResult.rows[0];
+        console.log(`Created new organization ${organization.id} for domain ${domain}`);
+      }
+
+      // Check if user-org mapping already exists
+      const existingMappingQuery = `
+        SELECT * FROM user_organizations
+        WHERE user_id = $1 AND org_id = $2 AND auth_provider = $3
       `;
-
-      const mappingResult = await client.query(mappingQuery, [
+      const existingMappingResult = await client.query(existingMappingQuery, [
         userId,
         organization.id,
-        authProvider,
-        JSON.stringify(metadata)
+        authProvider
       ]);
+
+      let mapping;
+      if (existingMappingResult.rows.length > 0) {
+        // Mapping already exists
+        mapping = existingMappingResult.rows[0];
+        console.log(`User-org mapping already exists for user ${userId} and org ${organization.id}`);
+      } else {
+        // Create user-org mapping with owner role and metadata
+        const mappingQuery = `
+          INSERT INTO user_organizations (user_id, org_id, role, auth_provider, is_primary, metadata)
+          VALUES ($1, $2, 'owner', $3, true, $4)
+          RETURNING *
+        `;
+
+        const mappingResult = await client.query(mappingQuery, [
+          userId,
+          organization.id,
+          authProvider,
+          JSON.stringify(metadata)
+        ]);
+
+        mapping = mappingResult.rows[0];
+        console.log(`Created user-org mapping for user ${userId} and org ${organization.id}`);
+      }
 
       await client.query('COMMIT');
 
