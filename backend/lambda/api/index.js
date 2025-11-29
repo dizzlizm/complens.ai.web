@@ -10,6 +10,7 @@ const { SecretsService } = require('./services/secrets');
 const { GoogleOAuthService } = require('./services/google-oauth');
 const { UserManagementService } = require('./services/user-management');
 const { GoogleWorkspaceSecurityService } = require('./services/google-workspace-security');
+const { ExternalSecurityService } = require('./services/external-security');
 
 // Initialize services
 let bedrockService;
@@ -18,6 +19,7 @@ let secretsService;
 let googleOAuthService;
 let userManagementService;
 let googleWorkspaceSecurityService;
+let externalSecurityService;
 let isInitialized = false;
 
 /**
@@ -64,6 +66,9 @@ async function initialize() {
 
     // Initialize Google Workspace Security service
     googleWorkspaceSecurityService = new GoogleWorkspaceSecurityService(databaseService);
+
+    // Initialize External Security Intelligence service
+    externalSecurityService = new ExternalSecurityService(databaseService);
 
     isInitialized = true;
     console.log('Services initialized successfully');
@@ -223,6 +228,15 @@ exports.handler = async (event) => {
 
       case path === '/security/summary' && httpMethod === 'GET':
         response = await handleGetSecuritySummary(event.queryStringParameters || {});
+        break;
+
+      case path === '/security/nist/search' && httpMethod === 'GET':
+        response = await handleNISTSearch(event.queryStringParameters || {});
+        break;
+
+      case path.startsWith('/security/cve/') && httpMethod === 'GET':
+        const cveId = path.split('/')[3];
+        response = await handleCVELookup(cveId, event.queryStringParameters || {});
         break;
 
       default:
@@ -964,6 +978,99 @@ async function handleGetSecuritySummary(params) {
       statusCode: 500,
       body: JSON.stringify({
         error: 'Failed to get security summary',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * External Security Intelligence Handlers
+ */
+
+async function handleNISTSearch(params) {
+  try {
+    const { keyword, limit, useCache, orgId } = params;
+
+    if (!keyword) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'keyword parameter is required' }),
+      };
+    }
+
+    // Fetch from NIST (with caching)
+    const result = await externalSecurityService.searchNIST(keyword, {
+      limit: parseInt(limit) || 10,
+      useCache: useCache !== 'false',
+      orgId,
+    });
+
+    // If not cached and no AI analysis yet, generate it
+    if (!result.cached && !result.aiAnalysis && result.results.length > 0) {
+      const analysis = await externalSecurityService.analyzeWithAI(result.results, bedrockService);
+
+      // Update cache with AI analysis
+      await externalSecurityService.updateAIAnalysis('nist', 'keyword', keyword, analysis, orgId);
+
+      result.aiAnalysis = analysis;
+    }
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+    };
+
+  } catch (error) {
+    console.error('Error searching NIST:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to search NIST NVD',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+async function handleCVELookup(cveId, params) {
+  try {
+    if (!cveId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'CVE ID is required' }),
+      };
+    }
+
+    const { useCache, orgId } = params;
+
+    // Fetch CVE details (with caching)
+    const result = await externalSecurityService.getCVEDetails(cveId, {
+      useCache: useCache !== 'false',
+      orgId,
+    });
+
+    // If not cached and no AI analysis yet, generate it
+    if (!result.cached && !result.aiAnalysis) {
+      const analysis = await externalSecurityService.analyzeWithAI(result, bedrockService);
+
+      // Update cache with AI analysis
+      await externalSecurityService.updateAIAnalysis('nist', 'cve_id', cveId.toUpperCase(), analysis, orgId);
+
+      result.aiAnalysis = analysis;
+    }
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+    };
+
+  } catch (error) {
+    console.error('Error looking up CVE:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to lookup CVE',
         message: error.message,
       }),
     };

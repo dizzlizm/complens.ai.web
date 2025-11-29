@@ -206,6 +206,7 @@ The database schema is automatically created on first Lambda execution:
 
 - **conversations** table: Stores conversation metadata
 - **messages** table: Stores individual messages (user/assistant)
+- **security_intel** table: Caches external security data (NIST, CVE, etc.) with 24-hour TTL
 
 ## 💰 Cost Estimates
 
@@ -549,6 +550,76 @@ Get conversation by ID.
   ]
 }
 ```
+
+### External Security Intelligence
+
+#### `GET /security/nist/search`
+Search NIST National Vulnerability Database for security vulnerabilities.
+
+**Query Parameters**:
+- `keyword` (required) - Search term (e.g., "wordpress", "chrome extension")
+- `limit` (optional) - Number of results (default: 10)
+- `useCache` (optional) - Use cached results (default: true)
+- `orgId` (optional) - Organization ID for org-specific caching
+
+**Response**:
+```json
+{
+  "source": "nist",
+  "query": "wordpress",
+  "cached": true,
+  "cachedAt": "2024-01-15T10:30:00Z",
+  "expiresAt": "2024-01-16T10:30:00Z",
+  "results": [
+    {
+      "cveId": "CVE-2024-1234",
+      "description": "SQL injection vulnerability in WordPress Plugin XYZ",
+      "severity": "HIGH",
+      "cvssScore": 7.5,
+      "publishedDate": "2024-01-10T00:00:00Z",
+      "lastModified": "2024-01-12T00:00:00Z",
+      "references": ["https://nvd.nist.gov/..."]
+    }
+  ],
+  "aiAnalysis": "This vulnerability affects WordPress plugins and represents a high-severity risk..."
+}
+```
+
+#### `GET /security/cve/:cveId`
+Get detailed information about a specific CVE.
+
+**Example**: `/security/cve/CVE-2024-1234`
+
+**Query Parameters**:
+- `useCache` (optional) - Use cached results (default: true)
+- `orgId` (optional) - Organization ID for org-specific caching
+
+**Response**:
+```json
+{
+  "cveId": "CVE-2024-1234",
+  "description": "SQL injection in WordPress Plugin XYZ allows remote attackers...",
+  "severity": "HIGH",
+  "cvssScore": 7.5,
+  "cvssVector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+  "published": "2024-01-10T00:00:00Z",
+  "lastModified": "2024-01-12T00:00:00Z",
+  "references": [
+    {
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2024-1234",
+      "source": "nvd.nist.gov"
+    }
+  ],
+  "affectedProducts": [
+    "cpe:2.3:a:vendor:product:1.0.0:*:*:*:*:*:*:*"
+  ],
+  "cached": true,
+  "cachedAt": "2024-01-15T10:30:00Z",
+  "aiAnalysis": "This CVE represents a critical security risk for WordPress installations..."
+}
+```
+
+**Caching**: All external security data is cached for 24 hours to reduce API calls and improve response times. AI analysis is performed by Claude 3.5 Sonnet to provide actionable security insights.
 
 ## 🐛 Troubleshooting
 

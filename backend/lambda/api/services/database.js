@@ -79,6 +79,39 @@ class DatabaseService {
         ON messages(created_at);
       `);
 
+      // Create security_intel table for external security data caching
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS security_intel (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          source VARCHAR(50) NOT NULL,
+          query_type VARCHAR(50) NOT NULL,
+          query_value TEXT NOT NULL,
+          raw_data JSONB NOT NULL,
+          ai_analysis TEXT,
+          cached_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          expires_at TIMESTAMP NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
+          org_id UUID
+        );
+      `);
+
+      // Create unique index for cache lookups
+      await client.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_security_intel_unique
+        ON security_intel(source, query_type, query_value, COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid));
+      `);
+
+      // Create index on expires_at for cache cleanup
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_security_intel_expires
+        ON security_intel(expires_at);
+      `);
+
+      // Create index on org_id for organization-specific queries
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_security_intel_org
+        ON security_intel(org_id) WHERE org_id IS NOT NULL;
+      `);
+
       this.schemaInitialized = true;
       console.log('Database schema initialized successfully');
 
