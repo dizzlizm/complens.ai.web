@@ -11,6 +11,8 @@ const { GoogleOAuthService } = require('./services/google-oauth');
 const { UserManagementService } = require('./services/user-management');
 const { GoogleWorkspaceSecurityService } = require('./services/google-workspace-security');
 const { ExternalSecurityService } = require('./services/external-security');
+const { ChromeWebStoreService } = require('./services/chrome-web-store');
+const { getToolDefinitions, executeTool } = require('./services/tools');
 
 // Initialize services
 let bedrockService;
@@ -20,6 +22,7 @@ let googleOAuthService;
 let userManagementService;
 let googleWorkspaceSecurityService;
 let externalSecurityService;
+let chromeWebStoreService;
 let isInitialized = false;
 
 /**
@@ -96,6 +99,9 @@ async function initialize() {
 
     // Initialize External Security Intelligence service
     externalSecurityService = new ExternalSecurityService(databaseService);
+
+    // Initialize Chrome Web Store service
+    chromeWebStoreService = new ChromeWebStoreService(databaseService);
 
     isInitialized = true;
     console.log('Services initialized successfully');
@@ -205,12 +211,12 @@ exports.handler = async (event) => {
         break;
 
       case path === '/conversations' && httpMethod === 'GET':
-        response = await handleGetConversations();
+        response = await handleGetConversations(user);
         break;
 
       case path.startsWith('/conversations/') && httpMethod === 'GET':
         const conversationId = path.split('/')[2];
-        response = await handleGetConversation(conversationId);
+        response = await handleGetConversation(conversationId, user);
         break;
 
       case path === '/oauth/google/authorize' && httpMethod === 'GET':
@@ -274,6 +280,11 @@ exports.handler = async (event) => {
       case path.startsWith('/security/cve/') && httpMethod === 'GET':
         const cveId = path.split('/')[3];
         response = await handleCVELookup(cveId, event.queryStringParameters || {});
+        break;
+
+      case path.startsWith('/security/chrome-extension/') && httpMethod === 'GET':
+        const extensionId = path.split('/')[3];
+        response = await handleChromeExtensionLookup(extensionId, event.queryStringParameters || {});
         break;
 
       default:
@@ -381,19 +392,108 @@ async function handleChat(body, user) {
       conversationHistory = conversation.messages || [];
     }
 
-    // Call Bedrock (uses chat model by default, security model for analysis)
-    const response = await bedrockService.chat(message, conversationHistory);
+    // Get security intelligence tools
+    const tools = getToolDefinitions();
 
-    // Save conversation to database
+    // Enhanced system prompt for security intelligence
+    const systemPrompt = `You are a security intelligence assistant built by Complens.ai. You help analyze security risks, vulnerabilities, browser extensions, and other security concerns.
+
+When a user asks about security topics, you should:
+1. Use available tools to gather factual security intelligence
+2. Provide evidence-based security assessments
+3. Cite specific CVEs, versions, and security reports when available
+4. Give actionable recommendations for enterprise security
+
+Available tools:
+- chrome_extension_lookup: Analyze Chrome extensions for security risks
+- search_vulnerabilities: Search NIST NVD for CVEs and vulnerabilities
+- lookup_cve: Get detailed information about specific CVEs
+
+Use these tools proactively when users ask about security topics.`;
+
+    // Tool execution loop: Keep calling model until we get a final text response
+    let currentMessage = message;
+    let fullConversationHistory = [...conversationHistory];
+    let response;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    const maxToolIterations = 5; // Prevent infinite loops
+    let iteration = 0;
+
+    while (iteration < maxToolIterations) {
+      iteration++;
+
+      // Call Bedrock with tools
+      response = await bedrockService.chat(currentMessage, fullConversationHistory, {
+        tools,
+        systemPrompt,
+        temperature: 0.7,
+      });
+
+      totalInputTokens += response.usage.input_tokens;
+      totalOutputTokens += response.usage.output_tokens;
+
+      // Check if model wants to use a tool
+      if (response.toolUse) {
+        const { name, input, id } = response.toolUse;
+
+        console.log(`Tool requested: ${name}`, input);
+
+        // Execute the tool
+        const toolResult = await executeTool(name, input, {
+          chromeWebStoreService,
+          externalSecurityService,
+          bedrockService,
+        });
+
+        console.log(`Tool executed: ${name}`, { success: toolResult.success });
+
+        // Add assistant's tool use to conversation history (Nova format)
+        fullConversationHistory.push({
+          role: 'assistant',
+          content: [{
+            toolUse: {
+              toolUseId: id,
+              name: name,
+              input: input,
+            },
+          }],
+        });
+
+        // Add tool result to conversation history (Nova format)
+        fullConversationHistory.push({
+          role: 'user',
+          content: [{
+            toolResult: {
+              toolUseId: id,
+              content: [{
+                json: toolResult,
+              }],
+              status: toolResult.success ? 'success' : 'error',
+            },
+          }],
+        });
+
+        // Continue the loop with empty message (model will process tool result)
+        currentMessage = '';
+      } else {
+        // Got final text response, break the loop
+        break;
+      }
+    }
+
+    // Save conversation to database (only save final user message and assistant response)
     const savedConversation = await databaseService.saveConversation({
       conversationId,
-      userId: user?.userId, // Associate with authenticated user (if logged in)
+      userId: user?.userId,
       userMessage: message,
       assistantMessage: response.content,
       metadata: {
         model: response.model,
-        inputTokens: response.usage.input_tokens,
-        outputTokens: response.usage.output_tokens,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        toolsUsed: iteration > 1, // Track if tools were used
+        toolIterations: iteration - 1,
       },
     });
 
@@ -402,7 +502,11 @@ async function handleChat(body, user) {
       body: JSON.stringify({
         conversationId: savedConversation.id,
         response: response.content,
-        usage: response.usage,
+        usage: {
+          input_tokens: totalInputTokens,
+          output_tokens: totalOutputTokens,
+          total_tokens: totalInputTokens + totalOutputTokens,
+        },
       }),
     };
 
@@ -421,9 +525,10 @@ async function handleChat(body, user) {
 /**
  * Get all conversations
  */
-async function handleGetConversations() {
+async function handleGetConversations(user) {
   try {
-    const conversations = await databaseService.getConversations();
+    // Get conversations for the authenticated user only
+    const conversations = await databaseService.getConversations(user?.userId);
 
     return {
       statusCode: 200,
@@ -448,7 +553,7 @@ async function handleGetConversations() {
 /**
  * Get specific conversation by ID
  */
-async function handleGetConversation(conversationId) {
+async function handleGetConversation(conversationId, user) {
   try {
     const conversation = await databaseService.getConversation(conversationId);
 
@@ -456,6 +561,14 @@ async function handleGetConversation(conversationId) {
       return {
         statusCode: 404,
         body: JSON.stringify({ error: 'Conversation not found' }),
+      };
+    }
+
+    // Verify conversation belongs to user (if user is authenticated)
+    if (user && conversation.user_id && conversation.user_id !== user.userId) {
+      return {
+        statusCode: 403,
+        body: JSON.stringify({ error: 'Access denied to this conversation' }),
       };
     }
 
@@ -1118,6 +1231,50 @@ async function handleCVELookup(cveId, params) {
       statusCode: 500,
       body: JSON.stringify({
         error: 'Failed to lookup CVE',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+async function handleChromeExtensionLookup(extensionId, params) {
+  try {
+    if (!extensionId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'Extension ID is required' }),
+      };
+    }
+
+    const { useCache, orgId } = params;
+
+    // Fetch extension details (with caching)
+    const result = await chromeWebStoreService.getExtension(extensionId, {
+      useCache: useCache !== 'false',
+      orgId,
+    });
+
+    // If not cached and no AI analysis yet, generate it
+    if (!result.cached && !result.aiAnalysis && result.name) {
+      const analysis = await chromeWebStoreService.analyzeExtensionSecurity(result, bedrockService);
+
+      // Update cache with AI analysis
+      await chromeWebStoreService.updateAIAnalysis('chrome_store', 'extension_id', extensionId, analysis, orgId);
+
+      result.aiAnalysis = analysis;
+    }
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+    };
+
+  } catch (error) {
+    console.error('Error looking up Chrome extension:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to lookup Chrome extension',
         message: error.message,
       }),
     };

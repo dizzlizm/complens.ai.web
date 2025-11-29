@@ -619,6 +619,43 @@ Get detailed information about a specific CVE.
 }
 ```
 
+#### `GET /security/chrome-extension/:extensionId`
+Analyze Chrome browser extension security risks.
+
+**Example**: `/security/chrome-extension/nmmhkkegccagdldgiimedpiccmgmieda`
+
+**Query Parameters**:
+- `useCache` (optional) - Use cached results (default: true)
+- `orgId` (optional) - Organization ID for org-specific caching
+
+**Response**:
+```json
+{
+  "extensionId": "nmmhkkegccagdldgiimedpiccmgmieda",
+  "name": "Google Wallet",
+  "version": "1.2.3",
+  "description": "Safely store credit cards and passwords",
+  "rating": 4.5,
+  "userCount": 10000000,
+  "developer": "Google LLC",
+  "lastUpdated": "November 15, 2024",
+  "permissions": [
+    "Read and change all your data",
+    "Access your tabs",
+    "Storage"
+  ],
+  "storeUrl": "https://chrome.google.com/webstore/detail/...",
+  "cached": false,
+  "cachedAt": "2024-01-15T10:30:00Z",
+  "aiAnalysis": "Security Risk: MEDIUM\n\nKey Concerns:\n- Requests 'Read and change all your data' permission (high risk)\n- Large user base indicates maturity but also high-value target\n- Last updated recently (good sign)\n\nRecommendations for Enterprise:\n- Acceptable for Google Workspace environments\n- Ensure users understand data access permissions\n- Monitor extension updates via admin console\n\nAlternatives: Native browser autofill, enterprise password managers"
+}
+```
+
+**Permission Risk Levels**:
+- **High Risk**: Read/change all data, browsing history, downloads, webRequest, cookies
+- **Medium Risk**: Tab access, notifications, external site communication
+- **Low Risk**: Storage, basic functionality permissions
+
 **Caching**: All external security data is cached for 24 hours to reduce API calls and improve response times. AI analysis is performed by Claude 3.5 Sonnet to provide actionable security insights.
 
 ## 🐛 Troubleshooting

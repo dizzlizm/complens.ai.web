@@ -33,24 +33,19 @@ class BedrockService {
   constructor(region = 'us-east-1') {
     this.client = new BedrockRuntimeClient({ region });
 
-    // Two different models for different use cases:
-    // 1. General chat: Use cheap/fast models (Nova Lite/Micro)
-    // 2. Security analysis: Use smart models (Claude 3.5 Sonnet)
-    this.chatModelId = process.env.BEDROCK_MODEL_ID || 'us.amazon.nova-lite-v1:0';
-    this.securityModelId = process.env.BEDROCK_SECURITY_MODEL_ID || 'us.anthropic.claude-3-5-sonnet-20241022-v2:0';
-
+    // Single model for all tasks
+    this.modelId = process.env.BEDROCK_MODEL_ID || 'us.amazon.nova-lite-v1:0';
     this.defaultMaxTokens = 4096;
 
     console.log(`BedrockService initialized:`);
-    console.log(`  Chat model: ${this.chatModelId}`);
-    console.log(`  Security model: ${this.securityModelId}`);
+    console.log(`  Model: ${this.modelId}`);
   }
 
   /**
-   * Determine which model to use based on context
+   * Get the model ID
    */
-  getModelId(useSecurityModel = false) {
-    return useSecurityModel ? this.securityModelId : this.chatModelId;
+  getModelId() {
+    return this.modelId;
   }
 
   /**
@@ -168,12 +163,12 @@ class BedrockService {
    * Send a chat message to Bedrock model
    * @param {string} message - User message
    * @param {Array} conversationHistory - Previous messages in conversation
-   * @param {Object} options - Additional options (temperature, max_tokens, useSecurityModel, etc.)
+   * @param {Object} options - Additional options (temperature, max_tokens, tools, etc.)
    * @returns {Object} - Response from model
    */
   async chat(message, conversationHistory = [], options = {}) {
     try {
-      const modelId = this.getModelId(options.useSecurityModel || false);
+      const modelId = this.getModelId();
       const isNova = this.isNovaModel(modelId);
       const isClaude = this.isClaudeModel(modelId);
 
@@ -211,6 +206,11 @@ class BedrockService {
           top_p: options.topP || 0.9,
           system: options.systemPrompt || 'You are a helpful AI assistant built by Complens.ai.',
         };
+
+        // Add tools for Claude (if provided)
+        if (options.tools && options.tools.length > 0) {
+          requestBody.tools = options.tools;
+        }
       } else if (isNova) {
         // Amazon Nova API format (Converse API)
         requestBody = {
@@ -222,6 +222,21 @@ class BedrockService {
             topP: options.topP || 0.9,
           },
         };
+
+        // Add tools for Nova (if provided)
+        if (options.tools && options.tools.length > 0) {
+          requestBody.toolConfig = {
+            tools: options.tools.map(tool => ({
+              toolSpec: {
+                name: tool.name,
+                description: tool.description,
+                inputSchema: {
+                  json: tool.input_schema,
+                },
+              },
+            })),
+          };
+        }
       } else {
         throw new Error(`Unsupported model type: ${modelId}`);
       }
@@ -276,10 +291,22 @@ class BedrockService {
           output_tokens: responseBody.usage?.output_tokens || 0,
         },
       // Parse response based on model type
-      let content, usage, stopReason;
+      let content, usage, stopReason, toolUse;
 
       if (isClaude) {
-        content = responseBody.content[0].text;
+        // Claude may return text or tool_use blocks
+        const contentBlock = responseBody.content[0];
+
+        if (contentBlock.type === 'text') {
+          content = contentBlock.text;
+        } else if (contentBlock.type === 'tool_use') {
+          toolUse = {
+            id: contentBlock.id,
+            name: contentBlock.name,
+            input: contentBlock.input,
+          };
+        }
+
         stopReason = responseBody.stop_reason;
         usage = {
           input_tokens: responseBody.usage?.input_tokens || 0,
@@ -287,7 +314,21 @@ class BedrockService {
           total_tokens: (responseBody.usage?.input_tokens || 0) + (responseBody.usage?.output_tokens || 0),
         };
       } else if (isNova) {
-        content = responseBody.output?.message?.content[0]?.text || '';
+        // Nova may return text or toolUse blocks
+        const messageContent = responseBody.output?.message?.content || [];
+
+        for (const block of messageContent) {
+          if (block.text) {
+            content = block.text;
+          } else if (block.toolUse) {
+            toolUse = {
+              id: block.toolUse.toolUseId,
+              name: block.toolUse.name,
+              input: block.toolUse.input,
+            };
+          }
+        }
+
         stopReason = responseBody.stopReason;
         usage = {
           input_tokens: responseBody.usage?.inputTokens || 0,
@@ -299,12 +340,15 @@ class BedrockService {
       console.log('Bedrock response received:', {
         modelId,
         stopReason,
+        hasToolUse: !!toolUse,
+        toolName: toolUse?.name,
         inputTokens: usage.input_tokens,
         outputTokens: usage.output_tokens,
       });
 
       return {
         content,
+        toolUse,
         model: modelId,
         stopReason,
         usage,
@@ -361,7 +405,6 @@ class BedrockService {
     }
   /**
    * Analyze text or perform specific tasks
-   * Uses security model by default for better reasoning
    * @param {string} prompt - Task prompt
    * @param {string} text - Text to analyze
    * @returns {Object} - Analysis result
@@ -373,7 +416,6 @@ class BedrockService {
       systemPrompt,
       temperature: 0.3, // Lower temperature for analytical tasks
       maxTokens: 2048,
-      useSecurityModel: true, // Use smarter model for analysis
     });
   }
 

@@ -260,7 +260,6 @@ Provide a concise, actionable security assessment.`;
       systemPrompt: 'You are a cybersecurity expert analyzing vulnerabilities. Provide clear, actionable security assessments.',
       temperature: 0.3,
       maxTokens: 1024,
-      useSecurityModel: true, // Use Claude for security analysis
     });
 
     return response.content;
