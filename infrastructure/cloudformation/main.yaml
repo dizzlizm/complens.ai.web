@@ -279,6 +279,46 @@ Resources:
       SecurityGroupIds:
         - !Ref VPCEndpointSecurityGroup
 
+  # VPC Endpoints for AWS Systems Manager (required for SSM in private subnet)
+  SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+
+  EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2messages'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+
+  SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+
   # ============================================================================
   # Security Groups
   # ============================================================================
@@ -319,6 +359,57 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-rds-sg'
+
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for bastion host
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTPS for package updates
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTP for package updates
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-bastion-sg'
+
+  # Security Group Rules to avoid circular dependencies
+  BastionToRDSEgressRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref BastionSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      DestinationSecurityGroupId: !Ref RDSSecurityGroup
+      Description: Allow outbound to RDS PostgreSQL
+
+  RDSFromBastionIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref BastionSecurityGroup
+      Description: Allow PostgreSQL access from bastion host
+
+  VPCEndpointFromBastionIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref VPCEndpointSecurityGroup # Target: The SG attached to the Endpoints
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref BastionSecurityGroup # Source: The SG attached to the Bastion Host
+      Description: Allow inbound 443 from Bastion Host for VPC Endpoints (SSM, Secrets Manager)
 
   # ============================================================================
   # S3 Buckets
@@ -590,6 +681,143 @@ Resources:
                   - !Sub '${FrontendBucket.Arn}/*'
                   - !Sub 'arn:aws:s3:::${AWS::AccountId}-${Environment}-complens-lambda-code/*'
       Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # Bastion Host IAM Role and EC2 Instance
+  # ============================================================================
+
+
+  BastionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-complens-bastion-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref ApplicationSecrets
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  BastionInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${Environment}-complens-bastion-profile'
+      Roles:
+        - !Ref BastionRole
+
+  BastionHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      InstanceType: t3.micro
+      IamInstanceProfile: !Ref BastionInstanceProfile
+      SubnetId: !Ref PrivateSubnet1
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # Update system
+          dnf update -y
+
+          # Install PostgreSQL 15 client
+          dnf install -y postgresql15
+
+          # Install jq for JSON parsing
+          dnf install -y jq
+
+          # Create helper script to connect to RDS
+          cat > /usr/local/bin/connect-rds.sh << 'SCRIPT'
+          #!/bin/bash
+          # Helper script to connect to RDS using credentials from Secrets Manager
+
+          SECRET_ARN="${ApplicationSecrets}"
+          REGION="${AWS::Region}"
+
+          echo "Fetching database credentials from Secrets Manager..."
+          SECRET_JSON=$(aws secretsmanager get-secret-value \
+            --secret-id "$SECRET_ARN" \
+            --region "$REGION" \
+            --query SecretString \
+            --output text)
+
+          DB_HOST=$(echo "$SECRET_JSON" | jq -r '.dbHost')
+          DB_PORT=$(echo "$SECRET_JSON" | jq -r '.dbPort')
+          DB_NAME=$(echo "$SECRET_JSON" | jq -r '.dbName')
+          DB_USER=$(echo "$SECRET_JSON" | jq -r '.dbUsername')
+          DB_PASSWORD=$(echo "$SECRET_JSON" | jq -r '.dbPassword')
+
+          echo "Connecting to database: $DB_NAME at $DB_HOST:$DB_PORT"
+          PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME"
+          SCRIPT
+
+          chmod +x /usr/local/bin/connect-rds.sh
+
+          # Create migration runner script
+          cat > /usr/local/bin/run-migrations.sh << 'SCRIPT'
+          #!/bin/bash
+          # Helper script to run database migrations
+
+          SECRET_ARN="${ApplicationSecrets}"
+          REGION="${AWS::Region}"
+
+          echo "Fetching database credentials from Secrets Manager..."
+          SECRET_JSON=$(aws secretsmanager get-secret-value \
+            --secret-id "$SECRET_ARN" \
+            --region "$REGION" \
+            --query SecretString \
+            --output text)
+
+          DB_HOST=$(echo "$SECRET_JSON" | jq -r '.dbHost')
+          DB_PORT=$(echo "$SECRET_JSON" | jq -r '.dbPort')
+          DB_NAME=$(echo "$SECRET_JSON" | jq -r '.dbName')
+          DB_USER=$(echo "$SECRET_JSON" | jq -r '.dbUsername')
+          DB_PASSWORD=$(echo "$SECRET_JSON" | jq -r '.dbPassword')
+
+          echo "Running migrations on: $DB_NAME at $DB_HOST:$DB_PORT"
+          echo "Make sure migration SQL files are in current directory"
+          echo ""
+
+          for migration in *.sql; do
+            if [ -f "$migration" ]; then
+              echo "Running $migration..."
+              PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "$migration"
+              if [ $? -eq 0 ]; then
+                echo "✅ $migration completed"
+              else
+                echo "❌ $migration failed"
+                exit 1
+              fi
+            fi
+          done
+
+          echo "All migrations completed!"
+          SCRIPT
+
+          chmod +x /usr/local/bin/run-migrations.sh
+
+          echo "Bastion host setup complete!"
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-complens-bastion'
         - Key: Environment
           Value: !Ref Environment
 
@@ -1271,3 +1499,20 @@ Outputs:
       - !Ref HostedZoneId
     Export:
       Name: !Sub '${Environment}-complens-hosted-zone-id'
+
+  BastionInstanceId:
+    Description: Bastion host instance ID for SSM access
+    Value: !Ref BastionHost
+    Export:
+      Name: !Sub '${Environment}-complens-bastion-id'
+
+  BastionConnectionCommand:
+    Description: Command to connect to bastion via SSM
+    Value: !Sub 'aws ssm start-session --target ${BastionHost} --region ${AWS::Region}'
+
+  BastionRDSConnectionHelp:
+    Description: Instructions for connecting to RDS from bastion
+    Value: !Sub |
+      1. Connect to bastion: aws ssm start-session --target ${BastionHost} --region ${AWS::Region}
+      2. Run helper script: sudo /usr/local/bin/connect-rds.sh
+      OR run migrations: cd /tmp && upload SQL files, then sudo /usr/local/bin/run-migrations.sh

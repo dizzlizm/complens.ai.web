@@ -33,8 +33,9 @@ function UserManagement() {
     setError(null);
 
     try {
-      // For now, hardcode orgId = 1, later this will come from auth context
-      const response = await getUsers(1);
+      // Backend uses tenantContext from JWT - no need to pass orgId
+      const response = await getUsers();
+      console.log('Users loaded:', response); // Debug log
       setUsers(response.users || []);
     } catch (err) {
       setError(`Failed to load users: ${err.message}`);
@@ -58,17 +59,11 @@ function UserManagement() {
 
     try {
       if (editingUser) {
-        // Update existing user
-        await updateUser(editingUser.id, {
-          orgId: 1,
-          ...formData,
-        });
+        // Update existing user (backend uses tenantContext)
+        await updateUser(editingUser.id, formData);
       } else {
-        // Create new user
-        const response = await createUser({
-          orgId: 1,
-          ...formData,
-        });
+        // Create new user (backend uses tenantContext)
+        const response = await createUser(formData);
 
         // Show API key if service account was created
         if (response.user?.apiKey) {
@@ -117,7 +112,7 @@ function UserManagement() {
     setError(null);
 
     try {
-      await deleteUser(userId, 1);
+      await deleteUser(userId);
       await loadUsers();
     } catch (err) {
       setError(`Failed to delete user: ${err.message}`);

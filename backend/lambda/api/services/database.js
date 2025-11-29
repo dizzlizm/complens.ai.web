@@ -163,9 +163,17 @@ class DatabaseService {
   }
 
   /**
+   * Get a database client from the pool for transactions
+   * Remember to call client.release() when done
+   */
+  async getClient() {
+    return await this.pool.connect();
+  }
+
+  /**
    * Save a conversation turn (user message + assistant response)
    */
-  async saveConversation({ conversationId, userId, userMessage, assistantMessage, metadata = {} }) {
+  async saveConversation({ conversationId, userId, orgId, userMessage, assistantMessage, metadata = {} }) {
     // Ensure schema exists before first operation
     await this.ensureSchema();
 
@@ -178,11 +186,12 @@ class DatabaseService {
       let convId = conversationId;
       if (!convId) {
         const result = await client.query(`
-          INSERT INTO conversations (user_id, title, metadata)
-          VALUES ($1, $2, $3)
+          INSERT INTO conversations (user_id, org_id, title, metadata)
+          VALUES ($1, $2, $3, $4)
           RETURNING id
         `, [
           userId || null, // Associate with user if authenticated
+          orgId || null, // Associate with organization (REQUIRED for multi-tenant)
           userMessage.substring(0, 100), // Use first 100 chars as title
           JSON.stringify(metadata),
         ]);
@@ -222,22 +231,63 @@ class DatabaseService {
   }
 
   /**
-   * Get conversations (optionally filtered by user)
+   * Get conversations (filtered by org and optionally by user)
    */
-  async getConversations(userId = null, limit = 50, offset = 0) {
+  async getConversations(userId = null, orgId = null, limit = 50, offset = 0) {
     // Ensure schema exists before first operation
     await this.ensureSchema();
 
     let query;
     let params;
 
-    if (userId) {
-      // Filter by user_id
+    if (orgId && userId) {
+      // Filter by both org_id and user_id (most common case)
       query = `
         SELECT
           c.id,
           c.title,
           c.user_id,
+          c.org_id,
+          c.created_at,
+          c.updated_at,
+          c.metadata,
+          COUNT(m.id) as message_count
+        FROM conversations c
+        LEFT JOIN messages m ON c.id = m.conversation_id
+        WHERE c.org_id = $1 AND c.user_id = $2
+        GROUP BY c.id
+        ORDER BY c.updated_at DESC
+        LIMIT $3 OFFSET $4
+      `;
+      params = [orgId, userId, limit, offset];
+    } else if (orgId) {
+      // Filter by org_id only (admin view)
+      query = `
+        SELECT
+          c.id,
+          c.title,
+          c.user_id,
+          c.org_id,
+          c.created_at,
+          c.updated_at,
+          c.metadata,
+          COUNT(m.id) as message_count
+        FROM conversations c
+        LEFT JOIN messages m ON c.id = m.conversation_id
+        WHERE c.org_id = $1
+        GROUP BY c.id
+        ORDER BY c.updated_at DESC
+        LIMIT $2 OFFSET $3
+      `;
+      params = [orgId, limit, offset];
+    } else if (userId) {
+      // Filter by user_id only (backwards compatibility, but less secure)
+      query = `
+        SELECT
+          c.id,
+          c.title,
+          c.user_id,
+          c.org_id,
           c.created_at,
           c.updated_at,
           c.metadata,
@@ -252,11 +302,13 @@ class DatabaseService {
       params = [userId, limit, offset];
     } else {
       // Get all conversations (backwards compatibility for non-authenticated)
+      // WARNING: This should not be used in production multi-tenant environment
       query = `
         SELECT
           c.id,
           c.title,
           c.user_id,
+          c.org_id,
           c.created_at,
           c.updated_at,
           c.metadata,
@@ -275,17 +327,27 @@ class DatabaseService {
   }
 
   /**
-   * Get a specific conversation with all messages
+   * Get a specific conversation with all messages (with optional org_id validation)
    */
-  async getConversation(conversationId) {
+  async getConversation(conversationId, orgId = null) {
     // Ensure schema exists before first operation
     await this.ensureSchema();
 
-    const convResult = await this.query(`
-      SELECT id, title, user_id, created_at, updated_at, metadata
+    let query = `
+      SELECT id, title, user_id, org_id, created_at, updated_at, metadata
       FROM conversations
       WHERE id = $1
-    `, [conversationId]);
+    `;
+
+    let params = [conversationId];
+
+    // Add org_id filter for multi-tenant security
+    if (orgId) {
+      query += ` AND org_id = $2`;
+      params.push(orgId);
+    }
+
+    const convResult = await this.query(query, params);
 
     if (convResult.rows.length === 0) {
       return null;

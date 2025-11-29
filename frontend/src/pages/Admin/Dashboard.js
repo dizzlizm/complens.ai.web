@@ -17,9 +17,9 @@ function Dashboard() {
     setError(null);
 
     try {
-      // For now, hardcode orgId = 1, later this will come from auth context
+      // Backend uses tenantContext from JWT - no need to pass orgId
       const [oauth, health] = await Promise.all([
-        getOAuthStatus(1).catch(err => ({ error: err.message })),
+        getOAuthStatus().catch(err => ({ error: err.message })),
         getHealth().catch(err => ({ error: err.message }))
       ]);
 
