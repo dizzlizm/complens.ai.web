@@ -714,7 +714,7 @@ Resources:
           - IsDev
           - - 'https://dev.complens.ai'
             - 'http://localhost:3000'
-            - '*'
+            - !Sub 'https://${CloudFrontDistribution.DomainName}'
           - - !If
               - HasDomain
               - !Sub 'https://${DomainName}'
@@ -726,8 +726,9 @@ Resources:
           - DELETE
           - OPTIONS
         AllowHeaders:
-          - '*'
+          - 'Content-Type'
           - 'Authorization'
+          - 'X-Requested-With'
         AllowCredentials: true
         MaxAge: 300
       Tags:
