@@ -451,9 +451,23 @@ jobs:
             --output text \
             --region ${{ env.AWS_REGION }})
 
+          COGNITO_USER_POOL_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CognitoUserPoolId`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          COGNITO_CLIENT_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CognitoUserPoolClientId`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
           echo "api-url=${API_URL}" >> $GITHUB_OUTPUT
           echo "frontend-bucket=${FRONTEND_BUCKET}" >> $GITHUB_OUTPUT
           echo "cloudfront-url=${CLOUDFRONT_URL}" >> $GITHUB_OUTPUT
+          echo "cognito-user-pool-id=${COGNITO_USER_POOL_ID}" >> $GITHUB_OUTPUT
+          echo "cognito-client-id=${COGNITO_CLIENT_ID}" >> $GITHUB_OUTPUT
 
           # Verify bucket exists before proceeding
           if [ -z "$FRONTEND_BUCKET" ] || [ "$FRONTEND_BUCKET" = "None" ]; then
@@ -471,6 +485,8 @@ jobs:
           fi
 
           echo "✅ Frontend bucket verified: ${FRONTEND_BUCKET}"
+          echo "✅ Cognito User Pool ID: ${COGNITO_USER_POOL_ID}"
+          echo "✅ Cognito Client ID: ${COGNITO_CLIENT_ID}"
 
       - name: Install dependencies
         run: |
@@ -480,6 +496,9 @@ jobs:
       - name: Build frontend
         env:
           REACT_APP_API_URL: ${{ steps.get-outputs.outputs.api-url }}
+          REACT_APP_COGNITO_USER_POOL_ID: ${{ steps.get-outputs.outputs.cognito-user-pool-id }}
+          REACT_APP_COGNITO_CLIENT_ID: ${{ steps.get-outputs.outputs.cognito-client-id }}
+          REACT_APP_AWS_REGION: ${{ env.AWS_REGION }}
         run: |
           cd frontend
           npm run build
