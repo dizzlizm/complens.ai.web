@@ -1,208 +1,32 @@
 /**
- * Chrome Web Store Intelligence Service (Robust Edition)
- * Handles redirects, enforces locales, and uses structured data parsing.
+ * Chrome Web Store Intelligence Service (Production Grade)
+ * * Features:
+ * - Hybrid Scraping: Tries fast static HTTP first -> falls back to Puppeteer (Headless Browser)
+ * - Robust Networking: Follows redirects, handles compression (gzip/br), mimics real browsers
+ * - Locale Enforcement: Forces English (hl=en) and US Store (gl=US) for consistent AI analysis
+ * - JSON-LD Parsing: Prioritizes structured data over fragile HTML regex
  */
 
 const https = require('https');
 const { URL } = require('url');
-const zlib = require('zlib'); // Support for gzip/deflate
+const zlib = require('zlib');
 
 class ChromeWebStoreService {
   constructor(databaseService) {
     this.db = databaseService;
     this.cacheExpiration = 24 * 60 * 60 * 1000; // 24 hours
-    // Modern CWS URL, though code handles redirects from old URLs too
     this.baseUrl = 'https://chromewebstore.google.com/detail/';
   }
 
   /**
-   * Robust HTTP Client
-   * - Follows Redirects
-   * - Handles Gzip/Deflate
-   * - Enforces Timeouts
-   * - Mimics real browser headers
+   * MAIN ENTRY POINT
+   * Orchestrates the fetching strategy (Cache -> Static -> Puppeteer)
    */
-  async httpGet(url, options = {}, redirectCount = 0) {
-    const MAX_REDIRECTS = 5;
-    const TIMEOUT = 10000; // 10 seconds
-
-    if (redirectCount > MAX_REDIRECTS) {
-      throw new Error(`Too many redirects (${redirectCount}) for URL: ${url}`);
-    }
-
-    const urlObj = new URL(url);
-
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9', // Critical: Force English for AI analysis
-      'Accept-Encoding': 'gzip, deflate, br', // Efficiency
-      ...options.headers
-    };
-
-    return new Promise((resolve, reject) => {
-      const req = https.get(url, { headers, timeout: TIMEOUT }, (res) => {
-        // 1. Handle Redirects (301, 302, 303, 307, 308)
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          // Resolve relative URLs based on current URL
-          const nextUrl = new URL(res.headers.location, url).toString();
-          console.log(`Following redirect (${res.statusCode}): ${nextUrl}`);
-          
-          // Drain current response to prevent memory leaks
-          res.resume(); 
-          
-          return resolve(this.httpGet(nextUrl, options, redirectCount + 1));
-        }
-
-        // 2. Handle Errors
-        if (res.statusCode !== 200) {
-          res.resume();
-          return reject(new Error(`HTTP ${res.statusCode}: Status check failed`));
-        }
-
-        // 3. Handle Decompression (Gzip/Deflate/Brotli)
-        let stream = res;
-        const encoding = res.headers['content-encoding'];
-        if (encoding === 'gzip') stream = res.pipe(zlib.createGunzip());
-        else if (encoding === 'deflate') stream = res.pipe(zlib.createInflate());
-        else if (encoding === 'br') stream = res.pipe(zlib.createBrotliDecompress());
-
-        let data = '';
-        stream.on('data', (chunk) => { data += chunk; });
-        stream.on('end', () => resolve(data));
-        stream.on('error', (err) => reject(new Error(`Stream error: ${err.message}`)));
-      });
-
-      req.on('error', (err) => reject(new Error(`Network error: ${err.message}`)));
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new Error('Request timed out'));
-      });
-    });
-  }
-
-  /**
-   * Normalize URL to ensure we get English content and correct region
-   * This is crucial for the AI analysis step.
-   */
-  normalizeStoreUrl(extensionId) {
-    // We attach query params to force the English locale
-    return `${this.baseUrl}${extensionId}?hl=en&gl=US`;
-  }
-
-  /**
-   * Parse Chrome Web Store page HTML
-   * Strategy: Try JSON-LD (Structure Data) first -> Fallback to Regex
-   */
-  parseExtensionHTML(html) {
-    const extension = {
-      name: null,
-      version: null,
-      description: null,
-      rating: 0,
-      ratingCount: 0,
-      userCount: 0,
-      developer: null,
-      lastUpdated: null,
-      permissions: [],
-      icon: null,
-    };
-
-    // --- STRATEGY 1: JSON-LD (Structured Data) ---
-    // Google often embeds Schema.org data in a script tag. This is the most robust method.
-    try {
-      const jsonLdMatch = html.match(/<script type="application\/ld\+json">(.*?)<\/script>/s);
-      if (jsonLdMatch && jsonLdMatch[1]) {
-        const data = JSON.parse(jsonLdMatch[1]);
-        if (data['@type'] === 'SoftwareApplication') {
-          extension.name = data.name;
-          extension.description = data.description; // Usually short desc
-          extension.version = data.softwareVersion;
-          extension.category = data.applicationCategory;
-          extension.icon = data.image;
-          
-          if (data.aggregateRating) {
-            extension.rating = parseFloat(data.aggregateRating.ratingValue);
-            extension.ratingCount = parseInt(data.aggregateRating.ratingCount);
-          }
-          
-          if (data.offers && data.offers.price === '0') {
-            extension.price = 'Free';
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('JSON-LD parsing failed, falling back to regex', e);
-    }
-
-    // --- STRATEGY 2: META TAGS & REGEX (Fallback/Supplement) ---
-    
-    // Name (fallback)
-    if (!extension.name) {
-      const nameMatch = html.match(/<meta property="og:title" content="([^"]+)"/);
-      if (nameMatch) extension.name = nameMatch[1].replace(' - Chrome Web Store', '');
-    }
-
-    // Detailed Description
-    // The meta description is often truncated, so we try to find the main body
-    const descMatch = html.match(/<meta property="og:description" content="([^"]+)"/);
-    if (!extension.description && descMatch) extension.description = descMatch[1];
-
-    // User Count (Regex is usually required for this as it's rarely in JSON-LD)
-    // Matches "1,000,000+ users" or "234 users"
-    const userCountMatch = html.match(/class="[^"]*">([0-9,]+\+?)\s+users</i) || html.match(/([0-9,]+\+?)\s+users/i);
-    if (userCountMatch) {
-      // Remove commas and '+' signs for integer parsing
-      extension.userCount = parseInt(userCountMatch[1].replace(/[,+]/g, ''));
-    }
-
-    // Last Updated
-    const updatedMatch = html.match(/Updated[:\s]+([^<]+)</i);
-    if (updatedMatch) extension.lastUpdated = updatedMatch[1].trim();
-
-    // Developer / Offered By
-    const developerMatch = html.match(/Offered by[:\s]+([^<]+)</i);
-    if (developerMatch) extension.developer = developerMatch[1].trim();
-
-    // --- PERMISSIONS PARSING ---
-    // This is the hardest part as it is often loaded dynamically or hidden behind clicks.
-    // We scan the raw HTML for known permission strings.
-    
-    const permissionPatterns = [
-      'Read and change all your data',
-      'Read your browsing history',
-      'Manage your downloads',
-      'Access your tabs',
-      'Communicate with cooperating websites',
-      'Display notifications',
-      'Manage your apps, extensions, and themes',
-      'storage',
-      'cookies',
-      'webRequest',
-      'activeTab',
-      'declarativeNetRequest',
-      'scripting',
-      'geolocation'
-    ];
-
-    // Extract the section typically containing additional info
-    const mainContentMatch = html.match(/<main(.*?)\/main>/s);
-    const contentToScan = mainContentMatch ? mainContentMatch[1] : html;
-
-    permissionPatterns.forEach(perm => {
-      // Create a case-insensitive regex for the permission
-      const regex = new RegExp(perm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-      if (regex.test(contentToScan)) {
-        extension.permissions.push(perm);
-      }
-    });
-
-    return extension;
-  }
-
   async getExtension(extensionId, options = {}) {
+    if (!extensionId) throw new Error('Extension ID is required');
     const { useCache = true, orgId = null } = options;
 
+    // 1. Check Cache
     if (useCache) {
       const cached = await this.getFromCache('chrome_store', 'extension_id', extensionId, orgId);
       if (cached) {
@@ -218,135 +42,319 @@ class ChromeWebStoreService {
 
     console.log(`[Fetching] Chrome extension: ${extensionId}`);
     
-    // Use the normalized URL to force English + US Region
-    const targetUrl = this.normalizeStoreUrl(extensionId);
+    // Normalize URL: Force English & US Region to avoid translation issues
+    const targetUrl = `${this.baseUrl}${extensionId}?hl=en&gl=US`;
+    
+    let extensionData = null;
+    let fetchMethod = 'static';
 
+    // 2. Strategy A: Fast Static Fetch (Low Overhead)
     try {
       const html = await this.httpGet(targetUrl);
-      const extensionData = this.parseExtensionHTML(html);
+      extensionData = this.parseExtensionHTML(html);
       
-      // Post-processing: Ensure ID is attached
-      extensionData.extensionId = extensionId;
-      extensionData.storeUrl = targetUrl;
-
-      // Validation: If we didn't find a name, the scraping likely failed (or 404 handled as 200)
+      // Validation: If name is missing, static fetch likely hit a JS-wall or CAPTCHA
       if (!extensionData.name) {
-        throw new Error('Failed to parse extension name. Page structure might have changed or ID is invalid.');
+        throw new Error('Incomplete static parse - likely a JS-only page');
       }
-
-      await this.saveToCache('chrome_store', 'extension_id', extensionId, extensionData, null, orgId);
-
-      return {
-        ...extensionData,
-        cached: false,
-        cachedAt: new Date(),
-        aiAnalysis: null,
-      };
-
     } catch (error) {
-      console.error(`Error processing extension ${extensionId}:`, error.message);
-      // Re-throw with user-friendly message
-      throw new Error(`Could not retrieve extension details: ${error.message}`);
+      console.warn(`[Strategy A] Static fetch failed for ${extensionId}: ${error.message}`);
+      
+      // 3. Strategy B: Headless Browser Fallback (High Robustness)
+      console.log(`[Strategy B] Attempting Puppeteer fallback for ${extensionId}...`);
+      try {
+        fetchMethod = 'puppeteer';
+        const html = await this.fetchWithPuppeteer(targetUrl);
+        extensionData = this.parseExtensionHTML(html);
+      } catch (puppeteerError) {
+        console.error(`[Strategy B] Puppeteer failed: ${puppeteerError.message}`);
+        throw new Error(`Could not retrieve extension details. Both static and browser strategies failed.`);
+      }
+    }
+
+    // Final Validation
+    if (!extensionData || !extensionData.name) {
+      throw new Error(`Failed to parse extension data for ${extensionId}`);
+    }
+
+    // Add Metadata
+    extensionData.extensionId = extensionId;
+    extensionData.storeUrl = targetUrl;
+    extensionData.fetchMethod = fetchMethod;
+
+    // 4. Save to Cache
+    await this.saveToCache('chrome_store', 'extension_id', extensionId, extensionData, null, orgId);
+
+    return {
+      ...extensionData,
+      cached: false,
+      cachedAt: new Date(),
+      aiAnalysis: null,
+    };
+  }
+
+  /**
+   * NETWORK TOOL: Robust HTTP Client
+   * Handles Redirects (301/302), Decompression, and Timeouts
+   */
+  async httpGet(url, headers = {}, redirectCount = 0) {
+    const MAX_REDIRECTS = 5;
+    if (redirectCount > MAX_REDIRECTS) throw new Error('Too many redirects');
+
+    const options = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        ...headers
+      },
+      timeout: 10000 // 10s timeout
+    };
+
+    return new Promise((resolve, reject) => {
+      const req = https.get(url, options, (res) => {
+        // Handle Redirects
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          const nextUrl = new URL(res.headers.location, url).toString();
+          res.resume(); // Drain
+          return resolve(this.httpGet(nextUrl, headers, redirectCount + 1));
+        }
+
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
+
+        // Handle Decompression
+        let stream = res;
+        const encoding = res.headers['content-encoding'];
+        if (encoding === 'gzip') stream = res.pipe(zlib.createGunzip());
+        else if (encoding === 'br') stream = res.pipe(zlib.createBrotliDecompress());
+        else if (encoding === 'deflate') stream = res.pipe(zlib.createInflate());
+
+        let data = '';
+        stream.on('data', c => data += c);
+        stream.on('end', () => resolve(data));
+        stream.on('error', reject);
+      });
+
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+    });
+  }
+
+  /**
+   * NETWORK TOOL: Headless Browser (Puppeteer)
+   * Lazy-loaded to save resources. Uses stealth plugins to evade detection.
+   */
+  async fetchWithPuppeteer(url) {
+    // Lazy load dependencies
+    const puppeteer = require('puppeteer-extra');
+    const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+    const AnonymizeUAPlugin = require('puppeteer-extra-plugin-anonymize-ua');
+
+    puppeteer.use(StealthPlugin());
+    puppeteer.use(AnonymizeUAPlugin());
+
+    const browser = await puppeteer.launch({
+      headless: "new",
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--window-size=1920,1080']
+    });
+
+    try {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1920, height: 1080 });
+
+      // Navigate
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+
+      // Try to expand "Read More" sections to reveal permissions
+      try {
+        const selectors = ['button[aria-label="About this extension"]', 'button:contains("Read more")', '.ExpandableText__button'];
+        for (const sel of selectors) {
+          const btn = await page.$(sel);
+          if (btn) await btn.click().catch(() => {});
+        }
+        // Wait briefly for expansion
+        await new Promise(r => setTimeout(r, 500));
+      } catch (e) { /* Continue even if click fails */ }
+
+      return await page.content();
+    } finally {
+      await browser.close();
     }
   }
 
-
   /**
-   * Analyze extension permissions for security risks
+   * PARSING TOOL: Universal HTML Parser
+   * Works on both Static HTML and Puppeteer-rendered DOM
    */
-  analyzePermissions(permissions) {
-    const risks = {
-      high: [],
-      medium: [],
-      low: [],
+  parseExtensionHTML(html) {
+    const extension = {
+      name: null, description: null, version: null,
+      rating: 0, ratingCount: 0, userCount: 0,
+      developer: null, lastUpdated: null, permissions: [],
+      icon: null
     };
 
-    const highRiskPermissions = [
-      'Read and change all your data',
-      'Read your browsing history',
-      'Manage your downloads',
-      'webRequest',
-      'cookies',
-      'declarativeNetRequest', // Can block/redirect requests
-      'scripting' // Can inject code
-    ];
-
-    const mediumRiskPermissions = [
-      'Access your tabs',
-      'Communicate with cooperating websites',
-      'Display notifications',
-      'activeTab',
-      'geolocation'
-    ];
-
-    permissions.forEach(perm => {
-      // Normalize comparison
-      const permLower = perm.toLowerCase();
-      
-      if (highRiskPermissions.some(high => permLower.includes(high.toLowerCase()))) {
-        risks.high.push(perm);
-      } else if (mediumRiskPermissions.some(med => permLower.includes(med.toLowerCase()))) {
-        risks.medium.push(perm);
-      } else {
-        risks.low.push(perm);
+    // 1. JSON-LD Strategy (Most Reliable)
+    try {
+      const jsonMatch = html.match(/<script type="application\/ld\+json">(.*?)<\/script>/s);
+      if (jsonMatch && jsonMatch[1]) {
+        const data = JSON.parse(jsonMatch[1]);
+        if (data['@type'] === 'SoftwareApplication') {
+          extension.name = data.name;
+          extension.description = data.description;
+          extension.version = data.softwareVersion;
+          extension.category = data.applicationCategory;
+          extension.icon = data.image;
+          if (data.aggregateRating) {
+            extension.rating = parseFloat(data.aggregateRating.ratingValue);
+            extension.ratingCount = parseInt(data.aggregateRating.ratingCount);
+          }
+        }
       }
+    } catch (e) { console.warn('JSON-LD parse error', e.message); }
+
+    // 2. Regex Strategy (Fallback)
+    if (!extension.name) {
+      const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/);
+      if (titleMatch) extension.name = titleMatch[1].replace(' - Chrome Web Store', '');
+    }
+
+    if (!extension.description) {
+      const descMatch = html.match(/<meta property="og:description" content="([^"]+)"/);
+      if (descMatch) extension.description = descMatch[1];
+    }
+
+    const devMatch = html.match(/Offered by[:\s]+([^<]+)</i);
+    if (devMatch) extension.developer = devMatch[1].trim();
+
+    const updateMatch = html.match(/Updated[:\s]+([^<]+)</i);
+    if (updateMatch) extension.lastUpdated = updateMatch[1].trim();
+
+    const userMatch = html.match(/([0-9,]+\+?)\s+users/i);
+    if (userMatch) extension.userCount = parseInt(userMatch[1].replace(/[,+]/g, ''));
+
+    // 3. Permission Scan (Text-based)
+    // We scan the raw text for permission keywords
+    const textContent = html.replace(/<[^>]+>/g, ' '); 
+    const riskPatterns = [
+      'Read and change all your data', 'Read your browsing history',
+      'Manage your downloads', 'Access your tabs', 'Communicate with cooperating websites',
+      'Display notifications', 'Manage your apps, extensions, and themes',
+      'storage', 'cookies', 'webRequest', 'activeTab', 'declarativeNetRequest', 'scripting'
+    ];
+
+    riskPatterns.forEach(perm => {
+      if (textContent.includes(perm)) extension.permissions.push(perm);
     });
 
+    return extension;
+  }
+
+  /**
+   * SECURITY ANALYSIS: Categorize Permissions
+   */
+  analyzePermissions(permissions) {
+    const risks = { high: [], medium: [], low: [] };
+    const highRisk = ['Read and change all your data', 'Read your browsing history', 'Manage your downloads', 'webRequest', 'cookies', 'scripting'];
+    const mediumRisk = ['Access your tabs', 'Communicate with cooperating websites', 'Display notifications', 'activeTab', 'geolocation'];
+
+    permissions.forEach(perm => {
+      const p = perm.toLowerCase();
+      if (highRisk.some(h => p.includes(h.toLowerCase()))) risks.high.push(perm);
+      else if (mediumRisk.some(m => p.includes(m.toLowerCase()))) risks.medium.push(perm);
+      else risks.low.push(perm);
+    });
     return risks;
   }
 
-
   /**
-   * AI-powered security analysis of Chrome extension
+   * AI ANALYSIS: Generate Security Report via Bedrock
    */
   async analyzeExtensionSecurity(extensionData, bedrockService) {
     const permissionRisks = this.analyzePermissions(extensionData.permissions || []);
-
-    const prompt = `Analyze this Chrome browser extension for security risks:
-
-Extension: ${extensionData.name}
-Developer: ${extensionData.developer}
-Version: ${extensionData.version}
-Users: ${extensionData.userCount ? extensionData.userCount.toLocaleString() : 'Unknown'}
-Rating: ${extensionData.rating || 'Unknown'} stars
-Last Updated: ${extensionData.lastUpdated}
-
-Permissions:
-${extensionData.permissions ? extensionData.permissions.join('\n') : 'No permissions listed'}
-
-Permission Risk Analysis:
-- High Risk: ${permissionRisks.high.join(', ') || 'None'}
-- Medium Risk: ${permissionRisks.medium.join(', ') || 'None'}
-- Low Risk: ${permissionRisks.low.join(', ') || 'None'}
-
-Provide:
-1. Security Risk Level (Low/Medium/High/Critical)
-2. Key Security Concerns (specific to permissions and update frequency)
-3. Red Flags (if any): outdated, suspicious permissions, low ratings, etc.
-4. Recommendations for enterprise/workspace use
-5. Safe alternatives (if this is high risk)
-
-Be specific and actionable.`;
+    
+    const prompt = `Analyze this Chrome browser extension for enterprise security risks:
+    
+    Extension: ${extensionData.name}
+    Developer: ${extensionData.developer || 'Unknown'}
+    Users: ${extensionData.userCount}
+    Rating: ${extensionData.rating} (${extensionData.ratingCount} reviews)
+    Last Updated: ${extensionData.lastUpdated}
+    
+    Permissions Detected:
+    - High Risk: ${permissionRisks.high.join(', ') || 'None'}
+    - Medium Risk: ${permissionRisks.medium.join(', ') || 'None'}
+    
+    Provide:
+    1. Risk Level (Low/Medium/High/Critical)
+    2. Specific Security Concerns
+    3. Red Flags (outdated, suspicious permissions, etc.)
+    4. Recommendation (Approve/Block)`;
 
     const response = await bedrockService.chat(prompt, [], {
-      systemPrompt: 'You are a browser extension security expert. Analyze extensions for enterprise security risks, data privacy issues, and compliance concerns.',
-      temperature: 0.3,
-      maxTokens: 1024,
+      systemPrompt: 'You are a cybersecurity analyst specializing in browser extension threats.',
+      temperature: 0.3
     });
 
+    // Update the cache with the new AI analysis
+    await this.updateAIAnalysis('chrome_store', 'extension_id', extensionData.extensionId, response.content);
+    
     return response.content;
   }
 
-  
+  /**
+   * DATABASE: Get Cached Item
+   */
   async getFromCache(source, queryType, queryValue, orgId = null) {
-      // Implementation from previous snippet
-      return this.db.query ? await this.db.query(/*...*/) : null; 
+    if (!queryValue) return null;
+    const result = await this.db.query(
+      `SELECT id, raw_data, ai_analysis, cached_at, expires_at
+       FROM security_intel
+       WHERE source = $1 AND query_type = $2 AND query_value = $3
+         AND (org_id = $4 OR org_id IS NULL)
+         AND expires_at > NOW()
+       ORDER BY cached_at DESC LIMIT 1`,
+      [source, queryType, queryValue, orgId]
+    );
+    return result.rows.length > 0 ? result.rows[0] : null;
   }
 
+  /**
+   * DATABASE: Save Item
+   */
   async saveToCache(source, queryType, queryValue, rawData, aiAnalysis = null, orgId = null) {
-      // Implementation from previous snippet
-      if(this.db.query) await this.db.query(/*...*/);
-      return true;
+    const expiresAt = new Date(Date.now() + this.cacheExpiration);
+    // Safe-guard against undefined parameters
+    const safeOrgId = orgId === undefined ? null : orgId;
+    const safeAi = aiAnalysis === undefined ? null : aiAnalysis;
+
+    const result = await this.db.query(
+      `INSERT INTO security_intel (source, query_type, query_value, raw_data, ai_analysis, expires_at, org_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (source, query_type, query_value, COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid))
+       DO UPDATE SET
+         raw_data = EXCLUDED.raw_data,
+         ai_analysis = EXCLUDED.ai_analysis,
+         cached_at = NOW(),
+         expires_at = EXCLUDED.expires_at
+       RETURNING id`,
+      [source, queryType, queryValue, JSON.stringify(rawData), safeAi, expiresAt, safeOrgId]
+    );
+    return result.rows[0].id;
+  }
+
+  async updateAIAnalysis(source, queryType, queryValue, analysis, orgId = null) {
+    const safeOrgId = orgId === undefined ? null : orgId;
+    await this.db.query(
+      `UPDATE security_intel SET ai_analysis = $1
+       WHERE source = $2 AND query_type = $3 AND query_value = $4
+       AND (org_id = $5 OR org_id IS NULL)`,
+      [analysis, source, queryType, queryValue, safeOrgId]
+    );
   }
 }
 
