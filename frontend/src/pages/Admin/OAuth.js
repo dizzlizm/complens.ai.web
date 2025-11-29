@@ -8,9 +8,6 @@ function OAuth() {
   const [error, setError] = useState(null);
   const [disconnecting, setDisconnecting] = useState(false);
 
-  // For now, hardcode orgId = 1, later this will come from auth context
-  const orgId = 1;
-
   useEffect(() => {
     loadOAuthStatus();
   }, []);
@@ -20,7 +17,8 @@ function OAuth() {
     setError(null);
 
     try {
-      const data = await getOAuthStatus(orgId);
+      // Backend uses tenantContext from JWT - no need to pass orgId
+      const data = await getOAuthStatus();
       setStatus(data);
     } catch (err) {
       setError(err.message || 'Failed to load OAuth status');
@@ -32,8 +30,9 @@ function OAuth() {
 
   const handleConnect = () => {
     // Redirect to backend OAuth authorization endpoint
+    // Backend uses tenantContext from JWT - no need to pass orgId
     const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:3001';
-    window.location.href = `${apiUrl}/oauth/google/authorize?orgId=${orgId}`;
+    window.location.href = `${apiUrl}/oauth/google/authorize`;
   };
 
   const handleDisconnect = async () => {
@@ -45,7 +44,8 @@ function OAuth() {
     setError(null);
 
     try {
-      await disconnectOAuth(orgId);
+      // Backend uses tenantContext from JWT - no need to pass orgId
+      await disconnectOAuth();
       await loadOAuthStatus(); // Reload status
     } catch (err) {
       setError(err.message || 'Failed to disconnect');

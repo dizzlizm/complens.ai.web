@@ -146,13 +146,12 @@ export async function healthCheck() {
 export const getHealth = healthCheck;
 
 /**
- * Get Google Workspace OAuth status
- * @param {number} orgId - Organization ID
+ * Get Google Workspace OAuth status (uses tenantContext from JWT)
  * @returns {Promise<Object>} - OAuth connection status
  */
-export async function getOAuthStatus(orgId) {
+export async function getOAuthStatus() {
   try {
-    const response = await apiClient.get(`/oauth/google/status?orgId=${orgId}`);
+    const response = await apiClient.get('/oauth/google/status');
     return response.data;
   } catch (error) {
     console.error('Error getting OAuth status:', error);
@@ -161,13 +160,12 @@ export async function getOAuthStatus(orgId) {
 }
 
 /**
- * Disconnect Google Workspace OAuth
- * @param {number} orgId - Organization ID
+ * Disconnect Google Workspace OAuth (uses tenantContext from JWT)
  * @returns {Promise<Object>} - Disconnect response
  */
-export async function disconnectOAuth(orgId) {
+export async function disconnectOAuth() {
   try {
-    const response = await apiClient.post('/oauth/google/disconnect', { orgId });
+    const response = await apiClient.post('/oauth/google/disconnect', {});
     return response.data;
   } catch (error) {
     console.error('Error disconnecting OAuth:', error);

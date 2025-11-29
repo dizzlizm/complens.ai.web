@@ -456,21 +456,57 @@ exports.handler = async (event) => {
         break;
       }
 
-      case path === '/oauth/google/authorize' && httpMethod === 'GET':
-        response = await handleGoogleOAuthAuthorize(event.queryStringParameters || {});
+      case path === '/oauth/google/authorize' && httpMethod === 'GET': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleGoogleOAuthAuthorize(tenantContext);
         break;
+      }
 
       case path === '/oauth/google/callback' && httpMethod === 'GET':
         response = await handleGoogleOAuthCallback(event.queryStringParameters || {});
         break;
 
-      case path === '/oauth/google/disconnect' && httpMethod === 'POST':
-        response = await handleGoogleOAuthDisconnect(body);
+      case path === '/oauth/google/disconnect' && httpMethod === 'POST': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, body?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleGoogleOAuthDisconnect(tenantContext);
         break;
+      }
 
-      case path === '/oauth/google/status' && httpMethod === 'GET':
-        response = await handleGoogleOAuthStatus(event.queryStringParameters || {});
+      case path === '/oauth/google/status' && httpMethod === 'GET': {
+        const authError = requireAuth(user);
+        if (authError) {
+          response = authError;
+          break;
+        }
+        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+        const tenantError = requireTenantContext(tenantContext);
+        if (tenantError) {
+          response = tenantError;
+          break;
+        }
+        response = await handleGoogleOAuthStatus(tenantContext);
         break;
+      }
 
       case path === '/admin/users' && httpMethod === 'GET': {
         const authError = requireAuth(user);
@@ -1032,16 +1068,9 @@ async function handleGetConversation(conversationId, user, tenantContext) {
  * Google OAuth Authorization - Step 1
  * Redirects user to Google consent screen
  */
-async function handleGoogleOAuthAuthorize(params) {
+async function handleGoogleOAuthAuthorize(tenantContext) {
   try {
-    const { orgId } = params;
-
-    if (!orgId) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'orgId is required' }),
-      };
-    }
+    const orgId = tenantContext.orgId;
 
     // Generate state parameter (used to prevent CSRF and track org)
     const state = Buffer.from(JSON.stringify({ orgId, timestamp: Date.now() })).toString('base64');
@@ -1151,16 +1180,9 @@ async function handleGoogleOAuthCallback(params) {
 /**
  * Disconnect Google Workspace
  */
-async function handleGoogleOAuthDisconnect(body) {
+async function handleGoogleOAuthDisconnect(tenantContext) {
   try {
-    const { orgId } = body;
-
-    if (!orgId) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'orgId is required' }),
-      };
-    }
+    const orgId = tenantContext.orgId;
 
     // Get current tokens
     const result = await databaseService.query(
@@ -1204,16 +1226,9 @@ async function handleGoogleOAuthDisconnect(body) {
 /**
  * Check Google Workspace connection status
  */
-async function handleGoogleOAuthStatus(params) {
+async function handleGoogleOAuthStatus(tenantContext) {
   try {
-    const { orgId } = params;
-
-    if (!orgId) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'orgId is required' }),
-      };
-    }
+    const orgId = tenantContext.orgId;
 
     const result = await databaseService.query(
       `SELECT connected_email, connected_at, disconnected_at, token_expiry
