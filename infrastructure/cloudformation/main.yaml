@@ -356,11 +356,6 @@ Resources:
           FromPort: 5432
           ToPort: 5432
           SourceSecurityGroupId: !Ref LambdaSecurityGroup
-        - IpProtocol: tcp
-          FromPort: 5432
-          ToPort: 5432
-          SourceSecurityGroupId: !Ref BastionSecurityGroup
-          Description: Allow PostgreSQL access from bastion host
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-rds-sg'
@@ -371,11 +366,6 @@ Resources:
       GroupDescription: Security group for bastion host
       VpcId: !Ref VPC
       SecurityGroupEgress:
-        - IpProtocol: tcp
-          FromPort: 5432
-          ToPort: 5432
-          DestinationSecurityGroupId: !Ref RDSSecurityGroup
-          Description: Allow outbound to RDS PostgreSQL
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
@@ -389,6 +379,27 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-bastion-sg'
+
+  # Security Group Rules to avoid circular dependencies
+  BastionToRDSEgressRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref BastionSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      DestinationSecurityGroupId: !Ref RDSSecurityGroup
+      Description: Allow outbound to RDS PostgreSQL
+
+  RDSFromBastionIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref BastionSecurityGroup
+      Description: Allow PostgreSQL access from bastion host
 
   # ============================================================================
   # S3 Buckets
