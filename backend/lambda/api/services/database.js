@@ -56,6 +56,19 @@ class DatabaseService {
         );
       `);
 
+      // Migration: Add user_id column if it doesn't exist (for existing tables)
+      await client.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'conversations' AND column_name = 'user_id'
+          ) THEN
+            ALTER TABLE conversations ADD COLUMN user_id VARCHAR(255);
+          END IF;
+        END $$;
+      `);
+
       // Add index on user_id for faster lookups
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_conversations_user_id
@@ -209,27 +222,55 @@ class DatabaseService {
   }
 
   /**
-   * Get all conversations
+   * Get conversations (optionally filtered by user)
    */
-  async getConversations(limit = 50, offset = 0) {
+  async getConversations(userId = null, limit = 50, offset = 0) {
     // Ensure schema exists before first operation
     await this.ensureSchema();
 
-    const result = await this.query(`
-      SELECT
-        c.id,
-        c.title,
-        c.created_at,
-        c.updated_at,
-        c.metadata,
-        COUNT(m.id) as message_count
-      FROM conversations c
-      LEFT JOIN messages m ON c.id = m.conversation_id
-      GROUP BY c.id
-      ORDER BY c.updated_at DESC
-      LIMIT $1 OFFSET $2
-    `, [limit, offset]);
+    let query;
+    let params;
 
+    if (userId) {
+      // Filter by user_id
+      query = `
+        SELECT
+          c.id,
+          c.title,
+          c.user_id,
+          c.created_at,
+          c.updated_at,
+          c.metadata,
+          COUNT(m.id) as message_count
+        FROM conversations c
+        LEFT JOIN messages m ON c.id = m.conversation_id
+        WHERE c.user_id = $1
+        GROUP BY c.id
+        ORDER BY c.updated_at DESC
+        LIMIT $2 OFFSET $3
+      `;
+      params = [userId, limit, offset];
+    } else {
+      // Get all conversations (backwards compatibility for non-authenticated)
+      query = `
+        SELECT
+          c.id,
+          c.title,
+          c.user_id,
+          c.created_at,
+          c.updated_at,
+          c.metadata,
+          COUNT(m.id) as message_count
+        FROM conversations c
+        LEFT JOIN messages m ON c.id = m.conversation_id
+        GROUP BY c.id
+        ORDER BY c.updated_at DESC
+        LIMIT $1 OFFSET $2
+      `;
+      params = [limit, offset];
+    }
+
+    const result = await this.query(query, params);
     return result.rows;
   }
 
@@ -241,7 +282,7 @@ class DatabaseService {
     await this.ensureSchema();
 
     const convResult = await this.query(`
-      SELECT id, title, created_at, updated_at, metadata
+      SELECT id, title, user_id, created_at, updated_at, metadata
       FROM conversations
       WHERE id = $1
     `, [conversationId]);

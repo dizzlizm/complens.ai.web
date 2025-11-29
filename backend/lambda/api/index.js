@@ -205,12 +205,12 @@ exports.handler = async (event) => {
         break;
 
       case path === '/conversations' && httpMethod === 'GET':
-        response = await handleGetConversations();
+        response = await handleGetConversations(user);
         break;
 
       case path.startsWith('/conversations/') && httpMethod === 'GET':
         const conversationId = path.split('/')[2];
-        response = await handleGetConversation(conversationId);
+        response = await handleGetConversation(conversationId, user);
         break;
 
       case path === '/oauth/google/authorize' && httpMethod === 'GET':
@@ -421,9 +421,10 @@ async function handleChat(body, user) {
 /**
  * Get all conversations
  */
-async function handleGetConversations() {
+async function handleGetConversations(user) {
   try {
-    const conversations = await databaseService.getConversations();
+    // Get conversations for the authenticated user only
+    const conversations = await databaseService.getConversations(user?.userId);
 
     return {
       statusCode: 200,
@@ -448,7 +449,7 @@ async function handleGetConversations() {
 /**
  * Get specific conversation by ID
  */
-async function handleGetConversation(conversationId) {
+async function handleGetConversation(conversationId, user) {
   try {
     const conversation = await databaseService.getConversation(conversationId);
 
@@ -456,6 +457,14 @@ async function handleGetConversation(conversationId) {
       return {
         statusCode: 404,
         body: JSON.stringify({ error: 'Conversation not found' }),
+      };
+    }
+
+    // Verify conversation belongs to user (if user is authenticated)
+    if (user && conversation.user_id && conversation.user_id !== user.userId) {
+      return {
+        statusCode: 403,
+        body: JSON.stringify({ error: 'Access denied to this conversation' }),
       };
     }
 
