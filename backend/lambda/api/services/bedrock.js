@@ -233,114 +233,236 @@ class BedrockService {
 
   /**
    * Agentic Chat Loop
-   * Handles multi-turn conversations where the model can execute tools, 
+   * Handles multi-turn conversations where the model can execute tools,
    * get results, and continue reasoning.
+   *
+   * @param {string} userMessage - The initial user message
+   * @param {Array} conversationHistory - Previous conversation history
+   * @param {Object} options - Options including services, maxLoops, returnSteps
+   * @returns {Object} - Final response with content, usage, and optionally steps
    */
   async agentChat(userMessage, conversationHistory = [], options = {}) {
-    const { services } = options;
-    const MAX_LOOPS = 5;
-    let loopCount = 0;
-    
+    const { services, maxLoops = 10, returnSteps = false } = options;
+
     // Lazy load tools to avoid circular dependency
     let executeTool;
     try {
         executeTool = require('./tools').executeTool;
     } catch (e) {
-        console.warn('Could not load tools module automatically');
+        console.warn('[Agent] Could not load tools module:', e.message);
+        return {
+          content: "Error: Tool execution system is not available.",
+          error: e.message
+        };
     }
 
-    // Clone history to avoid mutating the original array passed by reference
+    // Clone history to avoid mutating the original array
     let currentHistory = [...conversationHistory];
     let currentInput = userMessage;
 
-    console.log('--- Starting Agent Loop ---');
+    // Track agent execution for transparency
+    const executionSteps = [];
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let loopCount = 0;
 
-    while (loopCount < MAX_LOOPS) {
+    console.log('[Agent] Starting agentic loop with max iterations:', maxLoops);
+
+    while (loopCount < maxLoops) {
       loopCount++;
+      console.log(`[Agent] === Iteration ${loopCount}/${maxLoops} ===`);
 
-      // 1. Invoke Model
-      const response = await this.chat(currentInput, currentHistory, options);
+      // 1. Invoke the Model
+      let response;
+      try {
+        response = await this.chat(currentInput, currentHistory, options);
 
-      // 2. Check if we are done (No tool use)
+        // Track token usage
+        if (response.usage) {
+          totalInputTokens += response.usage.input_tokens || 0;
+          totalOutputTokens += response.usage.output_tokens || 0;
+        }
+
+        // Log response for debugging
+        console.log(`[Agent] Stop Reason: ${response.stopReason}`);
+        if (response.content) {
+          console.log(`[Agent] Response: ${response.content.substring(0, 150)}...`);
+        }
+
+      } catch (error) {
+        console.error('[Agent] Model invocation error:', error);
+        return {
+          content: `Error: Failed to get response from AI model: ${error.message}`,
+          error: error.message,
+          steps: returnSteps ? executionSteps : undefined,
+          usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens }
+        };
+      }
+
+      // 2. Check Stop Conditions
+
+      // No tool use - we have a final answer
       if (!response.toolUse) {
-        return response; // Return final text answer
+        console.log('[Agent] No tool use detected. Returning final answer.');
+
+        if (returnSteps) {
+          executionSteps.push({
+            iteration: loopCount,
+            type: 'final_response',
+            content: response.content,
+            stopReason: response.stopReason
+          });
+        }
+
+        return {
+          content: response.content,
+          stopReason: response.stopReason,
+          steps: returnSteps ? executionSteps : undefined,
+          usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
+          iterations: loopCount
+        };
+      }
+
+      // Check for stop_sequence or other terminal stop reasons
+      if (response.stopReason === 'end_turn' || response.stopReason === 'stop_sequence') {
+        console.log('[Agent] Terminal stop reason detected:', response.stopReason);
+        return {
+          content: response.content || "Task completed.",
+          stopReason: response.stopReason,
+          steps: returnSteps ? executionSteps : undefined,
+          usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
+          iterations: loopCount
+        };
       }
 
       // 3. Handle Tool Use
-      console.log(`[Agent] Tool Requested: ${response.toolUse.name}`);
-      
-      // A. Append Assistant's "Tool Use" Request to History
-      if (this.isNovaModel(this.modelId)) {
-        currentHistory.push({
-          role: 'user', // Nova expects the 'turn' to be closed by user response? No, we need to log what assistant did.
-          // Wait: For Nova/Claude, we must append the ASSISTANT's turn containing the tool_use
-          // BEFORE we append the USER's turn containing the tool_result.
-        });
-        
-        // Actually, simpler approach for loop: 
-        // We need to persist the Assistant's message that *requested* the tool
-        const assistantMsg = {
-            role: 'assistant',
-            content: [
-                { text: response.content || "Thinking..." },
-                { toolUse: { toolUseId: response.toolUse.id, name: response.toolUse.name, input: response.toolUse.input } }
-            ]
-        };
-        currentHistory.push(assistantMsg);
+      const toolName = response.toolUse.name;
+      const toolInput = response.toolUse.input;
 
-      } else {
-        // Claude Format
-        const assistantMsg = {
-            role: 'assistant',
-            content: [
-                { type: 'text', text: response.content || "Checking..." },
-                { type: 'tool_use', id: response.toolUse.id, name: response.toolUse.name, input: response.toolUse.input }
-            ]
-        };
-        currentHistory.push(assistantMsg);
-      }
+      console.log(`[Agent] Tool Requested: ${toolName}`);
+      console.log(`[Agent] Tool Input:`, JSON.stringify(toolInput));
+
+      // A. Append Assistant's Tool Use Request to History
+      const assistantMsg = this._formatAssistantToolUseMessage(response);
+      currentHistory.push(assistantMsg);
 
       // B. Execute the Tool
       let toolResultData;
+      let toolExecutionError = false;
+
       try {
-        if (!executeTool) throw new Error("Tool execution module not found");
-        
-        const result = await executeTool(response.toolUse.name, response.toolUse.input, services);
-        toolResultData = result;
+        console.log(`[Agent] Executing tool: ${toolName}...`);
+        const startTime = Date.now();
+
+        toolResultData = await executeTool(toolName, toolInput, services);
+
+        const executionTime = Date.now() - startTime;
+        console.log(`[Agent] Tool executed successfully in ${executionTime}ms`);
+        console.log(`[Agent] Tool Output Preview:`, JSON.stringify(toolResultData).substring(0, 200) + "...");
+
       } catch (err) {
-        toolResultData = { error: err.message };
+        console.error(`[Agent] Tool execution failed:`, err);
+        toolExecutionError = true;
+        toolResultData = {
+          success: false,
+          error: err.message,
+          toolName: toolName
+        };
       }
 
-      console.log(`[Agent] Tool Output:`, JSON.stringify(toolResultData).substring(0, 100) + "...");
-
-      // C. Format Tool Result for the next turn (This becomes the "User" input)
-      if (this.isNovaModel(this.modelId)) {
-        // Nova Tool Result Format
-        currentInput = [
-            {
-                toolResult: {
-                    toolUseId: response.toolUse.id,
-                    content: [{ json: toolResultData }], // Nova expects 'json' or 'text' inside content
-                    status: 'success'
-                }
-            }
-        ];
-      } else {
-        // Claude Tool Result Format
-        currentInput = [
-            {
-                type: 'tool_result',
-                tool_use_id: response.toolUse.id,
-                content: JSON.stringify(toolResultData)
-            }
-        ];
+      // Track this step
+      if (returnSteps) {
+        executionSteps.push({
+          iteration: loopCount,
+          type: 'tool_use',
+          toolName: toolName,
+          toolInput: toolInput,
+          toolResult: toolResultData,
+          hasError: toolExecutionError,
+          reasoning: response.content
+        });
       }
-      
-      // Loop continues... the next `chat()` call will take `currentInput` (the tool result)
-      // and append it to `currentHistory` (which now has the assistant tool request).
+
+      // C. Format Tool Result for Next Turn
+      currentInput = this._formatToolResult(response.toolUse.id, toolResultData, toolExecutionError);
+
+      // If tool execution failed critically, we might want to give model a chance to recover
+      // but also be ready to exit if it can't
+      if (toolExecutionError && loopCount >= maxLoops - 1) {
+        console.warn('[Agent] Tool error near max loops. Forcing final iteration.');
+      }
     }
 
-    return { content: "Error: Maximum tool loop iterations reached." };
+    // Max loops reached
+    console.warn('[Agent] Maximum loop iterations reached without final answer');
+    return {
+      content: "I apologize, but I've reached the maximum number of reasoning steps. Please try rephrasing your question or breaking it into smaller parts.",
+      stopReason: 'max_loops',
+      steps: returnSteps ? executionSteps : undefined,
+      usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
+      iterations: loopCount,
+      warning: 'Maximum iterations reached'
+    };
+  }
+
+  /**
+   * Helper: Format assistant's tool use message based on model type
+   */
+  _formatAssistantToolUseMessage(response) {
+    if (this.isNovaModel(this.modelId)) {
+      // Nova Format
+      return {
+        role: 'assistant',
+        content: [
+          { text: response.content || "" },
+          {
+            toolUse: {
+              toolUseId: response.toolUse.id,
+              name: response.toolUse.name,
+              input: response.toolUse.input
+            }
+          }
+        ]
+      };
+    } else {
+      // Claude Format
+      return {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: response.content || "" },
+          {
+            type: 'tool_use',
+            id: response.toolUse.id,
+            name: response.toolUse.name,
+            input: response.toolUse.input
+          }
+        ]
+      };
+    }
+  }
+
+  /**
+   * Helper: Format tool result based on model type
+   */
+  _formatToolResult(toolUseId, toolResultData, isError = false) {
+    if (this.isNovaModel(this.modelId)) {
+      // Nova Tool Result Format
+      return [{
+        toolResult: {
+          toolUseId: toolUseId,
+          content: [{ json: toolResultData }],
+          status: isError ? 'error' : 'success'
+        }
+      }];
+    } else {
+      // Claude Tool Result Format
+      return [{
+        type: 'tool_result',
+        tool_use_id: toolUseId,
+        content: JSON.stringify(toolResultData),
+        is_error: isError
+      }];
+    }
   }
 
   // --- ANALYTIC HELPERS ---

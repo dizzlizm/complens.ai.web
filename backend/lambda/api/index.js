@@ -442,80 +442,28 @@ When a user asks about security topics, you should:
 Available tools:
 - chrome_extension_lookup: Analyze Chrome extensions for security risks
 - search_vulnerabilities: Search NIST NVD for CVEs and vulnerabilities
-- lookup_cve: Get detailed information about specific CVEs
+- get_vulnerability_intelligence: Get detailed information about specific CVEs including NIST, CISA, and EPSS data
+- check_exploitation_status: Check if a CVE is in CISA's Known Exploited Vulnerabilities catalog
+- predict_exploitability: Get EPSS probability score for a CVE
 
 Use these tools proactively when users ask about security topics.`;
 
-    // Tool execution loop: Keep calling model until we get a final text response
-    let currentMessage = message;
-    let fullConversationHistory = [...conversationHistory];
-    let response;
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-    const maxToolIterations = 5; // Prevent infinite loops
-    let iteration = 0;
-
-    while (iteration < maxToolIterations) {
-      iteration++;
-
-      // Call Bedrock with tools
-      response = await bedrockService.chat(currentMessage, fullConversationHistory, {
-        tools,
-        systemPrompt,
-        temperature: 0.7,
-      });
-
-      totalInputTokens += response.usage.input_tokens;
-      totalOutputTokens += response.usage.output_tokens;
-
-      // Check if model wants to use a tool
-      if (response.toolUse) {
-        const { name, input, id } = response.toolUse;
-
-        console.log(`Tool requested: ${name}`, input);
-
-        // Execute the tool
-        const toolResult = await executeTool(name, input, {
-          chromeWebStoreService,
-          externalSecurityService,
-          bedrockService,
-        });
-
-        console.log(`Tool executed: ${name}`, { success: toolResult.success });
-
-        // Add assistant's tool use to conversation history (Nova format)
-        fullConversationHistory.push({
-          role: 'assistant',
-          content: [{
-            toolUse: {
-              toolUseId: id,
-              name: name,
-              input: input,
-            },
-          }],
-        });
-
-        // Add tool result to conversation history (Nova format)
-        fullConversationHistory.push({
-          role: 'user',
-          content: [{
-            toolResult: {
-              toolUseId: id,
-              content: [{
-                json: toolResult,
-              }],
-              status: toolResult.success ? 'success' : 'error',
-            },
-          }],
-        });
-
-        // Continue the loop with empty message (model will process tool result)
-        currentMessage = '';
-      } else {
-        // Got final text response, break the loop
-        break;
+    // Use the agentic chat loop with intelligent tool execution
+    const response = await bedrockService.agentChat(message, conversationHistory, {
+      tools,
+      systemPrompt,
+      temperature: 0.7,
+      maxLoops: 10,
+      returnSteps: false, // Set to true if you want to track execution steps for debugging
+      services: {
+        chromeWebStoreService,
+        externalSecurityService,
+        bedrockService,
       }
-    }
+    });
+
+    const totalInputTokens = response.usage?.input_tokens || 0;
+    const totalOutputTokens = response.usage?.output_tokens || 0;
 
     // Save conversation to database (only save final user message and assistant response)
     const savedConversation = await databaseService.saveConversation({
@@ -524,11 +472,12 @@ Use these tools proactively when users ask about security topics.`;
       userMessage: message,
       assistantMessage: response.content,
       metadata: {
-        model: response.model,
+        model: bedrockService.getModelId(),
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
-        toolsUsed: iteration > 1, // Track if tools were used
-        toolIterations: iteration - 1,
+        toolsUsed: response.iterations > 1, // Track if tools were used
+        toolIterations: response.iterations - 1,
+        stopReason: response.stopReason,
       },
     });
 
