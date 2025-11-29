@@ -71,6 +71,7 @@ function extractUserFromJWT(event) {
  */
 async function extractTenantContext(user, requestedOrgId = null) {
   if (!user || !user.userId) {
+    console.warn('extractTenantContext: No user provided');
     return null;
   }
 
@@ -79,31 +80,51 @@ async function extractTenantContext(user, requestedOrgId = null) {
     const userOrgs = await tenantContextService.getUserOrganizations(user.userId, 'cognito');
 
     if (userOrgs.length === 0) {
-      console.warn(`User ${user.userId} has no organization mapping. Creating default org...`);
+      console.log(`User ${user.email} (${user.userId}) has no organization mapping. Auto-provisioning...`);
 
-      // Auto-provision: Create organization for first-time user
-      const result = await tenantContextService.createOrganizationWithOwner({
-        name: `${user.name || user.email}'s Organization`,
-        domain: user.email.split('@')[1] || 'example.com',
-        userId: user.userId,
-        authProvider: 'cognito',
-        tier: 'free'
-      });
+      try {
+        // Auto-provision: Create organization for first-time user
+        const result = await tenantContextService.createOrganizationWithOwner({
+          name: `${user.name || user.email.split('@')[0]}'s Organization`,
+          domain: user.email.split('@')[1] || 'example.com',
+          userId: user.userId,
+          authProvider: 'cognito',
+          tier: 'free',
+          settings: {},
+          metadata: {
+            email: user.email,
+            name: user.name || user.email.split('@')[0],
+            emailVerified: user.emailVerified
+          }
+        });
 
-      return {
-        orgId: result.organization.id,
-        role: 'owner',
-        orgName: result.organization.name,
-        orgTier: result.organization.tier,
-        isPrimary: true
-      };
+        console.log(`Auto-provisioned org ${result.organization.id} for user ${user.email}`);
+
+        return {
+          orgId: result.organization.id,
+          role: 'owner',
+          orgName: result.organization.name,
+          orgTier: result.organization.tier,
+          isPrimary: true
+        };
+      } catch (provisionError) {
+        console.error('CRITICAL: Auto-provisioning failed:', provisionError);
+        console.error('Stack:', provisionError.stack);
+
+        // Don't return null - throw a descriptive error
+        const error = new Error(`Failed to auto-provision organization: ${provisionError.message}`);
+        error.statusCode = 500;
+        throw error;
+      }
     }
 
     // If specific org requested, validate user has access
     if (requestedOrgId) {
       const requestedOrg = userOrgs.find(org => org.org_id === requestedOrgId);
       if (!requestedOrg) {
-        throw new Error('Access denied: User does not belong to requested organization');
+        const error = new Error('Access denied: User does not belong to requested organization');
+        error.statusCode = 403;
+        throw error;
       }
       return {
         orgId: requestedOrg.org_id,
@@ -126,7 +147,16 @@ async function extractTenantContext(user, requestedOrgId = null) {
 
   } catch (error) {
     console.error('Error extracting tenant context:', error);
-    return null;
+
+    // If it's a known error with statusCode, throw it
+    if (error.statusCode) {
+      throw error;
+    }
+
+    // Otherwise wrap in a generic error
+    const wrappedError = new Error(`Tenant context error: ${error.message}`);
+    wrappedError.statusCode = 500;
+    throw wrappedError;
   }
 }
 
@@ -357,13 +387,23 @@ exports.handler = async (event) => {
           response = authError;
           break;
         }
-        const tenantContext = await extractTenantContext(user, body.orgId);
-        const tenantError = requireTenantContext(tenantContext);
-        if (tenantError) {
-          response = tenantError;
-          break;
+        try {
+          const tenantContext = await extractTenantContext(user, body.orgId);
+          const tenantError = requireTenantContext(tenantContext);
+          if (tenantError) {
+            response = tenantError;
+            break;
+          }
+          response = await handleChat(body, user, tenantContext, event);
+        } catch (tenantError) {
+          response = {
+            statusCode: tenantError.statusCode || 500,
+            body: JSON.stringify({
+              error: 'Tenant context error',
+              message: tenantError.message
+            })
+          };
         }
-        response = await handleChat(body, user, tenantContext, event);
         break;
       }
 
@@ -373,13 +413,23 @@ exports.handler = async (event) => {
           response = authError;
           break;
         }
-        const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
-        const tenantError = requireTenantContext(tenantContext);
-        if (tenantError) {
-          response = tenantError;
-          break;
+        try {
+          const tenantContext = await extractTenantContext(user, event.queryStringParameters?.orgId);
+          const tenantError = requireTenantContext(tenantContext);
+          if (tenantError) {
+            response = tenantError;
+            break;
+          }
+          response = await handleGetConversations(user, tenantContext);
+        } catch (tenantError) {
+          response = {
+            statusCode: tenantError.statusCode || 500,
+            body: JSON.stringify({
+              error: 'Tenant context error',
+              message: tenantError.message
+            })
+          };
         }
-        response = await handleGetConversations(user, tenantContext);
         break;
       }
 
@@ -1116,24 +1166,57 @@ async function handleGoogleOAuthStatus(params) {
 /**
  * Get all users for an organization
  */
-async function handleGetUsers(params) {
+/**
+ * Get users in organization (shows both Cognito users and local DB users)
+ */
+async function handleGetUsers(params, tenantContext) {
   try {
-    const { orgId } = params;
+    const orgId = tenantContext.orgId;
 
-    if (!orgId) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'orgId is required' }),
-      };
-    }
+    // Get Cognito users (from user_organizations table)
+    const cognitoUsers = await tenantContextService.getOrganizationUsers(orgId);
 
-    const users = await userManagementService.listUsers(orgId);
+    // Get local database users (from admin_users table)
+    const localUsers = await userManagementService.listUsers(orgId);
+
+    // Combine and format
+    const allUsers = [
+      ...cognitoUsers.map(u => ({
+        id: u.user_id,
+        email: u.metadata?.email || 'N/A',
+        name: u.metadata?.name || 'N/A',
+        role: u.role,
+        authProvider: u.auth_provider,
+        isActive: true,
+        createdAt: u.created_at,
+        isPrimary: u.is_primary
+      })),
+      ...localUsers.map(u => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role,
+        authProvider: 'local',
+        isActive: u.is_active,
+        createdAt: u.created_at,
+        isPrimary: false
+      }))
+    ];
 
     return {
       statusCode: 200,
       body: JSON.stringify({
-        users,
-        count: users.length,
+        users: allUsers,
+        count: allUsers.length,
+        organization: {
+          id: orgId,
+          name: tenantContext.orgName,
+          tier: tenantContext.orgTier
+        },
+        breakdown: {
+          cognito: cognitoUsers.length,
+          local: localUsers.length
+        }
       }),
     };
 
@@ -1150,36 +1233,48 @@ async function handleGetUsers(params) {
 }
 
 /**
- * Create a new user
+ * Create a new user (local database user, not Cognito)
  */
-async function handleCreateUser(body) {
+async function handleCreateUser(body, tenantContext, user) {
   try {
-    const { orgId, email, name, role, isActive, createdBy } = body;
+    const orgId = tenantContext.orgId;
+    const { email, name, role, isActive } = body;
 
-    if (!orgId || !email || !name || !role) {
+    if (!email || !name || !role) {
       return {
         statusCode: 400,
         body: JSON.stringify({
           error: 'Missing required fields',
-          required: ['orgId', 'email', 'name', 'role'],
+          required: ['email', 'name', 'role'],
         }),
       };
     }
 
-    const user = await userManagementService.createUser({
+    // Only owners and admins can create users
+    if (!['owner', 'admin'].includes(tenantContext.role)) {
+      return {
+        statusCode: 403,
+        body: JSON.stringify({
+          error: 'Insufficient permissions',
+          message: 'Only owners and admins can create users'
+        }),
+      };
+    }
+
+    const newUser = await userManagementService.createUser({
       orgId,
       email,
       name,
       role,
-      isActive,
-      createdBy,
+      isActive: isActive !== undefined ? isActive : true,
+      createdBy: user.userId,
     });
 
     return {
       statusCode: 201,
       body: JSON.stringify({
-        message: 'User created successfully',
-        user,
+        message: 'Local database user created successfully',
+        user: newUser,
       }),
     };
 
@@ -1198,9 +1293,21 @@ async function handleCreateUser(body) {
 /**
  * Update a user
  */
-async function handleUpdateUser(userId, body) {
+async function handleUpdateUser(userId, body, tenantContext, currentUser) {
   try {
-    const { orgId, email, name, role, isActive, updatedBy } = body;
+    const orgId = tenantContext.orgId;
+    const { email, name, role, isActive } = body;
+
+    // Only owners and admins can update users
+    if (!['owner', 'admin'].includes(tenantContext.role)) {
+      return {
+        statusCode: 403,
+        body: JSON.stringify({
+          error: 'Insufficient permissions',
+          message: 'Only owners and admins can update users'
+        }),
+      };
+    }
 
     if (!orgId) {
       return {
@@ -1216,18 +1323,18 @@ async function handleUpdateUser(userId, body) {
       };
     }
 
-    const user = await userManagementService.updateUser(
+    const updatedUser = await userManagementService.updateUser(
       userId,
       orgId,
       { email, name, role, isActive },
-      updatedBy
+      currentUser.userId
     );
 
     return {
       statusCode: 200,
       body: JSON.stringify({
         message: 'User updated successfully',
-        user,
+        user: updatedUser,
       }),
     };
 
@@ -1246,14 +1353,18 @@ async function handleUpdateUser(userId, body) {
 /**
  * Delete a user
  */
-async function handleDeleteUser(userId, params) {
+async function handleDeleteUser(userId, params, tenantContext, currentUser) {
   try {
-    const { orgId } = params;
+    const orgId = tenantContext.orgId;
 
-    if (!orgId) {
+    // Only owners and admins can delete users
+    if (!['owner', 'admin'].includes(tenantContext.role)) {
       return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'orgId is required' }),
+        statusCode: 403,
+        body: JSON.stringify({
+          error: 'Insufficient permissions',
+          message: 'Only owners and admins can delete users'
+        }),
       };
     }
 
@@ -1261,6 +1372,17 @@ async function handleDeleteUser(userId, params) {
       return {
         statusCode: 400,
         body: JSON.stringify({ error: 'userId is required' }),
+      };
+    }
+
+    // Prevent self-deletion
+    if (userId === currentUser.userId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({
+          error: 'Cannot delete yourself',
+          message: 'You cannot delete your own user account'
+        }),
       };
     }
 
@@ -1290,16 +1412,9 @@ async function handleDeleteUser(userId, params) {
  * Google Workspace Security Analysis Handlers
  */
 
-async function handleListUsersWithout2FA(params) {
+async function handleListUsersWithout2FA(params, tenantContext) {
   try {
-    const { orgId } = params;
-
-    if (!orgId) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'orgId is required' }),
-      };
-    }
+    const orgId = tenantContext.orgId;
 
     const result = await googleWorkspaceSecurityService.listUsersWithoutTwoFactor(orgId);
 
@@ -1320,16 +1435,9 @@ async function handleListUsersWithout2FA(params) {
   }
 }
 
-async function handleFindAdminAccounts(params) {
+async function handleFindAdminAccounts(params, tenantContext) {
   try {
-    const { orgId } = params;
-
-    if (!orgId) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'orgId is required' }),
-      };
-    }
+    const orgId = tenantContext.orgId;
 
     const result = await googleWorkspaceSecurityService.findAdminAccounts(orgId);
 
@@ -1350,16 +1458,9 @@ async function handleFindAdminAccounts(params) {
   }
 }
 
-async function handleAnalyzeExternalSharing(params) {
+async function handleAnalyzeExternalSharing(params, tenantContext) {
   try {
-    const { orgId } = params;
-
-    if (!orgId) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'orgId is required' }),
-      };
-    }
+    const orgId = tenantContext.orgId;
 
     const result = await googleWorkspaceSecurityService.analyzeExternalSharing(orgId);
 
@@ -1380,16 +1481,9 @@ async function handleAnalyzeExternalSharing(params) {
   }
 }
 
-async function handleCheckSecurityPolicies(params) {
+async function handleCheckSecurityPolicies(params, tenantContext) {
   try {
-    const { orgId } = params;
-
-    if (!orgId) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'orgId is required' }),
-      };
-    }
+    const orgId = tenantContext.orgId;
 
     const result = await googleWorkspaceSecurityService.checkSecurityPolicies(orgId);
 
@@ -1410,16 +1504,9 @@ async function handleCheckSecurityPolicies(params) {
   }
 }
 
-async function handleGetSecuritySummary(params) {
+async function handleGetSecuritySummary(params, tenantContext) {
   try {
-    const { orgId } = params;
-
-    if (!orgId) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'orgId is required' }),
-      };
-    }
+    const orgId = tenantContext.orgId;
 
     const result = await googleWorkspaceSecurityService.getSecuritySummary(orgId);
 

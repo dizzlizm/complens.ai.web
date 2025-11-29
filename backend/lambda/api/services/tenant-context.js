@@ -135,7 +135,7 @@ class TenantContextService {
    * @param {string} params.authProvider - Auth provider ('cognito', 'saml', 'local')
    * @param {boolean} params.isPrimary - Is this the primary org for the user
    * @param {string} params.createdBy - User ID of creator
-   * @param {object} params.metadata - Additional metadata
+   * @param {object} params.metadata - Additional metadata (email, name, etc.)
    * @returns {Promise<object>} Created mapping
    */
   async createUserOrgMapping(params) {
@@ -148,6 +148,8 @@ class TenantContextService {
       createdBy = null,
       metadata = {}
     } = params;
+
+    console.log(`Creating user-org mapping: user=${userId}, org=${orgId}, role=${role}, provider=${authProvider}`);
 
     // Validate role
     const validRoles = ['owner', 'admin', 'member'];
@@ -201,6 +203,7 @@ class TenantContextService {
    * @param {string} params.authProvider - Auth provider for the user
    * @param {string} params.tier - Subscription tier
    * @param {object} params.settings - Organization settings
+   * @param {object} params.metadata - User metadata (email, name, etc.)
    * @returns {Promise<object>} Created organization with user mapping
    */
   async createOrganizationWithOwner(params) {
@@ -211,6 +214,7 @@ class TenantContextService {
       authProvider = 'cognito',
       tier = 'free',
       settings = {},
+      metadata = {},
       features = {
         sso_enabled: false,
         audit_logs: tier === 'enterprise',
@@ -218,6 +222,8 @@ class TenantContextService {
         custom_integrations: tier === 'enterprise'
       }
     } = params;
+
+    console.log(`Creating organization with owner: name=${name}, domain=${domain}, userId=${userId}`);
 
     // Start transaction
     const client = await this.db.getClient();
@@ -242,20 +248,23 @@ class TenantContextService {
 
       const organization = orgResult.rows[0];
 
-      // Create user-org mapping with owner role
+      // Create user-org mapping with owner role and metadata
       const mappingQuery = `
-        INSERT INTO user_organizations (user_id, org_id, role, auth_provider, is_primary)
-        VALUES ($1, $2, 'owner', $3, true)
+        INSERT INTO user_organizations (user_id, org_id, role, auth_provider, is_primary, metadata)
+        VALUES ($1, $2, 'owner', $3, true, $4)
         RETURNING *
       `;
 
       const mappingResult = await client.query(mappingQuery, [
         userId,
         organization.id,
-        authProvider
+        authProvider,
+        JSON.stringify(metadata)
       ]);
 
       await client.query('COMMIT');
+
+      console.log(`Successfully created org ${organization.id} with user ${userId} as owner`);
 
       // Invalidate cache
       const cacheKey = `${authProvider}:${userId}`;
@@ -267,6 +276,7 @@ class TenantContextService {
       };
     } catch (error) {
       await client.query('ROLLBACK');
+      console.error('Failed to create organization with owner:', error);
       throw error;
     } finally {
       client.release();
