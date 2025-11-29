@@ -147,92 +147,14 @@ class BedrockService {
   }
 
   /**
-   * Send a chat message to Bedrock model
-   * @param {string} message - User message
-   * @param {Array} conversationHistory - Previous messages in conversation
-   * @param {Object} options - Additional options (temperature, max_tokens, tools, etc.)
-   * @returns {Object} - Response from model
+   * Single Turn Chat
+   * Sends a request to Bedrock and parses the response
    */
   async chat(message, conversationHistory = [], options = {}) {
     try {
-      const modelId = this.getModelId();
-      const isNova = this.isNovaModel(modelId);
-      const isClaude = this.isClaudeModel(modelId);
-
-      // Helper function to format content based on model type
-      const formatContent = (content) => {
-        if (typeof content === 'string') {
-          // Nova requires array format, Claude accepts string
-          return isNova ? [{ text: content }] : content;
-        }
-        // Already formatted (from conversation history)
-        return content;
-      };
-
-      // Build messages array with proper format for each model
-      const messages = [
-        ...conversationHistory.map(msg => ({
-          role: msg.role,
-          content: formatContent(msg.content),
-        })),
-        {
-          role: 'user',
-          content: formatContent(message),
-        },
-      ];
-
-      let requestBody;
-
-      if (isClaude) {
-        // Claude API format (Anthropic Messages API)
-        requestBody = {
-          anthropic_version: 'bedrock-2023-05-31',
-          max_tokens: options.maxTokens || this.defaultMaxTokens,
-          messages: messages,
-          temperature: options.temperature || 0.7,
-          top_p: options.topP || 0.9,
-          system: options.systemPrompt || 'You are a helpful AI assistant built by Complens.ai.',
-        };
-
-        // Add tools for Claude (if provided)
-        if (options.tools && options.tools.length > 0) {
-          requestBody.tools = options.tools;
-        }
-      } else if (isNova) {
-        // Amazon Nova API format (Converse API)
-        requestBody = {
-          messages: messages,
-          system: [{ text: options.systemPrompt || 'You are a helpful AI assistant built by Complens.ai.' }],
-          inferenceConfig: {
-            maxTokens: options.maxTokens || this.defaultMaxTokens,
-            temperature: options.temperature || 0.7,
-            topP: options.topP || 0.9,
-          },
-        };
-
-        // Add tools for Nova (if provided)
-        if (options.tools && options.tools.length > 0) {
-          requestBody.toolConfig = {
-            tools: options.tools.map(tool => ({
-              toolSpec: {
-                name: tool.name,
-                description: tool.description,
-                inputSchema: {
-                  json: tool.input_schema,
-                },
-              },
-            })),
-          };
-        }
-      } else {
-        throw new Error(`Unsupported model type: ${modelId}`);
-      }
-
-      console.log('Sending request to Bedrock:', {
-        modelId,
-        modelType: isNova ? 'Nova' : 'Claude',
-        messageCount: messages.length,
-      });
+      const requestBody = this._buildPayload(message, conversationHistory, options);
+      
+      console.log(`[Bedrock] Invoking ${this.modelId} (Input size: ${JSON.stringify(requestBody).length} chars)`);
 
       const command = new InvokeModelCommand({
         modelId: this.modelId,
@@ -244,47 +166,12 @@ class BedrockService {
       const response = await this.client.send(command);
       const responseBody = JSON.parse(new TextDecoder().decode(response.body));
 
-      // --- NOVA RESPONSE PARSING ---
-      if (this._isNovaModel()) {
-        // Nova returns: { output: { message: { content: [{ text: "..." }] } } }
-        return {
-          content: responseBody.output?.message?.content?.[0]?.text || '',
-          stopReason: responseBody.stopReason,
-          usage: {
-            input_tokens: responseBody.usage?.inputTokens || 0,
-            output_tokens: responseBody.usage?.outputTokens || 0
-          }
-        };
-      }
-
-      // --- TITAN RESPONSE PARSING ---
-      if (this._isTitanModel()) {
-        return {
-          content: responseBody.results[0].outputText,
-          stopReason: responseBody.results[0].completionReason,
-          usage: {
-            input_tokens: responseBody.inputTextTokenCount,
-            output_tokens: responseBody.results[0].tokenCount
-          }
-        };
-      }
-
-      // Parse response based on model type
-      let content, usage, stopReason, toolUse;
-
-      if (isClaude) {
-        // Claude may return text or tool_use blocks
-        const contentBlock = responseBody.content[0];
-
-        if (contentBlock.type === 'text') {
-          content = contentBlock.text;
-        } else if (contentBlock.type === 'tool_use') {
-          toolUse = {
-            id: contentBlock.id,
-            name: contentBlock.name,
-            input: contentBlock.input,
-          };
-        }
+      // --- PARSE RESPONSE ---
+      let content = '';
+      let toolUse = null;
+      let stopReason = '';
+      let inputTokens = 0;
+      let outputTokens = 0;
 
       if (this.isNovaModel(this.modelId)) {
         // Nova Parsing
@@ -452,16 +339,6 @@ class BedrockService {
       // Loop continues... the next `chat()` call will take `currentInput` (the tool result)
       // and append it to `currentHistory` (which now has the assistant tool request).
     }
-  }
-
-  /**
-   * Analyze text or perform specific tasks
-   * @param {string} prompt - Task prompt
-   * @param {string} text - Text to analyze
-   * @returns {Object} - Analysis result
-   */
-  async analyze(prompt, text) {
-    const systemPrompt = prompt || 'Analyze the following text and provide insights.';
 
     return { content: "Error: Maximum tool loop iterations reached." };
   }
