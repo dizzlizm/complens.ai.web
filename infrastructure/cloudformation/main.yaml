@@ -337,6 +337,16 @@ Resources:
         - Key: Name
           Value: !Sub '${Environment}-vpc-endpoint-sg'
 
+VPCEndpointFromBastionIngressRule:
+  Type: AWS::EC2::SecurityGroupIngress
+  Properties:
+    GroupId: !Ref VPCEndpointSecurityGroup
+    IpProtocol: tcp
+    FromPort: 443
+    ToPort: 443
+    SourceSecurityGroupId: !Ref BastionSecurityGroup # Allow Bastion to connect to endpoints
+    Description: Allow inbound 443 from Bastion Host for SSM/Secrets Manager Endpoints
+
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
