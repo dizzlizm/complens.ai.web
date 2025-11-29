@@ -239,7 +239,6 @@ Be specific and actionable.`;
       systemPrompt: 'You are a browser extension security expert. Analyze extensions for enterprise security risks, data privacy issues, and compliance concerns.',
       temperature: 0.3,
       maxTokens: 1024,
-      useSecurityModel: true,
     });
 
     return response.content;

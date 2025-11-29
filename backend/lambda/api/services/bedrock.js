@@ -9,24 +9,19 @@ class BedrockService {
   constructor(region = 'us-east-1') {
     this.client = new BedrockRuntimeClient({ region });
 
-    // Two different models for different use cases:
-    // 1. General chat: Use cheap/fast models (Nova Lite/Micro)
-    // 2. Security analysis: Use smart models (Claude 3.5 Sonnet)
-    this.chatModelId = process.env.BEDROCK_MODEL_ID || 'us.amazon.nova-lite-v1:0';
-    this.securityModelId = process.env.BEDROCK_SECURITY_MODEL_ID || 'us.anthropic.claude-3-5-sonnet-20241022-v2:0';
-
+    // Single model for all tasks
+    this.modelId = process.env.BEDROCK_MODEL_ID || 'us.amazon.nova-lite-v1:0';
     this.defaultMaxTokens = 4096;
 
     console.log(`BedrockService initialized:`);
-    console.log(`  Chat model: ${this.chatModelId}`);
-    console.log(`  Security model: ${this.securityModelId}`);
+    console.log(`  Model: ${this.modelId}`);
   }
 
   /**
-   * Determine which model to use based on context
+   * Get the model ID
    */
-  getModelId(useSecurityModel = false) {
-    return useSecurityModel ? this.securityModelId : this.chatModelId;
+  getModelId() {
+    return this.modelId;
   }
 
   /**
@@ -47,12 +42,12 @@ class BedrockService {
    * Send a chat message to Bedrock model
    * @param {string} message - User message
    * @param {Array} conversationHistory - Previous messages in conversation
-   * @param {Object} options - Additional options (temperature, max_tokens, useSecurityModel, tools, etc.)
+   * @param {Object} options - Additional options (temperature, max_tokens, tools, etc.)
    * @returns {Object} - Response from model
    */
   async chat(message, conversationHistory = [], options = {}) {
     try {
-      const modelId = this.getModelId(options.useSecurityModel || false);
+      const modelId = this.getModelId();
       const isNova = this.isNovaModel(modelId);
       const isClaude = this.isClaudeModel(modelId);
 
@@ -226,7 +221,6 @@ class BedrockService {
 
   /**
    * Analyze text or perform specific tasks
-   * Uses security model by default for better reasoning
    * @param {string} prompt - Task prompt
    * @param {string} text - Text to analyze
    * @returns {Object} - Analysis result
@@ -238,7 +232,6 @@ class BedrockService {
       systemPrompt,
       temperature: 0.3, // Lower temperature for analytical tasks
       maxTokens: 2048,
-      useSecurityModel: true, // Use smarter model for analysis
     });
   }
 
