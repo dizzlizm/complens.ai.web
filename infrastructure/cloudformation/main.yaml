@@ -594,6 +594,113 @@ Resources:
           Value: !Ref Environment
 
   # ============================================================================
+  # Cognito User Authentication
+  # ============================================================================
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${Environment}-complens-users'
+      # Allow users to sign in with email
+      UsernameAttributes:
+        - email
+      # Auto-verify email addresses
+      AutoVerifiedAttributes:
+        - email
+      # Password policy
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 7
+      # Email verification message
+      EmailVerificationMessage: 'Your Complens.ai verification code is {####}'
+      EmailVerificationSubject: 'Verify your Complens.ai account'
+      # Account recovery
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      # User attributes
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: false
+        - Name: name
+          AttributeDataType: String
+          Required: false
+          Mutable: true
+      # MFA configuration (optional for now, can be enforced later)
+      MfaConfiguration: OPTIONAL
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+      # User pool tags
+      UserPoolTags:
+        Environment: !Ref Environment
+        Application: complens-ai
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${Environment}-complens-web-client'
+      UserPoolId: !Ref CognitoUserPool
+      # Authentication flows
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_PASSWORD_AUTH  # For development, remove in prod
+      # Token validity
+      AccessTokenValidity: 1  # 1 hour
+      IdTokenValidity: 1      # 1 hour
+      RefreshTokenValidity: 30  # 30 days
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      # Prevent secret generation (for SPA/mobile apps)
+      GenerateSecret: false
+      # Allowed OAuth flows (for future use)
+      AllowedOAuthFlows:
+        - code
+        - implicit
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      AllowedOAuthFlowsUserPoolClient: true
+      # Callback URLs for OAuth
+      CallbackURLs:
+        - !If
+          - IsDev
+          - 'http://localhost:3000/auth/callback'
+          - !Sub 'https://${DomainName}/auth/callback'
+        - !Sub 'https://${CloudFrontDistribution.DomainName}/auth/callback'
+      LogoutURLs:
+        - !If
+          - IsDev
+          - 'http://localhost:3000/'
+          - !Sub 'https://${DomainName}/'
+        - !Sub 'https://${CloudFrontDistribution.DomainName}/'
+      # Attributes to read/write
+      ReadAttributes:
+        - email
+        - name
+        - email_verified
+      WriteAttributes:
+        - email
+        - name
+
+  CognitoUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub '${Environment}-complens-${AWS::AccountId}'
+      UserPoolId: !Ref CognitoUserPool
+
+  # ============================================================================
   # API Gateway
   # ============================================================================
 
@@ -607,7 +714,7 @@ Resources:
           - IsDev
           - - 'https://dev.complens.ai'
             - 'http://localhost:3000'
-            - '*'
+            - !Sub 'https://${CloudFrontDistribution.DomainName}'
           - - !If
               - HasDomain
               - !Sub 'https://${DomainName}'
@@ -619,11 +726,26 @@ Resources:
           - DELETE
           - OPTIONS
         AllowHeaders:
-          - '*'
-        AllowCredentials: false
+          - 'Content-Type'
+          - 'Authorization'
+          - 'X-Requested-With'
+        AllowCredentials: true
         MaxAge: 300
       Tags:
         Environment: !Ref Environment
+
+  ApiGatewayAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      Name: !Sub '${Environment}-cognito-authorizer'
+      ApiId: !Ref ApiGateway
+      AuthorizerType: JWT
+      IdentitySource:
+        - '$request.header.Authorization'
+      JwtConfiguration:
+        Audience:
+          - !Ref CognitoUserPoolClient
+        Issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}'
 
   ApiGatewayStage:
     Type: AWS::ApiGatewayV2::Stage
@@ -720,6 +842,8 @@ Resources:
       ApiId: !Ref ApiGateway
       RouteKey: 'POST /chat'
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
 
   ChatOptionsRoute:
     Type: AWS::ApiGatewayV2::Route
@@ -734,6 +858,8 @@ Resources:
       ApiId: !Ref ApiGateway
       RouteKey: 'GET /conversations'
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
 
   ConversationsOptionsRoute:
     Type: AWS::ApiGatewayV2::Route
@@ -748,6 +874,8 @@ Resources:
       ApiId: !Ref ApiGateway
       RouteKey: 'GET /conversations/{id}'
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
 
   ConversationDetailOptionsRoute:
     Type: AWS::ApiGatewayV2::Route
@@ -776,6 +904,8 @@ Resources:
       ApiId: !Ref ApiGateway
       RouteKey: 'POST /oauth/google/disconnect'
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
 
   OAuthDisconnectOptionsRoute:
     Type: AWS::ApiGatewayV2::Route
@@ -790,6 +920,8 @@ Resources:
       ApiId: !Ref ApiGateway
       RouteKey: 'GET /oauth/google/status'
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
 
   # Catch-all route for other paths
   DefaultRoute:
@@ -1074,6 +1206,24 @@ Outputs:
     Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
     Export:
       Name: !Sub '${Environment}-complens-api-url'
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref CognitoUserPool
+    Export:
+      Name: !Sub '${Environment}-complens-user-pool-id'
+
+  CognitoUserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref CognitoUserPoolClient
+    Export:
+      Name: !Sub '${Environment}-complens-user-pool-client-id'
+
+  CognitoUserPoolDomain:
+    Description: Cognito User Pool Domain
+    Value: !Sub '${Environment}-complens-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com'
+    Export:
+      Name: !Sub '${Environment}-complens-user-pool-domain'
 
   FrontendBucketName:
     Description: S3 bucket for frontend assets

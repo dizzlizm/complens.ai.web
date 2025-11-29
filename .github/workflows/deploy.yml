@@ -203,21 +203,44 @@ jobs:
               --region ${{ env.AWS_REGION }}
           else
             echo "Updating existing stack..."
-            UPDATE_OUTPUT=$(aws cloudformation update-stack \
+
+            # Create a changeset first to see what will change
+            echo "Creating changeset..."
+            CHANGESET_NAME="deploy-$(date +%s)"
+            aws cloudformation create-change-set \
               --stack-name ${STACK_NAME} \
+              --change-set-name ${CHANGESET_NAME} \
               --template-body file://main.yaml \
               --parameters "$PARAMS" \
               --capabilities CAPABILITY_NAMED_IAM \
-              --region ${{ env.AWS_REGION }} 2>&1 || true)
+              --region ${{ env.AWS_REGION }}
 
-            if echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
-              echo "No updates needed"
-            else
-              echo "Waiting for stack update..."
-              aws cloudformation wait stack-update-complete \
-                --stack-name ${STACK_NAME} \
-                --region ${{ env.AWS_REGION }}
-            fi
+            echo "Waiting for changeset creation..."
+            aws cloudformation wait change-set-create-complete \
+              --stack-name ${STACK_NAME} \
+              --change-set-name ${CHANGESET_NAME} \
+              --region ${{ env.AWS_REGION }} 2>&1 || true
+
+            # Describe the changeset
+            echo "Changeset contents:"
+            aws cloudformation describe-change-set \
+              --stack-name ${STACK_NAME} \
+              --change-set-name ${CHANGESET_NAME} \
+              --region ${{ env.AWS_REGION }} \
+              --query 'Changes[].{Action:ResourceChange.Action,Resource:ResourceChange.LogicalResourceId,Type:ResourceChange.ResourceType}' \
+              --output table
+
+            # Execute the changeset
+            echo "Executing changeset..."
+            aws cloudformation execute-change-set \
+              --stack-name ${STACK_NAME} \
+              --change-set-name ${CHANGESET_NAME} \
+              --region ${{ env.AWS_REGION }}
+
+            echo "Waiting for stack update..."
+            aws cloudformation wait stack-update-complete \
+              --stack-name ${STACK_NAME} \
+              --region ${{ env.AWS_REGION }}
           fi
 
       - name: Get stack outputs
@@ -451,9 +474,23 @@ jobs:
             --output text \
             --region ${{ env.AWS_REGION }})
 
+          COGNITO_USER_POOL_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CognitoUserPoolId`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          COGNITO_CLIENT_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${STACK_NAME} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CognitoUserPoolClientId`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
           echo "api-url=${API_URL}" >> $GITHUB_OUTPUT
           echo "frontend-bucket=${FRONTEND_BUCKET}" >> $GITHUB_OUTPUT
           echo "cloudfront-url=${CLOUDFRONT_URL}" >> $GITHUB_OUTPUT
+          echo "cognito-user-pool-id=${COGNITO_USER_POOL_ID}" >> $GITHUB_OUTPUT
+          echo "cognito-client-id=${COGNITO_CLIENT_ID}" >> $GITHUB_OUTPUT
 
           # Verify bucket exists before proceeding
           if [ -z "$FRONTEND_BUCKET" ] || [ "$FRONTEND_BUCKET" = "None" ]; then
@@ -471,6 +508,8 @@ jobs:
           fi
 
           echo "✅ Frontend bucket verified: ${FRONTEND_BUCKET}"
+          echo "✅ Cognito User Pool ID: ${COGNITO_USER_POOL_ID}"
+          echo "✅ Cognito Client ID: ${COGNITO_CLIENT_ID}"
 
       - name: Install dependencies
         run: |
@@ -480,6 +519,9 @@ jobs:
       - name: Build frontend
         env:
           REACT_APP_API_URL: ${{ steps.get-outputs.outputs.api-url }}
+          REACT_APP_COGNITO_USER_POOL_ID: ${{ steps.get-outputs.outputs.cognito-user-pool-id }}
+          REACT_APP_COGNITO_CLIENT_ID: ${{ steps.get-outputs.outputs.cognito-client-id }}
+          REACT_APP_AWS_REGION: ${{ env.AWS_REGION }}
         run: |
           cd frontend
           npm run build

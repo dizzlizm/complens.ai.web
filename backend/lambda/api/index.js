@@ -10,6 +10,7 @@ const { SecretsService } = require('./services/secrets');
 const { GoogleOAuthService } = require('./services/google-oauth');
 const { UserManagementService } = require('./services/user-management');
 const { GoogleWorkspaceSecurityService } = require('./services/google-workspace-security');
+const { ExternalSecurityService } = require('./services/external-security');
 
 // Initialize services
 let bedrockService;
@@ -18,7 +19,35 @@ let secretsService;
 let googleOAuthService;
 let userManagementService;
 let googleWorkspaceSecurityService;
+let externalSecurityService;
 let isInitialized = false;
+
+/**
+ * Extract user information from JWT claims (validated by API Gateway)
+ * @param {object} event - Lambda event object
+ * @returns {object|null} User info object or null if not authenticated
+ */
+function extractUserFromJWT(event) {
+  try {
+    // API Gateway JWT authorizer adds claims to requestContext
+    const claims = event.requestContext?.authorizer?.jwt?.claims;
+
+    if (!claims) {
+      return null;
+    }
+
+    return {
+      userId: claims.sub, // Cognito User ID (UUID)
+      email: claims.email,
+      emailVerified: claims.email_verified === 'true',
+      username: claims['cognito:username'],
+      name: claims.name,
+    };
+  } catch (error) {
+    console.error('Error extracting user from JWT:', error);
+    return null;
+  }
+}
 
 /**
  * Initialize services (outside handler for Lambda container reuse)
@@ -64,6 +93,9 @@ async function initialize() {
 
     // Initialize Google Workspace Security service
     googleWorkspaceSecurityService = new GoogleWorkspaceSecurityService(databaseService);
+
+    // Initialize External Security Intelligence service
+    externalSecurityService = new ExternalSecurityService(databaseService);
 
     isInitialized = true;
     console.log('Services initialized successfully');
@@ -150,6 +182,16 @@ exports.handler = async (event) => {
       throw initError;
     }
 
+    // Extract user information from JWT (if authenticated)
+    const user = extractUserFromJWT(event);
+
+    // Log user info for debugging (remove in production)
+    if (user) {
+      console.log('Authenticated user:', { userId: user.userId, email: user.email });
+    } else {
+      console.log('Unauthenticated request');
+    }
+
     // Route to appropriate handler
     let response;
 
@@ -159,7 +201,7 @@ exports.handler = async (event) => {
         break;
 
       case path === '/chat' && httpMethod === 'POST':
-        response = await handleChat(body);
+        response = await handleChat(body, user);
         break;
 
       case path === '/conversations' && httpMethod === 'GET':
@@ -223,6 +265,15 @@ exports.handler = async (event) => {
 
       case path === '/security/summary' && httpMethod === 'GET':
         response = await handleGetSecuritySummary(event.queryStringParameters || {});
+        break;
+
+      case path === '/security/nist/search' && httpMethod === 'GET':
+        response = await handleNISTSearch(event.queryStringParameters || {});
+        break;
+
+      case path.startsWith('/security/cve/') && httpMethod === 'GET':
+        const cveId = path.split('/')[3];
+        response = await handleCVELookup(cveId, event.queryStringParameters || {});
         break;
 
       default:
@@ -303,7 +354,7 @@ async function handleHealth() {
 /**
  * Chat handler - sends message to Bedrock model (Nova or Claude)
  */
-async function handleChat(body) {
+async function handleChat(body, user) {
   const { message, conversationId } = body;
 
   if (!message) {
@@ -318,6 +369,15 @@ async function handleChat(body) {
     let conversationHistory = [];
     if (conversationId) {
       const conversation = await databaseService.getConversation(conversationId);
+
+      // Verify conversation belongs to user (if user is authenticated)
+      if (user && conversation.user_id && conversation.user_id !== user.userId) {
+        return {
+          statusCode: 403,
+          body: JSON.stringify({ error: 'Access denied to this conversation' }),
+        };
+      }
+
       conversationHistory = conversation.messages || [];
     }
 
@@ -327,6 +387,7 @@ async function handleChat(body) {
     // Save conversation to database
     const savedConversation = await databaseService.saveConversation({
       conversationId,
+      userId: user?.userId, // Associate with authenticated user (if logged in)
       userMessage: message,
       assistantMessage: response.content,
       metadata: {
@@ -964,6 +1025,99 @@ async function handleGetSecuritySummary(params) {
       statusCode: 500,
       body: JSON.stringify({
         error: 'Failed to get security summary',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+/**
+ * External Security Intelligence Handlers
+ */
+
+async function handleNISTSearch(params) {
+  try {
+    const { keyword, limit, useCache, orgId } = params;
+
+    if (!keyword) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'keyword parameter is required' }),
+      };
+    }
+
+    // Fetch from NIST (with caching)
+    const result = await externalSecurityService.searchNIST(keyword, {
+      limit: parseInt(limit) || 10,
+      useCache: useCache !== 'false',
+      orgId,
+    });
+
+    // If not cached and no AI analysis yet, generate it
+    if (!result.cached && !result.aiAnalysis && result.results.length > 0) {
+      const analysis = await externalSecurityService.analyzeWithAI(result.results, bedrockService);
+
+      // Update cache with AI analysis
+      await externalSecurityService.updateAIAnalysis('nist', 'keyword', keyword, analysis, orgId);
+
+      result.aiAnalysis = analysis;
+    }
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+    };
+
+  } catch (error) {
+    console.error('Error searching NIST:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to search NIST NVD',
+        message: error.message,
+      }),
+    };
+  }
+}
+
+async function handleCVELookup(cveId, params) {
+  try {
+    if (!cveId) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'CVE ID is required' }),
+      };
+    }
+
+    const { useCache, orgId } = params;
+
+    // Fetch CVE details (with caching)
+    const result = await externalSecurityService.getCVEDetails(cveId, {
+      useCache: useCache !== 'false',
+      orgId,
+    });
+
+    // If not cached and no AI analysis yet, generate it
+    if (!result.cached && !result.aiAnalysis) {
+      const analysis = await externalSecurityService.analyzeWithAI(result, bedrockService);
+
+      // Update cache with AI analysis
+      await externalSecurityService.updateAIAnalysis('nist', 'cve_id', cveId.toUpperCase(), analysis, orgId);
+
+      result.aiAnalysis = analysis;
+    }
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+    };
+
+  } catch (error) {
+    console.error('Error looking up CVE:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Failed to lookup CVE',
         message: error.message,
       }),
     };
