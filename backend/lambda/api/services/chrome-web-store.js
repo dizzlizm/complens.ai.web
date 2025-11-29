@@ -9,7 +9,7 @@ class ChromeWebStoreService {
   constructor(databaseService) {
     this.db = databaseService;
     this.cacheExpiration = 24 * 60 * 60 * 1000; // 24 hours
-    this.baseUrl = 'https://chrome.google.com/webstore/detail';
+    this.baseUrl = 'https://chromewebstore.google.com/detail/';
   }
 
   /**
