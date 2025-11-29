@@ -1,7 +1,7 @@
 /**
  * AWS Bedrock Service (Nova, Titan & Claude Universal)
  * Handles interactions with Amazon Nova, Amazon Titan, and Anthropic Claude
- * Implements strict Security Persona and Tool Use
+ * Implements strict Security Persona and Tool Use Loop
  */
 
 const { 
@@ -10,7 +10,7 @@ const {
   InvokeModelWithResponseStreamCommand 
 } = require('@aws-sdk/client-bedrock-runtime');
 
-// 1. Define the Security Persona (Concise, Plain Text, Agnostic)
+// 1. Define the Security Persona
 const SECURITY_SYSTEM_PROMPT = `
 You are Complens.ai, a Senior Cloud Security Architect. Analyze cloud configs for NIST 800-53, SOC2, ISO 27001, and HIPAA compliance.
 
@@ -32,105 +32,79 @@ DEFINITIONS:
 class BedrockService {
   constructor(region = 'us-east-1') {
     this.client = new BedrockRuntimeClient({ region });
-
-    // Single model for all tasks
     this.modelId = process.env.BEDROCK_MODEL_ID || 'us.amazon.nova-lite-v1:0';
     this.defaultMaxTokens = 4096;
 
-    console.log(`BedrockService initialized:`);
-    console.log(`  Model: ${this.modelId}`);
+    console.log(`BedrockService initialized: Model: ${this.modelId}`);
   }
 
+  getModelId() { return this.modelId; }
+  isNovaModel(modelId) { return modelId.includes('amazon.nova'); }
+  isClaudeModel(modelId) { return modelId.includes('anthropic.claude'); }
+
+  // --- PAYLOAD BUILDERS ---
+
   /**
-   * Get the model ID
+   * Helper: Ensure content is in the correct format for the model
    */
-  getModelId() {
-    return this.modelId;
+  _formatContent(content, isNova) {
+    // If it's already an array (structured blocks), return it
+    if (Array.isArray(content)) return content;
+    // If it's a string, format it based on model needs
+    if (typeof content === 'string') {
+      return isNova ? [{ text: content }] : content;
+    }
+    return content;
   }
 
   /**
-   * Check if model is Amazon Nova (uses different API format)
-   */
-  isNovaModel(modelId) {
-    return modelId.includes('amazon.nova');
-  }
-
-  /**
-   * Check if model is Claude
-   */
-  isClaudeModel(modelId) {
-    return modelId.includes('anthropic.claude') || modelId.includes('us.anthropic.claude');
-  }
-
-  // --- MODEL DETECTION HELPERS ---
-  _isNovaModel() { return this.modelId.includes('amazon.nova'); }
-  _isTitanModel() { return this.modelId.includes('amazon.titan'); }
-  _isClaudeModel() { return this.modelId.includes('anthropic.claude'); }
-
-  /**
-   * Builder: Payload for AMAZON NOVA (Converse-style Schema)
-   * Structure: { messages: [], system: [], inferenceConfig: { maxTokens: ... } }
+   * Builder: Payload for AMAZON NOVA
    */
   _buildNovaPayload(message, conversationHistory, options) {
-    // 1. Format Messages (Nova requires 'content' to be an array of objects)
-    const messages = [
-      ...conversationHistory.map(msg => ({
-        role: msg.role,
-        content: [{ text: msg.content }] // Nova requires strict content blocks
-      })),
-      { role: 'user', content: [{ text: message }] }
-    ];
+    // 1. Format History
+    const messages = conversationHistory.map(msg => ({
+      role: msg.role,
+      content: this._formatContent(msg.content, true)
+    }));
 
-    // 2. Format System Prompt (List of text blocks)
-    const system = [{ text: `${SECURITY_SYSTEM_PROMPT}\n${options.systemPrompt || ''}` }];
+    // 2. Add Current Message
+    messages.push({
+      role: 'user',
+      content: this._formatContent(message, true)
+    });
 
     // 3. Construct Payload
     return {
       messages: messages,
-      system: system,
+      system: [{ text: `${SECURITY_SYSTEM_PROMPT}\n${options.systemPrompt || ''}` }],
       inferenceConfig: {
         maxTokens: options.maxTokens || this.defaultMaxTokens,
         temperature: options.temperature || 0.1,
         topP: options.topP || 0.9
       },
-      // Nova supports tools via 'toolConfig' (Future implementation)
-      toolConfig: options.tools ? { tools: options.tools } : undefined 
-    };
-  }
-
-  /**
-   * Builder: Payload for AMAZON TITAN
-   * Structure: { inputText: "...", textGenerationConfig: { ... } }
-   */
-  _buildTitanPayload(message, conversationHistory, options) {
-    const historyText = conversationHistory.map(m => 
-      `\n${m.role === 'user' ? 'User' : 'Bot'}: ${m.content}`
-    ).join('');
-
-    const fullPrompt = `${SECURITY_SYSTEM_PROMPT}\n${options.systemPrompt || ''}\n${historyText}\nUser: ${message}\nBot:`;
-
-    return {
-      inputText: fullPrompt,
-      textGenerationConfig: {
-        maxTokenCount: options.maxTokens || this.defaultMaxTokens,
-        stopSequences: ["User:"],
-        temperature: options.temperature || 0.1,
-        topP: options.topP || 0.9,
-      }
+      toolConfig: options.tools ? {
+        tools: options.tools.map(t => ({
+          toolSpec: {
+            name: t.name,
+            description: t.description,
+            inputSchema: { json: t.input_schema }
+          }
+        }))
+      } : undefined 
     };
   }
 
   /**
    * Builder: Payload for ANTHROPIC CLAUDE 3/3.5
-   * Structure: { messages: [], max_tokens: ..., system: ... }
    */
   _buildClaudePayload(message, conversationHistory, options) {
+    // 1. Format History & Message
     const messages = [
       ...conversationHistory.map(msg => ({
         role: msg.role,
-        content: msg.content,
+        content: msg.content // Claude handles string or array automatically
       })),
-      { role: 'user', content: message },
+      { role: 'user', content: message }
     ];
 
     return {
@@ -144,111 +118,46 @@ class BedrockService {
   }
 
   /**
-   * Master Payload Router
+   * Builder: Payload for AMAZON TITAN (No Tool Support via API)
    */
-  _buildPayload(message, conversationHistory, options) {
-    if (this._isNovaModel()) return this._buildNovaPayload(message, conversationHistory, options);
-    if (this._isTitanModel()) return this._buildTitanPayload(message, conversationHistory, options);
-    return this._buildClaudePayload(message, conversationHistory, options);
+  _buildTitanPayload(message, conversationHistory, options) {
+    const historyText = conversationHistory.map(m => 
+      `\n${m.role === 'user' ? 'User' : 'Bot'}: ${JSON.stringify(m.content)}`
+    ).join('');
+
+    const fullPrompt = `${SECURITY_SYSTEM_PROMPT}\n${options.systemPrompt || ''}\n${historyText}\nUser: ${message}\nBot:`;
+
+    return {
+      inputText: fullPrompt,
+      textGenerationConfig: {
+        maxTokenCount: options.maxTokens || this.defaultMaxTokens,
+        stopSequences: ["User:"],
+        temperature: options.temperature || 0.1,
+      }
+    };
   }
 
   /**
-   * Standard Chat
+   * Master Payload Router
+   */
+  _buildPayload(message, conversationHistory, options) {
+    if (this.isNovaModel(this.modelId)) return this._buildNovaPayload(message, conversationHistory, options);
+    if (this.isClaudeModel(this.modelId)) return this._buildClaudePayload(message, conversationHistory, options);
+    return this._buildTitanPayload(message, conversationHistory, options);
+  }
+
+  /**
+   * Single Turn Chat
+   * Sends a request to Bedrock and parses the response
    */
   async chat(message, conversationHistory = [], options = {}) {
     try {
       const requestBody = this._buildPayload(message, conversationHistory, options);
       
-      console.log(`[Bedrock] Invoking ${this.modelId}`);
-   * Send a chat message to Bedrock model
-   * @param {string} message - User message
-   * @param {Array} conversationHistory - Previous messages in conversation
-   * @param {Object} options - Additional options (temperature, max_tokens, tools, etc.)
-   * @returns {Object} - Response from model
-   */
-  async chat(message, conversationHistory = [], options = {}) {
-    try {
-      const modelId = this.getModelId();
-      const isNova = this.isNovaModel(modelId);
-      const isClaude = this.isClaudeModel(modelId);
-
-      // Helper function to format content based on model type
-      const formatContent = (content) => {
-        if (typeof content === 'string') {
-          // Nova requires array format, Claude accepts string
-          return isNova ? [{ text: content }] : content;
-        }
-        // Already formatted (from conversation history)
-        return content;
-      };
-
-      // Build messages array with proper format for each model
-      const messages = [
-        ...conversationHistory.map(msg => ({
-          role: msg.role,
-          content: formatContent(msg.content),
-        })),
-        {
-          role: 'user',
-          content: formatContent(message),
-        },
-      ];
-
-      let requestBody;
-
-      if (isClaude) {
-        // Claude API format (Anthropic Messages API)
-        requestBody = {
-          anthropic_version: 'bedrock-2023-05-31',
-          max_tokens: options.maxTokens || this.defaultMaxTokens,
-          messages: messages,
-          temperature: options.temperature || 0.7,
-          top_p: options.topP || 0.9,
-          system: options.systemPrompt || 'You are a helpful AI assistant built by Complens.ai.',
-        };
-
-        // Add tools for Claude (if provided)
-        if (options.tools && options.tools.length > 0) {
-          requestBody.tools = options.tools;
-        }
-      } else if (isNova) {
-        // Amazon Nova API format (Converse API)
-        requestBody = {
-          messages: messages,
-          system: [{ text: options.systemPrompt || 'You are a helpful AI assistant built by Complens.ai.' }],
-          inferenceConfig: {
-            maxTokens: options.maxTokens || this.defaultMaxTokens,
-            temperature: options.temperature || 0.7,
-            topP: options.topP || 0.9,
-          },
-        };
-
-        // Add tools for Nova (if provided)
-        if (options.tools && options.tools.length > 0) {
-          requestBody.toolConfig = {
-            tools: options.tools.map(tool => ({
-              toolSpec: {
-                name: tool.name,
-                description: tool.description,
-                inputSchema: {
-                  json: tool.input_schema,
-                },
-              },
-            })),
-          };
-        }
-      } else {
-        throw new Error(`Unsupported model type: ${modelId}`);
-      }
-
-      console.log('Sending request to Bedrock:', {
-        modelId,
-        modelType: isNova ? 'Nova' : 'Claude',
-        messageCount: messages.length,
-      });
+      console.log(`[Bedrock] Invoking ${this.modelId} (Input size: ${JSON.stringify(requestBody).length} chars)`);
 
       const command = new InvokeModelCommand({
-        modelId,
+        modelId: this.modelId,
         contentType: 'application/json',
         accept: 'application/json',
         body: JSON.stringify(requestBody),
@@ -257,164 +166,189 @@ class BedrockService {
       const response = await this.client.send(command);
       const responseBody = JSON.parse(new TextDecoder().decode(response.body));
 
-      // --- NOVA RESPONSE PARSING ---
-      if (this._isNovaModel()) {
-        // Nova returns: { output: { message: { content: [{ text: "..." }] } } }
-        return {
-          content: responseBody.output?.message?.content?.[0]?.text || '',
-          stopReason: responseBody.stopReason,
-          usage: {
-            input_tokens: responseBody.usage?.inputTokens || 0,
-            output_tokens: responseBody.usage?.outputTokens || 0
-          }
-        };
-      }
+      // --- PARSE RESPONSE ---
+      let content = '';
+      let toolUse = null;
+      let stopReason = '';
+      let inputTokens = 0;
+      let outputTokens = 0;
 
-      // --- TITAN RESPONSE PARSING ---
-      if (this._isTitanModel()) {
-        return {
-          content: responseBody.results[0].outputText,
-          stopReason: responseBody.results[0].completionReason,
-          usage: {
-            input_tokens: responseBody.inputTextTokenCount,
-            output_tokens: responseBody.results[0].tokenCount
-          }
-        };
-      }
+      if (this.isNovaModel(this.modelId)) {
+        // Nova Parsing
+        const msgContent = responseBody.output?.message?.content || [];
+        stopReason = responseBody.stopReason;
+        inputTokens = responseBody.usage?.inputTokens || 0;
+        outputTokens = responseBody.usage?.outputTokens || 0;
 
-      // --- CLAUDE RESPONSE PARSING ---
-      return {
-        content: responseBody.content.find(c => c.type === 'text')?.text || '',
-        stopReason: responseBody.stop_reason,
-        usage: {
-          input_tokens: responseBody.usage?.input_tokens || 0,
-          output_tokens: responseBody.usage?.output_tokens || 0,
-        },
-      // Parse response based on model type
-      let content, usage, stopReason, toolUse;
-
-      if (isClaude) {
-        // Claude may return text or tool_use blocks
-        const contentBlock = responseBody.content[0];
-
-        if (contentBlock.type === 'text') {
-          content = contentBlock.text;
-        } else if (contentBlock.type === 'tool_use') {
-          toolUse = {
-            id: contentBlock.id,
-            name: contentBlock.name,
-            input: contentBlock.input,
-          };
-        }
-
-        stopReason = responseBody.stop_reason;
-        usage = {
-          input_tokens: responseBody.usage?.input_tokens || 0,
-          output_tokens: responseBody.usage?.output_tokens || 0,
-          total_tokens: (responseBody.usage?.input_tokens || 0) + (responseBody.usage?.output_tokens || 0),
-        };
-      } else if (isNova) {
-        // Nova may return text or toolUse blocks
-        const messageContent = responseBody.output?.message?.content || [];
-
-        for (const block of messageContent) {
+        // Nova returns an array of content blocks (text or toolUse)
+        for (const block of msgContent) {
           if (block.text) {
-            content = block.text;
+            content += block.text;
           } else if (block.toolUse) {
             toolUse = {
               id: block.toolUse.toolUseId,
               name: block.toolUse.name,
-              input: block.toolUse.input,
+              input: block.toolUse.input
             };
           }
         }
+      } else if (this.isClaudeModel(this.modelId)) {
+        // Claude Parsing
+        stopReason = responseBody.stop_reason;
+        inputTokens = responseBody.usage?.input_tokens || 0;
+        outputTokens = responseBody.usage?.output_tokens || 0;
 
-        stopReason = responseBody.stopReason;
-        usage = {
-          input_tokens: responseBody.usage?.inputTokens || 0,
-          output_tokens: responseBody.usage?.outputTokens || 0,
-          total_tokens: responseBody.usage?.totalTokens || 0,
-        };
+        // Claude returns array of content blocks
+        if (responseBody.content) {
+            for (const block of responseBody.content) {
+                if (block.type === 'text') {
+                    content += block.text;
+                } else if (block.type === 'tool_use') {
+                    toolUse = {
+                        id: block.id,
+                        name: block.name,
+                        input: block.input
+                    };
+                }
+            }
+        }
+      } else {
+        // Titan/Other Parsing
+        content = responseBody.results[0]?.outputText || '';
+        stopReason = responseBody.results[0]?.completionReason;
       }
-
-      console.log('Bedrock response received:', {
-        modelId,
-        stopReason,
-        hasToolUse: !!toolUse,
-        toolName: toolUse?.name,
-        inputTokens: usage.input_tokens,
-        outputTokens: usage.output_tokens,
-      });
 
       return {
         content,
         toolUse,
-        model: modelId,
         stopReason,
-        usage,
+        usage: { input_tokens: inputTokens, output_tokens: outputTokens }
       };
 
     } catch (error) {
       console.error('[Bedrock] Error:', error);
-      throw new Error(`Bedrock Analysis failed: ${error.message}`);
+      throw error;
     }
   }
 
   /**
-   * Stream chat response from Claude (for future implementation)
-   * @param {string} message - User message
-   * @param {Array} conversationHistory - Previous messages
-   * @param {Function} onChunk - Callback for each chunk
-   * @returns {Promise} - Resolves when stream completes
+   * Agentic Chat Loop
+   * Handles multi-turn conversations where the model can execute tools, 
+   * get results, and continue reasoning.
    */
-  async streamChat(message, conversationHistory = [], onChunk) {
+  async agentChat(userMessage, conversationHistory = [], options = {}) {
+    const { services } = options;
+    const MAX_LOOPS = 5;
+    let loopCount = 0;
+    
+    // Lazy load tools to avoid circular dependency
+    let executeTool;
     try {
-      const requestBody = this._buildPayload(message, conversationHistory, {});
-
-      const command = new InvokeModelWithResponseStreamCommand({
-        modelId: this.modelId,
-        contentType: 'application/json',
-        accept: 'application/json',
-        body: JSON.stringify(requestBody),
-      });
-
-      const response = await this.client.send(command);
-
-      for await (const item of response.body) {
-        if (item.chunk) {
-          const chunkData = JSON.parse(new TextDecoder().decode(item.chunk.bytes));
-          
-          // NOVA & CLAUDE share 'content_block_delta' for text, but Nova wraps differently sometimes
-          // Check for standard delta first
-          if (chunkData.contentBlockDelta?.delta?.text) {
-             onChunk(chunkData.contentBlockDelta.delta.text);
-          }
-          // Claude 3 style
-          else if (chunkData.type === 'content_block_delta' && chunkData.delta.text) {
-             onChunk(chunkData.delta.text);
-          }
-          // Titan Style
-          else if (chunkData.outputText) {
-             onChunk(chunkData.outputText);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[Bedrock] Stream Error:', error);
-      throw error;
+        executeTool = require('./tools').executeTool;
+    } catch (e) {
+        console.warn('Could not load tools module automatically');
     }
-  /**
-   * Analyze text or perform specific tasks
-   * @param {string} prompt - Task prompt
-   * @param {string} text - Text to analyze
-   * @returns {Object} - Analysis result
-   */
-  async analyze(prompt, text) {
-    const systemPrompt = prompt || 'Analyze the following text and provide insights.';
 
+    // Clone history to avoid mutating the original array passed by reference
+    let currentHistory = [...conversationHistory];
+    let currentInput = userMessage;
+
+    console.log('--- Starting Agent Loop ---');
+
+    while (loopCount < MAX_LOOPS) {
+      loopCount++;
+
+      // 1. Invoke Model
+      const response = await this.chat(currentInput, currentHistory, options);
+
+      // 2. Check if we are done (No tool use)
+      if (!response.toolUse) {
+        return response; // Return final text answer
+      }
+
+      // 3. Handle Tool Use
+      console.log(`[Agent] Tool Requested: ${response.toolUse.name}`);
+      
+      // A. Append Assistant's "Tool Use" Request to History
+      if (this.isNovaModel(this.modelId)) {
+        currentHistory.push({
+          role: 'user', // Nova expects the 'turn' to be closed by user response? No, we need to log what assistant did.
+          // Wait: For Nova/Claude, we must append the ASSISTANT's turn containing the tool_use
+          // BEFORE we append the USER's turn containing the tool_result.
+        });
+        
+        // Actually, simpler approach for loop: 
+        // We need to persist the Assistant's message that *requested* the tool
+        const assistantMsg = {
+            role: 'assistant',
+            content: [
+                { text: response.content || "Thinking..." },
+                { toolUse: { toolUseId: response.toolUse.id, name: response.toolUse.name, input: response.toolUse.input } }
+            ]
+        };
+        currentHistory.push(assistantMsg);
+
+      } else {
+        // Claude Format
+        const assistantMsg = {
+            role: 'assistant',
+            content: [
+                { type: 'text', text: response.content || "Checking..." },
+                { type: 'tool_use', id: response.toolUse.id, name: response.toolUse.name, input: response.toolUse.input }
+            ]
+        };
+        currentHistory.push(assistantMsg);
+      }
+
+      // B. Execute the Tool
+      let toolResultData;
+      try {
+        if (!executeTool) throw new Error("Tool execution module not found");
+        
+        const result = await executeTool(response.toolUse.name, response.toolUse.input, services);
+        toolResultData = result;
+      } catch (err) {
+        toolResultData = { error: err.message };
+      }
+
+      console.log(`[Agent] Tool Output:`, JSON.stringify(toolResultData).substring(0, 100) + "...");
+
+      // C. Format Tool Result for the next turn (This becomes the "User" input)
+      if (this.isNovaModel(this.modelId)) {
+        // Nova Tool Result Format
+        currentInput = [
+            {
+                toolResult: {
+                    toolUseId: response.toolUse.id,
+                    content: [{ json: toolResultData }], // Nova expects 'json' or 'text' inside content
+                    status: 'success'
+                }
+            }
+        ];
+      } else {
+        // Claude Tool Result Format
+        currentInput = [
+            {
+                type: 'tool_result',
+                tool_use_id: response.toolUse.id,
+                content: JSON.stringify(toolResultData)
+            }
+        ];
+      }
+      
+      // Loop continues... the next `chat()` call will take `currentInput` (the tool result)
+      // and append it to `currentHistory` (which now has the assistant tool request).
+    }
+
+    return { content: "Error: Maximum tool loop iterations reached." };
+  }
+
+  // --- ANALYTIC HELPERS ---
+
+  async analyze(prompt, text) {
     return await this.chat(text, [], {
-      systemPrompt,
-      temperature: 0.3, // Lower temperature for analytical tasks
+      systemPrompt: prompt,
+      temperature: 0.3,
       maxTokens: 2048,
     });
   }
