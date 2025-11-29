@@ -12,6 +12,7 @@ const { UserManagementService } = require('./services/user-management');
 const { GoogleWorkspaceSecurityService } = require('./services/google-workspace-security');
 const { ExternalSecurityService } = require('./services/external-security');
 const { ChromeWebStoreService } = require('./services/chrome-web-store');
+const { getToolDefinitions, executeTool } = require('./services/tools');
 
 // Initialize services
 let bedrockService;
@@ -391,19 +392,99 @@ async function handleChat(body, user) {
       conversationHistory = conversation.messages || [];
     }
 
-    // Call Bedrock (uses chat model by default, security model for analysis)
-    const response = await bedrockService.chat(message, conversationHistory);
+    // Get security intelligence tools
+    const tools = getToolDefinitions();
 
-    // Save conversation to database
+    // Enhanced system prompt for security intelligence
+    const systemPrompt = `You are a security intelligence assistant built by Complens.ai. You help analyze security risks, vulnerabilities, browser extensions, and other security concerns.
+
+When a user asks about security topics, you should:
+1. Use available tools to gather factual security intelligence
+2. Provide evidence-based security assessments
+3. Cite specific CVEs, versions, and security reports when available
+4. Give actionable recommendations for enterprise security
+
+Available tools:
+- chrome_extension_lookup: Analyze Chrome extensions for security risks
+- search_vulnerabilities: Search NIST NVD for CVEs and vulnerabilities
+- lookup_cve: Get detailed information about specific CVEs
+
+Use these tools proactively when users ask about security topics.`;
+
+    // Tool execution loop: Keep calling model until we get a final text response
+    let currentMessage = message;
+    let fullConversationHistory = [...conversationHistory];
+    let response;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    const maxToolIterations = 5; // Prevent infinite loops
+    let iteration = 0;
+
+    while (iteration < maxToolIterations) {
+      iteration++;
+
+      // Call Bedrock with tools
+      response = await bedrockService.chat(currentMessage, fullConversationHistory, {
+        tools,
+        systemPrompt,
+        temperature: 0.7,
+      });
+
+      totalInputTokens += response.usage.input_tokens;
+      totalOutputTokens += response.usage.output_tokens;
+
+      // Check if model wants to use a tool
+      if (response.toolUse) {
+        const { name, input, id } = response.toolUse;
+
+        console.log(`Tool requested: ${name}`, input);
+
+        // Execute the tool
+        const toolResult = await executeTool(name, input, {
+          chromeWebStoreService,
+          externalSecurityService,
+          bedrockService,
+        });
+
+        console.log(`Tool executed: ${name}`, { success: toolResult.success });
+
+        // Add assistant's tool use to conversation history
+        fullConversationHistory.push({
+          role: 'assistant',
+          content: [{ toolUse: { toolUseId: id, name, input } }],
+        });
+
+        // Add tool result to conversation history
+        fullConversationHistory.push({
+          role: 'user',
+          content: [{
+            toolResult: {
+              toolUseId: id,
+              content: [{ json: toolResult }],
+            },
+          }],
+        });
+
+        // Continue the loop with empty message (model will process tool result)
+        currentMessage = '';
+      } else {
+        // Got final text response, break the loop
+        break;
+      }
+    }
+
+    // Save conversation to database (only save final user message and assistant response)
     const savedConversation = await databaseService.saveConversation({
       conversationId,
-      userId: user?.userId, // Associate with authenticated user (if logged in)
+      userId: user?.userId,
       userMessage: message,
       assistantMessage: response.content,
       metadata: {
         model: response.model,
-        inputTokens: response.usage.input_tokens,
-        outputTokens: response.usage.output_tokens,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        toolsUsed: iteration > 1, // Track if tools were used
+        toolIterations: iteration - 1,
       },
     });
 
@@ -412,7 +493,11 @@ async function handleChat(body, user) {
       body: JSON.stringify({
         conversationId: savedConversation.id,
         response: response.content,
-        usage: response.usage,
+        usage: {
+          input_tokens: totalInputTokens,
+          output_tokens: totalOutputTokens,
+          total_tokens: totalInputTokens + totalOutputTokens,
+        },
       }),
     };
 
