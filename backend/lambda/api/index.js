@@ -14,6 +14,12 @@ const { ExternalSecurityService } = require('./services/external-security');
 const { ChromeWebStoreService } = require('./services/chrome-web-store');
 const { getToolDefinitions, executeTool } = require('./services/tools');
 
+// CORS Configuration - must match CloudFormation main.yaml
+const ALLOWED_ORIGINS = [
+  'https://dev.complens.ai',
+  'http://localhost:3000',
+];
+
 // Initialize services
 let bedrockService;
 let databaseService;
@@ -50,6 +56,30 @@ function extractUserFromJWT(event) {
     console.error('Error extracting user from JWT:', error);
     return null;
   }
+}
+
+/**
+ * Get allowed origin for CORS response
+ * When credentials are enabled, we CANNOT use wildcard '*'
+ * @param {object} event - Lambda event object
+ * @returns {string} Allowed origin or default origin
+ */
+function getAllowedOrigin(event) {
+  // Get origin from request headers (case-insensitive)
+  const origin = event.headers?.origin || event.headers?.Origin;
+
+  // Check if origin is in allowed list
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    return origin;
+  }
+
+  // Check if origin matches CloudFront pattern (*.cloudfront.net)
+  if (origin && origin.match(/^https:\/\/[a-z0-9]+\.cloudfront\.net$/)) {
+    return origin;
+  }
+
+  // Default to first allowed origin (for non-browser requests or when origin not provided)
+  return ALLOWED_ORIGINS[0];
 }
 
 /**
@@ -134,9 +164,10 @@ exports.handler = async (event) => {
       return {
         statusCode: 200,
         headers: {
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': getAllowedOrigin(event),
           'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+          'Access-Control-Allow-Credentials': 'true',
           'Access-Control-Max-Age': '86400', // Cache preflight for 24 hours
           'Cache-Control': 'public, max-age=86400', // Cache preflight responses
         },
@@ -155,7 +186,8 @@ exports.handler = async (event) => {
           statusCode: 400,
           headers: {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': getAllowedOrigin(event),
+            'Access-Control-Allow-Credentials': 'true',
           },
           body: JSON.stringify({ error: 'Invalid JSON in request body' }),
         };
@@ -174,7 +206,8 @@ exports.handler = async (event) => {
           statusCode: 503,
           headers: {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': getAllowedOrigin(event),
+            'Access-Control-Allow-Credentials': 'true',
           },
           body: JSON.stringify({
             status: 'unavailable',
@@ -299,9 +332,10 @@ exports.handler = async (event) => {
       ...response,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': getAllowedOrigin(event),
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+        'Access-Control-Allow-Credentials': 'true',
         'Cache-Control': 'no-cache, no-store, must-revalidate', // Don't cache API responses
         ...response.headers,
       },
@@ -318,9 +352,10 @@ exports.handler = async (event) => {
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': getAllowedOrigin(event),
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+        'Access-Control-Allow-Credentials': 'true',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
       body: JSON.stringify({

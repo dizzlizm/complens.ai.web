@@ -25,18 +25,18 @@ fi
 echo "📍 API Gateway ID: ${API_ID}"
 echo ""
 
-# Update CORS configuration
-echo "Updating CORS to allow https://dev.complens.ai..."
+# Update CORS configuration (must match CloudFormation main.yaml)
+echo "Updating CORS to allow https://dev.complens.ai with credentials..."
 
 aws apigatewayv2 update-api \
   --api-id ${API_ID} \
   --region ${REGION} \
   --cors-configuration '{
-    "AllowOrigins": ["https://dev.complens.ai", "http://localhost:3000", "*"],
+    "AllowOrigins": ["https://dev.complens.ai", "http://localhost:3000"],
     "AllowMethods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    "AllowHeaders": ["*"],
+    "AllowHeaders": ["Content-Type", "Authorization", "X-Requested-With"],
     "MaxAge": 300,
-    "AllowCredentials": false
+    "AllowCredentials": true
   }'
 
 echo ""
