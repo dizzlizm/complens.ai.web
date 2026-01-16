@@ -381,6 +381,73 @@ function Deploy-Infrastructure {
         Write-Host " exists" -ForegroundColor Green
     }
 
+    # Check for worker Lambda code - REQUIRED for SecurityScannerFunction
+    Write-Host "    Checking for Worker Lambda code..." -NoNewline
+    $workerCodeCheck = aws s3api head-object --bucket $lambdaBucket --key "workers/latest.zip" --region $Region 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host " not found" -ForegroundColor Yellow
+
+        # Look for worker placeholder or create one
+        $workerPlaceholderPaths = @(
+            (Join-Path $cfnDir "..\worker-placeholder.zip"),
+            (Join-Path $PSScriptRoot "..\infrastructure\worker-placeholder.zip"),
+            (Join-Path $cfnDir "..\lambda-placeholder.zip")  # Fallback to API placeholder
+        )
+
+        $workerPlaceholderPath = $null
+        foreach ($path in $workerPlaceholderPaths) {
+            if (Test-Path $path) {
+                $workerPlaceholderPath = $path
+                break
+            }
+        }
+
+        if ($workerPlaceholderPath) {
+            Write-Host "    Uploading Worker placeholder from $workerPlaceholderPath..." -NoNewline
+            $uploadResult = aws s3 cp $workerPlaceholderPath "s3://$lambdaBucket/workers/latest.zip" --region $Region 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host " OK" -ForegroundColor Green
+            } else {
+                Write-Host " FAILED" -ForegroundColor Red
+                Write-Fail "Worker Lambda code upload failed: $uploadResult"
+                Write-Fail "Stack creation will fail without Worker Lambda code."
+                exit 1
+            }
+        } else {
+            # Create a minimal placeholder on the fly
+            Write-Host " creating placeholder..." -NoNewline
+            $tempDir = [System.IO.Path]::GetTempPath()
+            $tempJs = Join-Path $tempDir "security-scanner.js"
+            $tempZip = Join-Path $tempDir "worker-placeholder.zip"
+
+            # Create minimal handler
+            @"
+exports.handler = async (event) => {
+    console.log('Placeholder worker - deploy real code');
+    return { statusCode: 200, body: 'Placeholder' };
+};
+"@ | Out-File -FilePath $tempJs -Encoding UTF8
+
+            # Create zip (requires PowerShell 5+)
+            if (Test-Path $tempZip) { Remove-Item $tempZip -Force }
+            Compress-Archive -Path $tempJs -DestinationPath $tempZip -Force
+
+            $uploadResult = aws s3 cp $tempZip "s3://$lambdaBucket/workers/latest.zip" --region $Region 2>&1
+            Remove-Item $tempJs -Force -ErrorAction SilentlyContinue
+            Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host " OK" -ForegroundColor Green
+            } else {
+                Write-Host " FAILED" -ForegroundColor Red
+                Write-Fail "Worker Lambda placeholder upload failed: $uploadResult"
+                exit 1
+            }
+        }
+    } else {
+        Write-Host " exists" -ForegroundColor Green
+    }
+
     # Read and process parameters (like GitHub Actions does with jq)
     Write-Host "    Preparing parameters..." -NoNewline
     $paramsJson = Get-Content $paramFile -Raw -Encoding UTF8 | ConvertFrom-Json
