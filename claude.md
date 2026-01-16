@@ -37,6 +37,7 @@ Complens.ai is an AI-powered security evaluation platform that provides continuo
 | **CloudWatch Alarms** | Working | Lambda, API Gateway, RDS, Billing alerts |
 | **CloudTrail** | Working | Full audit logging for AWS API calls |
 | **Background Workers** | Working | Scheduled security scanner, SNS alerts |
+| **Security Dashboard** | Working | Score gauge, findings, users, admins, sharing tabs |
 | **CI/CD** | Configured | GitHub Actions ready, needs secrets |
 
 ### What's NOT Working / Incomplete
@@ -44,7 +45,6 @@ Complens.ai is an AI-powered security evaluation platform that provides continuo
 | Component | Status | Blocker |
 |-----------|--------|---------|
 | **SAML/SSO** | Schema Only | Implementation pending |
-| **Frontend Security Dashboard** | Not Started | Backend APIs ready |
 | **Database Migration 005** | Created | Needs to be applied to RDS |
 
 ---
@@ -246,14 +246,14 @@ await auditLoggerService.logSuccess({
 
 ### High Priority (Next Up)
 
-1. **Frontend Security Dashboard**
-   - Backend APIs ready, need UI to display findings
-   - Security score visualization
-   - GWS connection management UI
-
-2. **Apply Database Migration**
+1. **Apply Database Migration**
    - Run `005_add_findings_unique_constraint.sql` in RDS
    - Enables upsert for findings table
+
+2. **Deploy and Test**
+   - Run CloudFormation deployment
+   - Test security scanner worker
+   - Verify Google OAuth flow end-to-end
 
 ### Medium Priority
 
@@ -681,3 +681,19 @@ aws logs tail /aws/lambda/dev-complens-api --follow
   - Created database migration for findings upsert support
   - Worker scans all connected GWS orgs automatically
   - Critical findings (admin without 2FA) trigger immediate alerts
+
+### 2026-01-16 - Security Dashboard & Bug Fixes
+- Built complete Frontend Security Dashboard (`/admin/security`):
+  - Security score gauge visualization (0-100 with color coding)
+  - Findings summary by severity (critical, high, medium, low)
+  - Users without 2FA tab with detailed user list
+  - Admin accounts security tab showing 2FA status
+  - External file sharing tab with file details
+  - Connection-aware UI (prompts to connect if GWS not linked)
+- Fixed critical bug: Security Scanner Worker now fetches Google OAuth
+  credentials from Secrets Manager at runtime (was using broken
+  CloudFormation resolve syntax that wouldn't work)
+- Fixed ON CONFLICT clauses in google-workspace-security.js to use
+  proper upsert pattern with (org_id, type, resource) constraint
+- Added security API functions to frontend api.js
+- Added Security Dashboard route and navigation link in AdminLayout
