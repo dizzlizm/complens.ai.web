@@ -51,7 +51,7 @@ complens.ai/
 ## Development Commands
 
 ```bash
-# Frontend
+# Frontend (local dev)
 cd frontend && npm install && npm start     # Dev server on localhost:3000
 cd frontend && npm run build                # Production build
 
@@ -62,6 +62,38 @@ cd backend/lambda/api && npm test           # Run tests
 # Database migrations (via bastion)
 ./run-migrations.sh                         # On bastion host
 ```
+
+## Deployment Commands
+
+### PowerShell (Windows - from laptop)
+```powershell
+# Deploy everything to dev
+.\scripts\Deploy-Complens.ps1 -Environment dev
+
+# Quick Lambda-only deploy (fastest)
+.\scripts\Deploy-Lambda.ps1 -Environment dev
+
+# Deploy specific component
+.\scripts\Deploy-Complens.ps1 -Environment prod -Component backend
+.\scripts\Deploy-Complens.ps1 -Component infra      # Infrastructure only
+.\scripts\Deploy-Complens.ps1 -Component frontend   # Frontend only
+```
+
+### Bash (Linux/Mac/WSL)
+```bash
+# Infrastructure
+cd infrastructure/cloudformation && ./deploy.sh dev
+
+# Lambda only (fast)
+./scripts/deploy-lambda.sh
+
+# Frontend
+./scripts/deploy-frontend-with-cognito.sh
+```
+
+### GitHub Actions (automatic)
+- Push to `claude/**` branch → auto-deploys to dev
+- Manual trigger → choose dev or prod
 
 ## Architecture Notes
 
