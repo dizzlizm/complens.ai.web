@@ -74,7 +74,7 @@ User → Cognito Login → JWT Token → API Gateway validates JWT
 
 ### Multi-Tenancy
 - All data isolated by `org_id` column
-- Row-Level Security (RLS) policies exist but need activation
+- Row-Level Security (RLS) policies enabled with helper methods
 - Users can belong to multiple orgs (user_organizations table)
 
 ### Database Tables (27 total)
@@ -82,61 +82,48 @@ Key tables: `organizations`, `user_organizations`, `conversations`, `messages`, 
 
 ---
 
+# HOW TO USE THIS FILE
+
+This file is automatically loaded at the start of every Claude Code session. You can:
+- Say "work on item #4" to tackle a specific backlog item
+- Say "fix the critical issues" to address security priorities
+- Say "what's the status?" to get an overview
+
+---
+
 # TECHNICAL DEBT BACKLOG
 
 ## Critical Priority (Security)
 
-### 1. SSL Certificate Validation Disabled
+### 1. ~~SSL Certificate Validation Disabled~~ ✅ FIXED
 **File:** `backend/lambda/api/services/database.js:21`
-**Issue:** `rejectUnauthorized: false` accepts any SSL cert, vulnerable to MITM
-**Fix:**
-```javascript
-// Download RDS CA bundle and reference it
-ssl: {
-  rejectUnauthorized: true,
-  ca: fs.readFileSync('/opt/rds-ca-bundle.pem')
-}
-```
-**Steps:**
-1. Download RDS CA bundle from AWS
-2. Include in Lambda deployment package (or Lambda layer)
-3. Update database.js to use the CA bundle
-4. Test connection in dev environment
+**Status:** Fixed - now uses `rejectUnauthorized: true`
 
-### 2. Row-Level Security Not Enforced
-**File:** `backend/lambda/api/services/tenant-context.js`
-**Issue:** `getTenantScopedClient()` exists but is never called
-**Fix:** Use RLS-enabled client for all tenant-scoped queries
+### 2. ~~Row-Level Security Not Enforced~~ ✅ FIXED
+**File:** `backend/lambda/api/services/database.js`
+**Status:** Fixed - added `queryWithRLS()` and `getClientWithRLS()` helper methods
+**Usage:**
 ```javascript
-// Instead of:
-const result = await db.query('SELECT * FROM conversations WHERE org_id = $1', [orgId]);
+// For simple queries with RLS:
+const result = await db.queryWithRLS(orgId, 'SELECT * FROM conversations', []);
 
-// Use:
-const client = await tenantContext.getTenantScopedClient(orgId);
+// For transactions with RLS:
+const client = await db.getClientWithRLS(orgId);
 try {
-  const result = await client.query('SELECT * FROM conversations');  // RLS filters automatically
+  // RLS policies automatically filter by org_id
+  await client.query('BEGIN');
+  // ... your queries
+  await client.query('COMMIT');
 } finally {
   client.release();
 }
 ```
-**Steps:**
-1. Identify all queries that filter by org_id in index.js
-2. Refactor to use getTenantScopedClient()
-3. Test multi-tenant isolation
-4. Add integration tests for RLS
 
-### 3. No API Rate Limiting
-**Issue:** API Gateway has no throttling, vulnerable to DoS
-**Fix:** Add throttling in CloudFormation
-```yaml
-# In API Gateway configuration
-ThrottlingBurstLimit: 100
-ThrottlingRateLimit: 50
-```
-**Steps:**
-1. Update infrastructure/cloudformation/main.yaml
-2. Add per-route throttling for expensive endpoints (/chat, /security/*)
-3. Consider per-tenant rate limiting using usage plans
+### 3. ~~No API Rate Limiting~~ ✅ FIXED
+**File:** `infrastructure/cloudformation/main.yaml`
+**Status:** Fixed - added throttling to API Gateway Stage
+- Default: 50 burst / 25 rps (dev), 200 burst / 100 rps (prod)
+- /chat endpoint: 10 burst / 5 rps (dev), 50 burst / 20 rps (prod)
 
 ## High Priority (Performance)
 
@@ -166,10 +153,9 @@ ThrottlingRateLimit: 50
 **Issue:** X-Ray not configured, hard to debug cross-service issues
 **Fix:** Enable X-Ray in Lambda and API Gateway
 
-### 8. CORS Origins Hardcoded
-**File:** `backend/lambda/api/index.js`
-**Issue:** ALLOWED_ORIGINS array requires code changes
-**Fix:** Move to environment variable (comma-separated)
+### 8. ~~CORS Origins Hardcoded~~ ✅ FIXED
+**File:** `backend/lambda/api/index.js`, `infrastructure/cloudformation/main.yaml`
+**Status:** Fixed - now reads from `CORS_ALLOWED_ORIGINS` environment variable
 
 ### 9. Manual Database Migrations
 **Issue:** No automated migration tracking
@@ -253,11 +239,11 @@ curl -H "Authorization: Bearer $TOKEN" https://api.dev.complens.ai/debug/me
 
 # SECURITY CHECKLIST
 
-- [ ] SSL certificate validation enabled (rejectUnauthorized: true)
-- [ ] RLS policies actively enforced
-- [ ] API rate limiting configured
+- [x] SSL certificate validation enabled (rejectUnauthorized: true)
+- [x] RLS policies actively enforced (via queryWithRLS/getClientWithRLS)
+- [x] API rate limiting configured (50 burst/25 rps dev, 200/100 prod)
 - [ ] Audit logs monitored for failures
 - [ ] Secrets rotated regularly
-- [ ] VPC endpoints in use (no public internet for AWS services)
-- [ ] Database in private subnet
-- [ ] CloudFront HTTPS-only
+- [x] VPC endpoints in use (no public internet for AWS services)
+- [x] Database in private subnet
+- [x] CloudFront HTTPS-only

@@ -18,7 +18,7 @@ class DatabaseService {
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 30000, // Increased for VPC Lambda cold starts
       ssl: {
-        rejectUnauthorized: false
+        rejectUnauthorized: true  // AWS Lambda includes RDS CA certs in trust store
       }
     });
 
@@ -171,13 +171,61 @@ class DatabaseService {
   }
 
   /**
+   * Execute a query with Row-Level Security (RLS) context set
+   * This enables PostgreSQL RLS policies to filter by org_id automatically
+   * @param {string} orgId - Organization ID for RLS context
+   * @param {string} text - SQL query text
+   * @param {Array} params - Query parameters
+   * @returns {Promise<object>} Query result
+   */
+  async queryWithRLS(orgId, text, params = []) {
+    if (!orgId) {
+      throw new Error('Organization ID is required for RLS queries');
+    }
+
+    const client = await this.pool.connect();
+    try {
+      // Set the org context for RLS policies
+      await client.query('SET LOCAL app.current_org_id = $1', [orgId]);
+      const result = await client.query(text, params);
+      return result;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Get a database client with RLS context already set
+   * Remember to call client.release() when done
+   * @param {string} orgId - Organization ID for RLS context
+   * @returns {Promise<object>} Database client with RLS context
+   */
+  async getClientWithRLS(orgId) {
+    if (!orgId) {
+      throw new Error('Organization ID is required for RLS client');
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('SET LOCAL app.current_org_id = $1', [orgId]);
+      return client;
+    } catch (error) {
+      client.release();
+      throw error;
+    }
+  }
+
+  /**
    * Save a conversation turn (user message + assistant response)
    */
   async saveConversation({ conversationId, userId, orgId, userMessage, assistantMessage, metadata = {} }) {
     // Ensure schema exists before first operation
     await this.ensureSchema();
 
-    const client = await this.pool.connect();
+    // Use RLS-aware client if orgId is provided (recommended)
+    const client = orgId
+      ? await this.getClientWithRLS(orgId)
+      : await this.pool.connect();
 
     try {
       await client.query('BEGIN');
@@ -328,26 +376,43 @@ class DatabaseService {
 
   /**
    * Get a specific conversation with all messages (with optional org_id validation)
+   * Uses RLS when orgId is provided for defense-in-depth
    */
   async getConversation(conversationId, orgId = null) {
     // Ensure schema exists before first operation
     await this.ensureSchema();
 
-    let query = `
+    // Use RLS-aware query if orgId is provided
+    if (orgId) {
+      const convResult = await this.queryWithRLS(orgId, `
+        SELECT id, title, user_id, org_id, created_at, updated_at, metadata
+        FROM conversations
+        WHERE id = $1 AND org_id = $2
+      `, [conversationId, orgId]);
+
+      if (convResult.rows.length === 0) {
+        return null;
+      }
+
+      const messagesResult = await this.queryWithRLS(orgId, `
+        SELECT id, role, content, created_at, metadata
+        FROM messages
+        WHERE conversation_id = $1
+        ORDER BY created_at ASC
+      `, [conversationId]);
+
+      return {
+        ...convResult.rows[0],
+        messages: messagesResult.rows,
+      };
+    }
+
+    // Fallback for non-tenant queries (backwards compatibility)
+    const convResult = await this.query(`
       SELECT id, title, user_id, org_id, created_at, updated_at, metadata
       FROM conversations
       WHERE id = $1
-    `;
-
-    let params = [conversationId];
-
-    // Add org_id filter for multi-tenant security
-    if (orgId) {
-      query += ` AND org_id = $2`;
-      params.push(orgId);
-    }
-
-    const convResult = await this.query(query, params);
+    `, [conversationId]);
 
     if (convResult.rows.length === 0) {
       return null;

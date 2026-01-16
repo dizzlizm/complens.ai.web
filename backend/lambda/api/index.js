@@ -16,11 +16,11 @@ const { TenantContextService } = require('./services/tenant-context');
 const { AuditLoggerService } = require('./services/audit-logger');
 const { getToolDefinitions, executeTool } = require('./services/tools');
 
-// CORS Configuration - must match CloudFormation main.yaml
-const ALLOWED_ORIGINS = [
-  'https://dev.complens.ai',
-  'http://localhost:3000',
-];
+// CORS Configuration - loaded from environment variable (set in CloudFormation)
+const ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || 'https://dev.complens.ai,http://localhost:3000')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
 
 // Initialize services
 let bedrockService;

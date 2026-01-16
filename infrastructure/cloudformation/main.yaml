@@ -995,6 +995,15 @@ Resources:
       ApiId: !Ref ApiGateway
       StageName: !Ref Environment
       AutoDeploy: true
+      # Rate limiting to prevent DoS attacks
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: !If [IsProd, 200, 50]  # Max concurrent requests
+        ThrottlingRateLimit: !If [IsProd, 100, 25]   # Requests per second
+      # Per-route throttling for expensive endpoints
+      RouteSettings:
+        'POST /chat':
+          ThrottlingBurstLimit: !If [IsProd, 50, 10]
+          ThrottlingRateLimit: !If [IsProd, 20, 5]
       AccessLogSettings:
         DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
         Format: '$context.requestId $context.error.message $context.error.messageString'
@@ -1031,6 +1040,11 @@ Resources:
           REGION: !Ref AWS::Region
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           BEDROCK_SECURITY_MODEL_ID: !Ref BedrockSecurityModelId
+          # CORS allowed origins (comma-separated)
+          CORS_ALLOWED_ORIGINS: !If
+            - IsDev
+            - !Sub 'https://dev.complens.ai,http://localhost:3000,https://${CloudFrontDistribution.DomainName}'
+            - !Sub 'https://complens.ai,https://${CloudFrontDistribution.DomainName}'
       Timeout: 60  # Increased for VPC cold starts + database connection
       MemorySize: !If [IsProd, 512, 256]
       Tags:
