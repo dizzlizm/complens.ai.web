@@ -212,10 +212,11 @@ $identity = aws sts get-caller-identity --query Arn --output text --region $Regi
 Write-Success "Account: $script:AccountId"
 Write-Success "Identity: $identity"
 
-# Confirm deployment
-if (-not $SkipConfirm) {
+# Confirm deployment (only for prod - dev deploys without asking)
+if ($Environment -eq 'prod' -and -not $SkipConfirm) {
     Write-Host ""
-    $confirm = Read-Host "Deploy $Component to $Environment? (y/N)"
+    Write-Host "    ⚠️  PRODUCTION DEPLOYMENT" -ForegroundColor Red
+    $confirm = Read-Host "Deploy $Component to PRODUCTION? (y/N)"
     if ($confirm -ne 'y' -and $confirm -ne 'Y') {
         Write-Host "Deployment cancelled." -ForegroundColor Yellow
         exit 0
