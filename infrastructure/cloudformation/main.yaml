@@ -1087,6 +1087,11 @@ Resources:
       - OAuthDisconnectRoute
       - OAuthDisconnectOptionsRoute
       - OAuthStatusRoute
+      - GWSUsersWithout2FARoute
+      - GWSAdminAccountsRoute
+      - GWSExternalSharingRoute
+      - GWSPoliciesRoute
+      - GWSSummaryRoute
       - DefaultRoute
     Properties:
       ApiId: !Ref ApiGateway
@@ -1261,6 +1266,55 @@ Resources:
     Properties:
       ApiId: !Ref ApiGateway
       RouteKey: 'GET /oauth/google/status'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+
+  # ============================================================================
+  # Google Workspace Security Analysis Routes
+  # ============================================================================
+
+  GWSUsersWithout2FARoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /security/users-without-2fa'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+
+  GWSAdminAccountsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /security/admin-accounts'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+
+  GWSExternalSharingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /security/external-sharing'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+
+  GWSPoliciesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /security/policies'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+
+  GWSSummaryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /security/summary'
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
       AuthorizationType: JWT
       AuthorizerId: !Ref ApiGatewayAuthorizer

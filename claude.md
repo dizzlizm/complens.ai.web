@@ -233,16 +233,24 @@ await auditLoggerService.logSuccess({
    - S3 data events logged
    - Logs retained 90 days (dev), 365 days (prod)
 
+6. **Google Workspace Security Analysis** - COMPLETE
+   - OAuth flow: connect/disconnect/status
+   - List users without 2FA (stores findings)
+   - Find admin accounts
+   - Analyze external file sharing (stores findings)
+   - Check security policies with security score
+   - Security summary from findings database
+   - API Gateway routes with JWT auth added
+
 ### High Priority (Next Up)
 
-1. **Google Workspace Security Analysis Stubbed**
-   - Location: `backend/lambda/api/services/google-workspace-security.js:232`
-   - NAT Gateway is now enabled - can proceed with implementation
-   - Needs: Actual Admin SDK API calls
-
-2. **Background Workers Not Implemented**
+1. **Background Workers Not Implemented**
    - Needed for: Autonomous scanning, scheduled security checks
    - Architecture: Step Functions + EventBridge + Lambda workers
+
+2. **Frontend Security Dashboard**
+   - Backend APIs ready, need UI to display findings
+   - Security score visualization
 
 ### Medium Priority
 
@@ -368,26 +376,26 @@ await auditLoggerService.logSuccess({
 
 ## Roadmap & Strategic Plan
 
-### Phase 2: Google Workspace Integration (Next)
+### Phase 2: Google Workspace Integration (COMPLETE)
 
 **Goal:** Enable actual security scanning of Google Workspace
 
 **Tasks:**
 1. ~~Enable NAT Gateway (+$32/month)~~ DONE
 2. ~~Add WAF + Rate Limiting~~ DONE
-3. Complete Google OAuth scopes (Admin SDK, Drive, Gmail)
-4. Implement data collection:
-   - List users without 2FA
-   - Find admin accounts
-   - Analyze external file sharing
-   - Check security policies
-5. Store findings in `findings` table
-6. Build security dashboard UI
+3. ~~Complete Google OAuth scopes (Admin SDK, Drive, Gmail)~~ DONE
+4. ~~Implement data collection:~~ DONE
+   - ~~List users without 2FA~~ DONE
+   - ~~Find admin accounts~~ DONE
+   - ~~Analyze external file sharing~~ DONE
+   - ~~Check security policies with security score~~ DONE
+5. ~~Store findings in `findings` table~~ DONE
+6. Build security dashboard UI - PENDING (backend ready)
 
 **Dependencies:**
 - ~~NAT Gateway for external API calls~~ READY
-- Google Cloud Console setup with OAuth credentials
-- Admin consent flow for Google Workspace
+- Google Cloud Console setup with OAuth credentials (user must configure)
+- Admin consent flow for Google Workspace (user must configure)
 
 ### Phase 3: Background Workers & Automation
 
@@ -635,9 +643,15 @@ aws logs tail /aws/lambda/dev-complens-api --follow
 
 ## Changelog
 
-### 2026-01-16 - Production Hardening
+### 2026-01-16 - Production Hardening & GWS Completion
 - Added WAF WebACL to CloudFront with 5 protection rules
 - Implemented API Gateway rate limiting (default + per-route)
 - Verified NAT Gateway, CloudWatch Alarms, CloudTrail already enabled
 - Updated cost estimates to reflect new infrastructure (~$80/mo dev)
 - Updated security threat model with new protections
+- Completed Google Workspace security analysis implementation:
+  - Added 5 GWS security routes to API Gateway with JWT auth
+  - Implemented full checkSecurityPolicies() with security score (0-100)
+  - All GWS security functions now call actual Google Admin SDK APIs
+  - Findings are stored in database with severity levels
+- Corrected documentation (GWS was mostly implemented, not stubbed)
