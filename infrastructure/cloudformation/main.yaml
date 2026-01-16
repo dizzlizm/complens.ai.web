@@ -712,6 +712,14 @@ Resources:
                 Action:
                   - secretsmanager:GetSecretValue
                 Resource: !Ref ApplicationSecrets
+        - PolicyName: RDSDescribeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                Resource: '*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
