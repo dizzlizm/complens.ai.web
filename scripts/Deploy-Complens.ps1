@@ -102,14 +102,18 @@ if (-not $SkipConfirm) {
 function Deploy-Infrastructure {
     Write-Step "Deploying CloudFormation infrastructure..."
 
-    $cfnDir = Join-Path $PSScriptRoot "..\infrastructure\cloudformation"
+    $cfnDir = Resolve-Path (Join-Path $PSScriptRoot "..\infrastructure\cloudformation")
     $templateFile = Join-Path $cfnDir "main.yaml"
     $paramFile = Join-Path $cfnDir "parameters\$Environment.json"
+
+    # Convert to forward slashes for AWS CLI on Windows
+    $templateFileUri = "file://" + ($templateFile -replace '\\', '/')
+    $paramFileUri = "file://" + ($paramFile -replace '\\', '/')
 
     # Validate template
     Write-Host "    Validating template..."
     aws cloudformation validate-template `
-        --template-body "file://$templateFile" `
+        --template-body $templateFileUri `
         --region $Region | Out-Null
     Write-Success "Template valid"
 
@@ -144,7 +148,7 @@ function Deploy-Infrastructure {
         }
     }
 
-    # Read parameters
+    # Read parameters as JSON (inline, not file://)
     $params = Get-Content $paramFile -Raw
 
     if ($stackExists) {
@@ -152,7 +156,7 @@ function Deploy-Infrastructure {
         try {
             aws cloudformation update-stack `
                 --stack-name $StackName `
-                --template-body "file://$templateFile" `
+                --template-body $templateFileUri `
                 --parameters $params `
                 --capabilities CAPABILITY_NAMED_IAM `
                 --region $Region
@@ -171,7 +175,7 @@ function Deploy-Infrastructure {
         Write-Host "    Creating new stack..."
         aws cloudformation create-stack `
             --stack-name $StackName `
-            --template-body "file://$templateFile" `
+            --template-body $templateFileUri `
             --parameters $params `
             --capabilities CAPABILITY_NAMED_IAM `
             --region $Region `
