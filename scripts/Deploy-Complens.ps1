@@ -43,6 +43,8 @@ param(
 
     [string]$DBPassword = '',
 
+    [string]$ParamsFile = '',  # Optional: override parameters file (e.g., 'dev-local.json')
+
     [switch]$SkipConfirm
 )
 
@@ -107,7 +109,13 @@ function Deploy-Infrastructure {
 
     $cfnDir = Join-Path $PSScriptRoot "..\infrastructure\cloudformation" | Resolve-Path
     $templateFile = Join-Path $cfnDir "main.yaml"
-    $paramFile = Join-Path $cfnDir "parameters\$Environment.json"
+
+    # Use custom params file if specified, otherwise default to environment
+    if ($ParamsFile) {
+        $paramFile = Join-Path $cfnDir "parameters\$ParamsFile"
+    } else {
+        $paramFile = Join-Path $cfnDir "parameters\$Environment.json"
+    }
 
     # Verify files exist
     if (-not (Test-Path $templateFile)) {
