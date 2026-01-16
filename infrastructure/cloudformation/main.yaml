@@ -499,13 +499,110 @@ Resources:
             Action: 's3:GetObject'
             Resource: !Sub '${FrontendBucket.Arn}/*'
 
+  # ============================================================================
+  # WAF Web ACL for CloudFront (DDoS, SQL Injection, XSS Protection)
+  # Note: WAF for CloudFront must be deployed in us-east-1
+  # ============================================================================
+
+  WAFWebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub '${Environment}-complens-waf'
+      Description: WAF protection for Complens.ai CloudFront distribution
+      Scope: CLOUDFRONT  # CLOUDFRONT for CloudFront, REGIONAL for API Gateway
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub '${Environment}-complens-waf'
+        SampledRequestsEnabled: true
+      Rules:
+        # Rule 1: Rate limiting - Block IPs making too many requests
+        - Name: RateLimitRule
+          Priority: 1
+          Statement:
+            RateBasedStatement:
+              Limit: 2000  # Max 2000 requests per 5 minutes per IP
+              AggregateKeyType: IP
+          Action:
+            Block: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub '${Environment}-rate-limit'
+            SampledRequestsEnabled: true
+
+        # Rule 2: AWS Managed Rules - Common Rule Set (blocks known bad inputs)
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              ExcludedRules: []
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub '${Environment}-common-rules'
+            SampledRequestsEnabled: true
+
+        # Rule 3: AWS Managed Rules - Known Bad Inputs
+        - Name: AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 3
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub '${Environment}-bad-inputs'
+            SampledRequestsEnabled: true
+
+        # Rule 4: AWS Managed Rules - SQL Injection Protection
+        - Name: AWSManagedRulesSQLiRuleSet
+          Priority: 4
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesSQLiRuleSet
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub '${Environment}-sqli-rules'
+            SampledRequestsEnabled: true
+
+        # Rule 5: Block requests from known bad IP reputation list
+        - Name: AWSManagedRulesAmazonIpReputationList
+          Priority: 5
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub '${Environment}-ip-reputation'
+            SampledRequestsEnabled: true
+
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: complens-ai
+
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
+    DependsOn: WAFWebACL
     Properties:
       DistributionConfig:
         Enabled: true
         DefaultRootObject: index.html
         Comment: !Sub '${Environment} Complens.ai Frontend'
+        WebACLId: !GetAtt WAFWebACL.Arn
         Aliases: !If
           - HasDomain
           - [!Ref DomainName]
@@ -995,9 +1092,26 @@ Resources:
       ApiId: !Ref ApiGateway
       StageName: !Ref Environment
       AutoDeploy: true
+      # API Gateway Rate Limiting / Throttling
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: !If [IsProd, 200, 50]   # Max concurrent requests
+        ThrottlingRateLimit: !If [IsProd, 100, 20]    # Requests per second
+      # Route-specific throttling (stricter limits on expensive endpoints)
+      RouteSettings:
+        # Chat endpoint - more expensive (calls Bedrock)
+        'POST /chat':
+          ThrottlingBurstLimit: !If [IsProd, 50, 10]
+          ThrottlingRateLimit: !If [IsProd, 20, 5]
+        # Security endpoints - also call external APIs
+        'GET /security/nist/search':
+          ThrottlingBurstLimit: !If [IsProd, 30, 10]
+          ThrottlingRateLimit: !If [IsProd, 10, 5]
+        'GET /security/chrome-extension/{extensionId}':
+          ThrottlingBurstLimit: !If [IsProd, 30, 10]
+          ThrottlingRateLimit: !If [IsProd, 10, 5]
       AccessLogSettings:
         DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
-        Format: '$context.requestId $context.error.message $context.error.messageString'
+        Format: '$context.requestId $context.error.message $context.error.messageString $context.status $context.responseLatency'
       Tags:
         Environment: !Ref Environment
 
@@ -1516,3 +1630,16 @@ Outputs:
       1. Connect to bastion: aws ssm start-session --target ${BastionHost} --region ${AWS::Region}
       2. Run helper script: sudo /usr/local/bin/connect-rds.sh
       OR run migrations: cd /tmp && upload SQL files, then sudo /usr/local/bin/run-migrations.sh
+
+  WAFWebACLArn:
+    Description: WAF Web ACL ARN protecting CloudFront
+    Value: !GetAtt WAFWebACL.Arn
+    Export:
+      Name: !Sub '${Environment}-complens-waf-arn'
+
+  APIRateLimits:
+    Description: API Gateway rate limiting configuration
+    Value: !Sub |
+      Default: ${!If [IsProd, 100, 20]} req/sec, ${!If [IsProd, 200, 50]} burst
+      Chat endpoint: ${!If [IsProd, 20, 5]} req/sec, ${!If [IsProd, 50, 10]} burst
+      Security endpoints: ${!If [IsProd, 10, 5]} req/sec, ${!If [IsProd, 30, 10]} burst

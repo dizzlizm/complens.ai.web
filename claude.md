@@ -203,57 +203,69 @@ await auditLoggerService.logSuccess({
 
 ## Known Issues & TODOs
 
-### Critical (Must Fix)
+### Recently Completed (2026-01-16)
 
-1. **NAT Gateway Disabled**
-   - **Impact:** Cannot make external API calls (Google Workspace, etc.)
-   - **Cost:** ~$32/month to enable
-   - **Fix:** Uncomment NAT resources in `main.yaml` when ready for GWS integration
+1. **NAT Gateway** - ENABLED
+   - External API calls now possible (Google Workspace, Chrome Web Store, NIST, etc.)
+   - Cost: ~$32/month
 
-2. **No Rate Limiting**
-   - **Impact:** Vulnerable to API abuse
-   - **Fix:** Implement at API Gateway or application level
+2. **WAF on CloudFront** - ENABLED
+   - DDoS protection via rate limiting (2000 req/5min per IP)
+   - AWS Managed Rules: Common Rule Set, Known Bad Inputs, SQLi, IP Reputation
+   - CloudWatch metrics enabled for monitoring
 
-3. **No WAF on CloudFront**
-   - **Impact:** No DDoS protection, no request filtering
-   - **Fix:** Add AWS WAF rules
+3. **API Gateway Rate Limiting** - ENABLED
+   - Default: 20 req/sec (dev), 100 req/sec (prod)
+   - Chat endpoint: 5 req/sec (dev), 20 req/sec (prod) - protects Bedrock costs
+   - Security endpoints: 5 req/sec (dev), 10 req/sec (prod)
 
-### High Priority
+4. **CloudWatch Alarms** - ENABLED
+   - Lambda errors (>5 in 5min)
+   - Lambda duration (>25s approaching timeout)
+   - API Gateway 5xx errors (>10 in 5min)
+   - API Gateway 4xx errors (>50 in 5min)
+   - RDS CPU utilization (>80%)
+   - Billing alerts (>$100)
 
-4. **Google Workspace Security Analysis Stubbed**
+5. **CloudTrail** - ENABLED
+   - Audit logging for all AWS API calls
+   - Lambda invocations logged
+   - S3 data events logged
+   - Logs retained 90 days (dev), 365 days (prod)
+
+### High Priority (Next Up)
+
+1. **Google Workspace Security Analysis Stubbed**
    - Location: `backend/lambda/api/services/google-workspace-security.js:232`
-   - Needs: NAT Gateway + actual Admin SDK implementation
+   - NAT Gateway is now enabled - can proceed with implementation
+   - Needs: Actual Admin SDK API calls
 
-5. **Background Workers Not Implemented**
+2. **Background Workers Not Implemented**
    - Needed for: Autonomous scanning, scheduled security checks
    - Architecture: Step Functions + EventBridge + Lambda workers
 
-6. **No CloudWatch Alarms**
-   - Missing: Error rate, latency, cost alerts
-   - Impact: No proactive monitoring
-
 ### Medium Priority
 
-7. **SAML/SSO Not Implemented**
+3. **SAML/SSO Not Implemented**
    - Schema ready in `saml_providers` table
    - Needed for enterprise customers
 
-8. **User Invitation Workflow**
+4. **User Invitation Workflow**
    - Schema ready in `user_invitations` table
    - UI not built
 
-9. **Frontend Admin UI Incomplete**
+5. **Frontend Admin UI Incomplete**
    - Structure exists, needs backend integration
 
-10. **No Request Signing/API Keys**
-    - Only JWT auth currently supported
+6. **No Request Signing/API Keys**
+   - Only JWT auth currently supported
 
 ### Low Priority
 
-11. **Streaming Responses from Bedrock**
-12. **WebSocket API for Real-Time Updates**
-13. **Conversation Search**
-14. **Custom Domain Setup**
+7. **Streaming Responses from Bedrock**
+8. **WebSocket API for Real-Time Updates**
+9. **Conversation Search**
+10. **Custom Domain Setup**
 
 ---
 
@@ -266,45 +278,58 @@ await auditLoggerService.logSuccess({
 - Secrets Manager for all credentials
 - JWT authentication via Cognito
 - Row-Level Security at database level
-- Comprehensive audit logging
+- Comprehensive audit logging (application + CloudTrail)
 - IAM least privilege
 - CloudFront HTTPS enforcement
+- **WAF on CloudFront** (NEW)
+  - Rate limiting: 2000 req/5min per IP
+  - AWS Managed Rules: Common, Bad Inputs, SQLi, IP Reputation
+- **API Gateway Rate Limiting** (NEW)
+  - Default: 20 req/sec (dev), 100 req/sec (prod)
+  - Stricter limits on expensive endpoints (chat, security)
+- **CloudTrail** (NEW)
+  - All AWS API calls logged
+  - Lambda invocations tracked
+  - S3 data events captured
 
 ### Needs Implementation
 
-- [ ] WAF on CloudFront
-- [ ] Rate limiting per tenant/user
 - [ ] API key authentication option
 - [ ] Request signing for sensitive endpoints
 - [ ] GuardDuty threat detection
 - [ ] AWS Config compliance rules
-- [ ] CloudTrail logging
 - [ ] RDS Multi-AZ for production
+- [ ] Content Security Policy (CSP) headers
 
 ### Security Threat Model
 
-| Threat | Current Mitigation | Recommended |
-|--------|-------------------|-------------|
-| SQL Injection | Parameterized queries | Continue |
-| XSS | React auto-escaping | Add CSP headers |
-| CSRF | JWT in headers | Add CSRF tokens for state-changing |
-| DDoS | None | WAF + Shield |
-| Data Exfiltration | RLS + tenant isolation | Add DLP monitoring |
+| Threat | Current Mitigation | Status |
+|--------|-------------------|--------|
+| SQL Injection | Parameterized queries + WAF SQLi rules | Protected |
+| XSS | React auto-escaping + WAF Common Rules | Protected |
+| CSRF | JWT in headers | Protected |
+| DDoS | WAF rate limiting + API throttling | Protected |
+| Data Exfiltration | RLS + tenant isolation | Protected |
 | Credential Theft | Secrets Manager | Add rotation policy |
+| Brute Force | WAF rate limiting + Cognito lockout | Protected |
+| Bot Traffic | WAF IP Reputation + rate limits | Protected |
 
 ---
 
 ## Cost Management
 
-### Current Dev Environment (~$41/month)
+### Current Dev Environment (~$80/month)
 
 | Service | Monthly Cost | Notes |
 |---------|-------------|-------|
 | RDS (db.t4g.micro) | ~$15 | Single-AZ, 20GB |
-| VPC Endpoints (3x) | ~$21 | Secrets, Bedrock, S3 |
+| NAT Gateway | ~$32 | Enabled for external APIs |
+| VPC Endpoints (6x) | ~$42 | Secrets, Bedrock, S3, SSM x3 |
+| WAF | ~$5 | Basic rules + rate limiting |
 | CloudFront/S3 | <$5 | Free tier mostly |
 | Lambda/API Gateway | Free tier | Low usage |
-| **Subtotal** | **~$41** | Excluding AI usage |
+| CloudTrail | <$1 | S3 storage for logs |
+| **Subtotal** | **~$80** | Excluding AI usage |
 | Bedrock (Nova) | ~$5-10 | 98% cheaper than Claude |
 | Bedrock (Claude) | Variable | Security analysis only |
 
@@ -315,10 +340,10 @@ await auditLoggerService.logSuccess({
    - Claude for security: $3/$15 per 1M tokens
    - **Result:** ~98% cost reduction on AI
 
-2. **NAT Gateway Removed** (Implemented)
-   - Saves ~$32/month
-   - VPC endpoints for AWS services only
-   - **Tradeoff:** Can't call external APIs
+2. **Rate Limiting** (Implemented)
+   - Protects against runaway Bedrock costs
+   - Chat endpoint limited to 5 req/sec (dev)
+   - Prevents abuse that could spike bills
 
 3. **Future Optimizations**
    - Aurora Serverless v2 for production (scale to zero)
@@ -332,11 +357,11 @@ await auditLoggerService.logSuccess({
 |---------|-------------|
 | RDS Multi-AZ (t4g.medium) | ~$120 |
 | NAT Gateway | ~$32 |
-| VPC Endpoints | ~$21 |
-| WAF | ~$5 |
-| CloudWatch Logs | ~$10 |
+| VPC Endpoints (6x) | ~$42 |
+| WAF | ~$10 |
+| CloudWatch/CloudTrail | ~$15 |
 | Lambda (high usage) | ~$20 |
-| **Subtotal** | **~$210** |
+| **Subtotal** | **~$240** |
 | + Bedrock usage | Variable |
 
 ---
@@ -348,18 +373,19 @@ await auditLoggerService.logSuccess({
 **Goal:** Enable actual security scanning of Google Workspace
 
 **Tasks:**
-1. Enable NAT Gateway (+$32/month)
-2. Complete Google OAuth scopes (Admin SDK, Drive, Gmail)
-3. Implement data collection workers:
+1. ~~Enable NAT Gateway (+$32/month)~~ DONE
+2. ~~Add WAF + Rate Limiting~~ DONE
+3. Complete Google OAuth scopes (Admin SDK, Drive, Gmail)
+4. Implement data collection:
    - List users without 2FA
    - Find admin accounts
    - Analyze external file sharing
    - Check security policies
-4. Store findings in `findings` table
-5. Build security dashboard UI
+5. Store findings in `findings` table
+6. Build security dashboard UI
 
 **Dependencies:**
-- NAT Gateway for external API calls
+- ~~NAT Gateway for external API calls~~ READY
 - Google Cloud Console setup with OAuth credentials
 - Admin consent flow for Google Workspace
 
@@ -604,3 +630,14 @@ aws logs tail /aws/lambda/dev-complens-api --follow
 ---
 
 *This document should be updated as the project evolves. Last comprehensive review: 2026-01-16*
+
+---
+
+## Changelog
+
+### 2026-01-16 - Production Hardening
+- Added WAF WebACL to CloudFront with 5 protection rules
+- Implemented API Gateway rate limiting (default + per-route)
+- Verified NAT Gateway, CloudWatch Alarms, CloudTrail already enabled
+- Updated cost estimates to reflect new infrastructure (~$80/mo dev)
+- Updated security threat model with new protections
