@@ -59,6 +59,14 @@ Parameters:
     Default: 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'
     Description: 'Bedrock model for security analysis (requires strong reasoning). Recommended: Claude 3.5 Sonnet v2'
 
+  EnableWAF:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: 'Enable WAF protection on CloudFront (adds ~$5/mo minimum)'
+
 # ============================================================================
 # Mappings - Network Configuration
 # ============================================================================
@@ -86,6 +94,7 @@ Conditions:
     - !Condition HasDomain
     - !Not [!Condition HasHostedZone]
   EnableBillingAlerts: !Not [!Equals [!Ref BillingAlertEmail, '']]
+  EnableWAFCondition: !Equals [!Ref EnableWAF, 'true']
 
 Resources:
   # ============================================================================
@@ -506,6 +515,7 @@ Resources:
 
   WAFWebACL:
     Type: AWS::WAFv2::WebACL
+    Condition: EnableWAFCondition
     Properties:
       Name: !Sub '${Environment}-complens-waf'
       Description: WAF protection for Complens.ai CloudFront distribution
@@ -596,13 +606,12 @@ Resources:
 
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
-    DependsOn: WAFWebACL
     Properties:
       DistributionConfig:
         Enabled: true
         DefaultRootObject: index.html
         Comment: !Sub '${Environment} Complens.ai Frontend'
-        WebACLId: !GetAtt WAFWebACL.Arn
+        WebACLId: !If [EnableWAFCondition, !GetAtt WAFWebACL.Arn, !Ref 'AWS::NoValue']
         Aliases: !If
           - HasDomain
           - [!Ref DomainName]
