@@ -1446,6 +1446,155 @@ Resources:
           Value: !Ref Environment
 
   # ============================================================================
+  # Background Workers - Scheduled Security Scanning
+  # ============================================================================
+
+  # SNS Topic for Security Alerts
+  SecurityAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${Environment}-complens-security-alerts'
+      DisplayName: Complens Security Alerts
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  SecurityAlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: EnableBillingAlerts  # Reuse billing alert email
+    Properties:
+      Protocol: email
+      TopicArn: !Ref SecurityAlertsTopic
+      Endpoint: !Ref BillingAlertEmail
+
+  # IAM Role for Worker Lambda
+  WorkerLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-complens-worker-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref ApplicationSecrets
+        - PolicyName: SNSPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref SecurityAlertsTopic
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${AWS::AccountId}-${Environment}-complens-lambda-code/*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Security Scanner Worker Lambda
+  SecurityScannerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-complens-security-scanner'
+      Runtime: nodejs20.x
+      Handler: security-scanner.handler
+      Role: !GetAtt WorkerLambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Sub '${AWS::AccountId}-${Environment}-complens-lambda-code'
+        S3Key: workers/latest.zip
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          SECRETS_ARN: !Ref ApplicationSecrets
+          REGION: !Ref AWS::Region
+          ALERTS_SNS_TOPIC_ARN: !Ref SecurityAlertsTopic
+          GOOGLE_CLIENT_ID: '{{resolve:secretsmanager:${ApplicationSecrets}:SecretString:googleClientId}}'
+          GOOGLE_CLIENT_SECRET: '{{resolve:secretsmanager:${ApplicationSecrets}:SecretString:googleClientSecret}}'
+          GOOGLE_REDIRECT_URI: '{{resolve:secretsmanager:${ApplicationSecrets}:SecretString:googleRedirectUri}}'
+      Timeout: 300  # 5 minutes for scanning multiple orgs
+      MemorySize: 512
+      ReservedConcurrentExecutions: 1  # Only one scan at a time
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # CloudWatch Log Group for Worker
+  SecurityScannerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Environment}-complens-security-scanner'
+      RetentionInDays: !If [IsProd, 30, 7]
+
+  # EventBridge Rule - Daily Security Scan at 2 AM UTC
+  DailySecurityScanRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${Environment}-complens-daily-security-scan'
+      Description: Triggers daily security scan of all connected Google Workspaces
+      ScheduleExpression: 'cron(0 2 * * ? *)'  # 2 AM UTC daily
+      State: !If [IsProd, ENABLED, DISABLED]  # Only enabled in prod by default
+      Targets:
+        - Id: SecurityScannerTarget
+          Arn: !GetAtt SecurityScannerFunction.Arn
+          Input: '{"source": "scheduled", "scanType": "full"}'
+
+  # Permission for EventBridge to invoke Lambda
+  SecurityScannerEventBridgePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SecurityScannerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailySecurityScanRule.Arn
+
+  # CloudWatch Alarm for Worker Errors
+  SecurityScannerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-security-scanner-errors'
+      AlarmDescription: Alert when security scanner encounters errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 86400  # 24 hours (one scan per day)
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SecurityScannerFunction
+
+  # ============================================================================
   # CloudWatch Monitoring and Alarms
   # ============================================================================
 
@@ -1697,3 +1846,22 @@ Outputs:
       Default: ${!If [IsProd, 100, 20]} req/sec, ${!If [IsProd, 200, 50]} burst
       Chat endpoint: ${!If [IsProd, 20, 5]} req/sec, ${!If [IsProd, 50, 10]} burst
       Security endpoints: ${!If [IsProd, 10, 5]} req/sec, ${!If [IsProd, 30, 10]} burst
+
+  SecurityScannerFunctionArn:
+    Description: ARN of Security Scanner Worker Lambda
+    Value: !GetAtt SecurityScannerFunction.Arn
+    Export:
+      Name: !Sub '${Environment}-complens-security-scanner-arn'
+
+  SecurityAlertsTopicArn:
+    Description: SNS Topic ARN for security alerts
+    Value: !Ref SecurityAlertsTopic
+    Export:
+      Name: !Sub '${Environment}-complens-security-alerts-arn'
+
+  SecurityScanSchedule:
+    Description: Security scan schedule
+    Value: !Sub |
+      Schedule: Daily at 2 AM UTC (cron(0 2 * * ? *))
+      Status: ${!If [IsProd, ENABLED, DISABLED]}
+      Manual trigger: aws lambda invoke --function-name ${Environment}-complens-security-scanner output.json

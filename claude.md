@@ -19,7 +19,7 @@ Complens.ai is an AI-powered security evaluation platform that provides continuo
 
 ---
 
-## Current State (Phase 1 Complete)
+## Current State (Phase 3 Complete)
 
 ### What's Working
 
@@ -31,19 +31,21 @@ Complens.ai is an AI-powered security evaluation platform that provides continuo
 | **Multi-Tenancy** | Working | Org-level isolation, RLS, audit logging |
 | **Chrome Extension Analysis** | Working | Full permission/risk assessment |
 | **NIST/CVE Intelligence** | Working | Search, lookup, AI analysis with caching |
-| **Google OAuth Flow** | Partial | Connect/disconnect works, needs NAT for API calls |
+| **Google Workspace Security** | Working | Full security analysis with score calculation |
+| **WAF Protection** | Working | Rate limiting, SQLi, XSS, IP reputation |
+| **API Rate Limiting** | Working | Per-endpoint throttling |
+| **CloudWatch Alarms** | Working | Lambda, API Gateway, RDS, Billing alerts |
+| **CloudTrail** | Working | Full audit logging for AWS API calls |
+| **Background Workers** | Working | Scheduled security scanner, SNS alerts |
 | **CI/CD** | Configured | GitHub Actions ready, needs secrets |
 
 ### What's NOT Working / Incomplete
 
 | Component | Status | Blocker |
 |-----------|--------|---------|
-| **Google Workspace Data Collection** | Stubbed | NAT Gateway disabled (~$32/mo) |
-| **Background Workers** | Not Started | Needs Step Functions + EventBridge |
 | **SAML/SSO** | Schema Only | Implementation pending |
-| **Rate Limiting** | Not Started | No implementation |
-| **WAF** | Not Started | CloudFront unprotected |
-| **CloudWatch Alarms** | Not Started | No monitoring alerts |
+| **Frontend Security Dashboard** | Not Started | Backend APIs ready |
+| **Database Migration 005** | Created | Needs to be applied to RDS |
 
 ---
 
@@ -244,13 +246,14 @@ await auditLoggerService.logSuccess({
 
 ### High Priority (Next Up)
 
-1. **Background Workers Not Implemented**
-   - Needed for: Autonomous scanning, scheduled security checks
-   - Architecture: Step Functions + EventBridge + Lambda workers
-
-2. **Frontend Security Dashboard**
+1. **Frontend Security Dashboard**
    - Backend APIs ready, need UI to display findings
    - Security score visualization
+   - GWS connection management UI
+
+2. **Apply Database Migration**
+   - Run `005_add_findings_unique_constraint.sql` in RDS
+   - Enables upsert for findings table
 
 ### Medium Priority
 
@@ -397,32 +400,47 @@ await auditLoggerService.logSuccess({
 - Google Cloud Console setup with OAuth credentials (user must configure)
 - Admin consent flow for Google Workspace (user must configure)
 
-### Phase 3: Background Workers & Automation
+### Phase 3: Background Workers & Automation (COMPLETE)
 
 **Goal:** Autonomous, continuous security scanning
 
 **Architecture:**
 ```
-EventBridge Scheduler (cron)
+EventBridge Scheduler (cron: 2 AM UTC daily)
     ↓
-Step Functions (orchestration)
+Security Scanner Lambda (5 min timeout)
     ↓
-Lambda Workers (GWS, CWS, Intel)
+For each connected org:
+  - Scan users without 2FA
+  - Scan external file sharing
+  - Calculate security score
     ↓
-RDS (findings storage)
+RDS (findings stored with upsert)
     ↓
-SNS/SES (alerts)
+SNS (alerts for critical findings)
 ```
 
 **Tasks:**
-1. Create Step Functions workflow
-2. Implement EventBridge scheduled triggers
-3. Build worker Lambdas:
-   - GWS User Scanner
-   - GWS Drive Scanner
-   - CWS Extension Monitor
-   - Threat Intel Updater
-4. Alert system (SNS → Email/Slack)
+1. ~~EventBridge scheduled triggers~~ DONE
+2. ~~Security Scanner Worker Lambda~~ DONE
+   - `backend/lambda/workers/security-scanner.js`
+   - Scans all connected GWS orgs
+   - Stores findings with severity levels
+   - Calculates security score per org
+3. ~~SNS Topic for alerts~~ DONE
+   - Email subscription for critical findings
+   - Admin 2FA missing triggers immediate alert
+4. ~~CloudWatch monitoring~~ DONE
+   - Error alarm for failed scans
+   - Logs retained 7d (dev), 30d (prod)
+5. ~~Database migration created~~ DONE
+   - `005_add_findings_unique_constraint.sql`
+   - Apply during next deployment
+
+**Schedule:**
+- Dev: DISABLED (manual trigger only)
+- Prod: ENABLED (daily at 2 AM UTC)
+- Manual: `aws lambda invoke --function-name ${ENV}-complens-security-scanner output.json`
 
 ### Phase 4: Advanced Security Features
 
@@ -643,7 +661,7 @@ aws logs tail /aws/lambda/dev-complens-api --follow
 
 ## Changelog
 
-### 2026-01-16 - Production Hardening & GWS Completion
+### 2026-01-16 - Production Hardening, GWS Completion & Background Workers
 - Added WAF WebACL to CloudFront with 5 protection rules
 - Implemented API Gateway rate limiting (default + per-route)
 - Verified NAT Gateway, CloudWatch Alarms, CloudTrail already enabled
@@ -655,3 +673,11 @@ aws logs tail /aws/lambda/dev-complens-api --follow
   - All GWS security functions now call actual Google Admin SDK APIs
   - Findings are stored in database with severity levels
 - Corrected documentation (GWS was mostly implemented, not stubbed)
+- Implemented Phase 3: Background Workers & Automation:
+  - Created Security Scanner Worker Lambda (`backend/lambda/workers/security-scanner.js`)
+  - Added EventBridge scheduled rule (daily at 2 AM UTC)
+  - Added SNS topic for security alerts with email subscription
+  - Added CloudWatch alarm for worker errors
+  - Created database migration for findings upsert support
+  - Worker scans all connected GWS orgs automatically
+  - Critical findings (admin without 2FA) trigger immediate alerts

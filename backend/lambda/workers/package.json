@@ -1,0 +1,19 @@
+{
+  "name": "complens-workers",
+  "version": "1.0.0",
+  "description": "Background worker Lambda functions for Complens.ai",
+  "main": "security-scanner.js",
+  "scripts": {
+    "build": "npm run zip",
+    "zip": "zip -r worker.zip *.js package.json node_modules"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.400.0",
+    "@aws-sdk/client-sns": "^3.400.0",
+    "googleapis": "^126.0.0",
+    "pg": "^8.11.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
