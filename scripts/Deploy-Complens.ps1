@@ -58,9 +58,9 @@ function Write-Warn { param($msg) Write-Host "    [WARN] $msg" -ForegroundColor 
 function Write-Fail { param($msg) Write-Host "    [FAIL] $msg" -ForegroundColor Red }
 
 # ============================================================================
-# Helper: Clean up orphaned resources from failed deployments
+# Helper: Check for issues with existing resources (read-only, no deletions)
 # ============================================================================
-function Cleanup-OrphanedResources {
+function Check-ExistingResources {
     param([string]$AccountId, [string]$Env, [string]$Rgn)
 
     Write-Step "Checking for orphaned resources from previous failed deployments..."
@@ -69,108 +69,29 @@ function Cleanup-OrphanedResources {
     $stackStatus = aws cloudformation describe-stacks --stack-name $StackName --region $Rgn --query 'Stacks[0].StackStatus' --output text 2>&1
 
     if ($LASTEXITCODE -eq 0 -and $stackStatus -match "ROLLBACK_COMPLETE|DELETE_FAILED|CREATE_FAILED") {
-        Write-Warn "Found stack '$StackName' in $stackStatus state - must delete before recreating"
-
-        # Extra safety for production
-        if ($Env -eq 'prod') {
-            Write-Host ""
-            Write-Host "    ⚠️  WARNING: This will delete the PRODUCTION stack!" -ForegroundColor Red
-            Write-Host "    The stack is in a failed state and cannot be updated." -ForegroundColor Yellow
-            Write-Host "    Deleting it is required to redeploy, but you will lose:" -ForegroundColor Yellow
-            Write-Host "      - All CloudFormation-managed resources" -ForegroundColor Yellow
-            Write-Host "      - However, RDS has DeletionPolicy: Snapshot (data preserved)" -ForegroundColor Green
-            Write-Host ""
-            $prodConfirm = Read-Host "    Type 'DELETE PROD' to confirm (anything else cancels)"
-            if ($prodConfirm -ne 'DELETE PROD') {
-                Write-Host "    Cancelled. No changes made." -ForegroundColor Yellow
-                exit 0
-            }
-        }
-
-        Write-Host "    Deleting failed stack..." -NoNewline
-
-        aws cloudformation delete-stack --stack-name $StackName --region $Rgn 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host " FAILED" -ForegroundColor Red
-            Write-Fail "Could not delete stack. Check CloudFormation console for retained resources."
-            exit 1
-        }
-
-        Write-Host " initiated" -ForegroundColor Green
-        Write-Host "    Waiting for stack deletion (may take a few minutes)..." -ForegroundColor Yellow
-        aws cloudformation wait stack-delete-complete --stack-name $StackName --region $Rgn 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Fail "Stack deletion failed. Some resources may need manual cleanup."
-            # Continue anyway - we'll try to clean up individual resources
-        } else {
-            Write-Success "Failed stack deleted"
-        }
-    }
-
-    # Check for orphaned S3 buckets that might block new stack
-    # NOTE: Only check if NO stack exists (truly orphaned from previous failed deployment)
-    # If stack exists in good state, these buckets belong to it and shouldn't be deleted
-    $stackExistsGood = ($LASTEXITCODE -eq 0 -and $stackStatus -notmatch "ROLLBACK_COMPLETE|DELETE_FAILED|CREATE_FAILED")
-
-    if (-not $stackExistsGood) {
-        $bucketsToCheck = @(
-            "$AccountId-$Env-complens-frontend",
-            "$AccountId-$Env-complens-cloudtrail"
-        )
-
-        foreach ($bucket in $bucketsToCheck) {
-            Write-Host "    Checking bucket: $bucket..." -NoNewline
-            $bucketExists = aws s3api head-bucket --bucket $bucket --region $Rgn 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host " exists (orphaned)" -ForegroundColor Yellow
-                Write-Warn "Orphaned bucket found: $bucket"
-
-                # For production, just warn but don't auto-delete data buckets
-                if ($Env -eq 'prod') {
-                    Write-Warn "PRODUCTION bucket detected - skipping automatic deletion"
-                    Write-Host "    To delete manually: aws s3 rb s3://$bucket --force --region $Rgn" -ForegroundColor Yellow
-                    continue
-                }
-
-                # Check if bucket is empty
-                $objectCount = aws s3 ls "s3://$bucket" --region $Rgn --recursive --summarize 2>&1 | Select-String "Total Objects:"
-                if ($objectCount -and $objectCount -notmatch "Total Objects: 0") {
-                    Write-Warn "Bucket has contents - will empty and delete"
-                    Write-Host "    Emptying bucket..." -NoNewline
-                    aws s3 rm "s3://$bucket" --recursive --region $Rgn 2>&1 | Out-Null
-                    Write-Host " done" -ForegroundColor Green
-                }
-
-                Write-Host "    Deleting bucket..." -NoNewline
-                aws s3 rb "s3://$bucket" --region $Rgn 2>&1 | Out-Null
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Host " deleted" -ForegroundColor Green
-                } else {
-                    Write-Host " FAILED (may have versioned objects)" -ForegroundColor Yellow
-                    # Try with force for versioned buckets
-                    aws s3 rb "s3://$bucket" --force --region $Rgn 2>&1 | Out-Null
-                }
-            } else {
-                Write-Host " not found (good)" -ForegroundColor Green
-            }
-        }
-    } else {
+        Write-Host ""
+        Write-Fail "Stack '$StackName' is in $stackStatus state"
+        Write-Host ""
+        Write-Host "    The stack must be manually deleted before you can redeploy." -ForegroundColor Yellow
+        Write-Host "    To delete the stack, run:" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "    aws cloudformation delete-stack --stack-name $StackName --region $Rgn" -ForegroundColor Cyan
+        Write-Host "    aws cloudformation wait stack-delete-complete --stack-name $StackName --region $Rgn" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "    Then re-run this deployment script." -ForegroundColor Yellow
+        exit 1
+    } elseif ($LASTEXITCODE -eq 0) {
         Write-Host "    Stack exists in good state - skipping orphan bucket check" -ForegroundColor Green
     }
 
-    # Check for orphaned CloudWatch log groups
+    # Check for orphaned CloudWatch log groups (just report, don't delete)
     $logGroupName = "/aws/apigateway/$Env-complens-api"
     Write-Host "    Checking log group: $logGroupName..." -NoNewline
     $lgExists = aws logs describe-log-groups --log-group-name-prefix $logGroupName --region $Rgn --query 'logGroups[0].logGroupName' --output text 2>&1
-    if ($LASTEXITCODE -eq 0 -and $lgExists -eq $logGroupName) {
-        Write-Host " exists (orphaned)" -ForegroundColor Yellow
-        Write-Host "    Deleting log group..." -NoNewline
-        aws logs delete-log-group --log-group-name $logGroupName --region $Rgn 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host " deleted" -ForegroundColor Green
-        } else {
-            Write-Host " FAILED" -ForegroundColor Red
-        }
+    if ($LASTEXITCODE -eq 0 -and $lgExists -eq $logGroupName -and $stackStatus -match "does not exist") {
+        Write-Host " exists (may be orphaned)" -ForegroundColor Yellow
+        Write-Host "    If stack creation fails, delete manually:" -ForegroundColor Yellow
+        Write-Host "    aws logs delete-log-group --log-group-name $logGroupName --region $Rgn" -ForegroundColor Cyan
     } else {
         Write-Host " not found (good)" -ForegroundColor Green
     }
@@ -230,7 +151,7 @@ function Deploy-Infrastructure {
     Write-Step "Deploying CloudFormation infrastructure..."
 
     # First, clean up any orphaned resources from previous failed deployments
-    Cleanup-OrphanedResources -AccountId $script:AccountId -Env $Environment -Rgn $Region
+    Check-ExistingResources -AccountId $script:AccountId -Env $Environment -Rgn $Region
 
     $cfnDir = Join-Path $PSScriptRoot "..\infrastructure\cloudformation" | Resolve-Path
     $templateFile = Join-Path $cfnDir "main.yaml"
