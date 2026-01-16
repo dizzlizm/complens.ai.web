@@ -328,10 +328,12 @@ function Deploy-Infrastructure {
     $templateContent = Get-Content $templateFile -Raw -Encoding UTF8
     Write-Host " OK ($([math]::Round($templateContent.Length / 1024)) KB)" -ForegroundColor Green
 
-    # Validate template using file:// protocol (avoids command line length issues)
+    # Use S3 URL for template (avoids Windows file encoding issues)
+    $templateUrl = "https://$lambdaBucket.s3.$Region.amazonaws.com/cfn/main.yaml"
+
+    # Validate template using S3 URL
     Write-Host "    Validating template..." -NoNewline
-    $templateFileUri = "file://$($templateFile -replace '\\', '/')"
-    $validateResult = aws cloudformation validate-template --template-body $templateFileUri --region $Region 2>&1
+    $validateResult = aws cloudformation validate-template --template-url $templateUrl --region $Region 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host " FAILED" -ForegroundColor Red
         Write-Fail "Validation failed: $validateResult"
@@ -408,11 +410,11 @@ function Deploy-Infrastructure {
     if ($stackExists) {
         Write-Host " exists, updating" -ForegroundColor Green
 
-        # Update stack using file:// protocol
+        # Update stack using S3 URL
         Write-Host "    Updating stack..." -NoNewline
         $updateResult = aws cloudformation update-stack `
             --stack-name $StackName `
-            --template-body $templateFileUri `
+            --template-url $templateUrl `
             --parameters $params `
             --capabilities CAPABILITY_NAMED_IAM `
             --region $Region 2>&1
@@ -454,7 +456,7 @@ function Deploy-Infrastructure {
         Write-Host "    Creating stack..." -NoNewline
         $createResult = aws cloudformation create-stack `
             --stack-name $StackName `
-            --template-body $templateFileUri `
+            --template-url $templateUrl `
             --parameters $params `
             --capabilities CAPABILITY_NAMED_IAM `
             --region $Region `
