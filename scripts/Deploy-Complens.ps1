@@ -15,6 +15,9 @@
 .PARAMETER Region
     AWS region (default: us-east-1)
 
+.PARAMETER DBPassword
+    Database master password (will prompt if not provided for infra deployment)
+
 .PARAMETER SkipConfirm
     Skip confirmation prompts
 
@@ -25,8 +28,8 @@
     # Deploy only Lambda to prod
     .\Deploy-Complens.ps1 -Environment prod -Component backend
 
-    # Deploy infrastructure only
-    .\Deploy-Complens.ps1 -Component infra
+    # Deploy infrastructure with password
+    .\Deploy-Complens.ps1 -Component infra -DBPassword "MySecurePass123!"
 #>
 
 param(
@@ -38,10 +41,12 @@ param(
 
     [string]$Region = 'us-east-1',
 
+    [string]$DBPassword = '',
+
     [switch]$SkipConfirm
 )
 
-$ErrorActionPreference = 'Continue'  # Don't stop on errors, we'll handle them
+$ErrorActionPreference = 'Continue'
 $StackName = "complens-$Environment"
 
 # Colors for output
@@ -49,38 +54,6 @@ function Write-Step { param($msg) Write-Host "`n==> $msg" -ForegroundColor Cyan 
 function Write-Success { param($msg) Write-Host "    [OK] $msg" -ForegroundColor Green }
 function Write-Warn { param($msg) Write-Host "    [WARN] $msg" -ForegroundColor Yellow }
 function Write-Fail { param($msg) Write-Host "    [FAIL] $msg" -ForegroundColor Red }
-
-# Helper to run AWS CLI and check result
-function Invoke-AwsCli {
-    param(
-        [string]$Command,
-        [string]$Description,
-        [switch]$Silent,
-        [switch]$AllowFailure
-    )
-
-    Write-Host "    $Description..." -NoNewline
-
-    $result = Invoke-Expression "aws $Command 2>&1"
-    $exitCode = $LASTEXITCODE
-
-    if ($exitCode -ne 0) {
-        if ($AllowFailure) {
-            Write-Host " (skipped)" -ForegroundColor Yellow
-            return @{ Success = $false; Output = $result; ExitCode = $exitCode }
-        }
-        Write-Host " FAILED" -ForegroundColor Red
-        Write-Host "    Error: $result" -ForegroundColor Red
-        return @{ Success = $false; Output = $result; ExitCode = $exitCode }
-    }
-
-    if (-not $Silent) {
-        Write-Host " OK" -ForegroundColor Green
-    } else {
-        Write-Host ""
-    }
-    return @{ Success = $true; Output = $result; ExitCode = 0 }
-}
 
 # ============================================================================
 # Pre-flight checks
@@ -143,6 +116,24 @@ function Deploy-Infrastructure {
     }
     if (-not (Test-Path $paramFile)) {
         Write-Fail "Parameters not found: $paramFile"
+        exit 1
+    }
+
+    # Get DB password (required for infra deployment)
+    $dbPwd = $DBPassword
+    if (-not $dbPwd) {
+        # Check environment variable
+        $dbPwd = $env:COMPLENS_DB_PASSWORD
+    }
+    if (-not $dbPwd) {
+        Write-Host ""
+        Write-Warn "Database password required for infrastructure deployment"
+        $securePass = Read-Host "Enter DB password (min 8 chars)" -AsSecureString
+        $dbPwd = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePass))
+    }
+    if ($dbPwd.Length -lt 8) {
+        Write-Fail "Password must be at least 8 characters"
         exit 1
     }
 
@@ -222,8 +213,26 @@ function Deploy-Infrastructure {
         Write-Host " exists" -ForegroundColor Green
     }
 
-    # Read parameters
-    $params = Get-Content $paramFile -Raw -Encoding UTF8
+    # Read and process parameters (like GitHub Actions does with jq)
+    Write-Host "    Preparing parameters..." -NoNewline
+    $paramsJson = Get-Content $paramFile -Raw -Encoding UTF8 | ConvertFrom-Json
+
+    # Replace placeholder values with actual secrets
+    foreach ($param in $paramsJson) {
+        switch ($param.ParameterKey) {
+            "DBMasterPassword" { $param.ParameterValue = $dbPwd }
+            "BillingAlertEmail" {
+                # Use environment variable or empty string
+                $email = $env:COMPLENS_BILLING_EMAIL
+                if ($email) { $param.ParameterValue = $email }
+                else { $param.ParameterValue = "" }
+            }
+        }
+    }
+
+    # Convert back to JSON for AWS CLI
+    $params = $paramsJson | ConvertTo-Json -Compress -Depth 10
+    Write-Host " OK" -ForegroundColor Green
 
     # Check if stack exists
     Write-Host "    Checking stack status..." -NoNewline
