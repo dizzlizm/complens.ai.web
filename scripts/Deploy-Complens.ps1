@@ -58,6 +58,95 @@ function Write-Warn { param($msg) Write-Host "    [WARN] $msg" -ForegroundColor 
 function Write-Fail { param($msg) Write-Host "    [FAIL] $msg" -ForegroundColor Red }
 
 # ============================================================================
+# Helper: Clean up orphaned resources from failed deployments
+# ============================================================================
+function Cleanup-OrphanedResources {
+    param([string]$AccountId, [string]$Env, [string]$Rgn)
+
+    Write-Step "Checking for orphaned resources from previous failed deployments..."
+
+    # Check stack status first
+    $stackStatus = aws cloudformation describe-stacks --stack-name $StackName --region $Rgn --query 'Stacks[0].StackStatus' --output text 2>&1
+
+    if ($LASTEXITCODE -eq 0 -and $stackStatus -match "ROLLBACK_COMPLETE|DELETE_FAILED|CREATE_FAILED") {
+        Write-Warn "Found stack in $stackStatus state - must delete before recreating"
+        Write-Host "    Deleting failed stack..." -NoNewline
+
+        aws cloudformation delete-stack --stack-name $StackName --region $Rgn 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host " FAILED" -ForegroundColor Red
+            Write-Fail "Could not delete stack. Check CloudFormation console for retained resources."
+            exit 1
+        }
+
+        Write-Host " initiated" -ForegroundColor Green
+        Write-Host "    Waiting for stack deletion (may take a few minutes)..." -ForegroundColor Yellow
+        aws cloudformation wait stack-delete-complete --stack-name $StackName --region $Rgn 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "Stack deletion failed. Some resources may need manual cleanup."
+            # Continue anyway - we'll try to clean up individual resources
+        } else {
+            Write-Success "Failed stack deleted"
+        }
+    }
+
+    # Check for orphaned S3 buckets that might block new stack
+    $bucketsToCheck = @(
+        "$AccountId-$Env-complens-frontend",
+        "$AccountId-$Env-complens-cloudtrail"
+    )
+
+    foreach ($bucket in $bucketsToCheck) {
+        Write-Host "    Checking bucket: $bucket..." -NoNewline
+        $bucketExists = aws s3api head-bucket --bucket $bucket --region $Rgn 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host " exists (orphaned)" -ForegroundColor Yellow
+            Write-Warn "Orphaned bucket found: $bucket"
+
+            # Check if bucket is empty
+            $objectCount = aws s3 ls "s3://$bucket" --region $Rgn --recursive --summarize 2>&1 | Select-String "Total Objects:"
+            if ($objectCount -and $objectCount -notmatch "Total Objects: 0") {
+                Write-Warn "Bucket has contents - will empty and delete"
+                Write-Host "    Emptying bucket..." -NoNewline
+                aws s3 rm "s3://$bucket" --recursive --region $Rgn 2>&1 | Out-Null
+                Write-Host " done" -ForegroundColor Green
+            }
+
+            Write-Host "    Deleting bucket..." -NoNewline
+            aws s3 rb "s3://$bucket" --region $Rgn 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host " deleted" -ForegroundColor Green
+            } else {
+                Write-Host " FAILED (may have versioned objects)" -ForegroundColor Yellow
+                # Try with force for versioned buckets
+                aws s3 rb "s3://$bucket" --force --region $Rgn 2>&1 | Out-Null
+            }
+        } else {
+            Write-Host " not found (good)" -ForegroundColor Green
+        }
+    }
+
+    # Check for orphaned CloudWatch log groups
+    $logGroupName = "/aws/apigateway/$Env-complens-api"
+    Write-Host "    Checking log group: $logGroupName..." -NoNewline
+    $lgExists = aws logs describe-log-groups --log-group-name-prefix $logGroupName --region $Rgn --query 'logGroups[0].logGroupName' --output text 2>&1
+    if ($LASTEXITCODE -eq 0 -and $lgExists -eq $logGroupName) {
+        Write-Host " exists (orphaned)" -ForegroundColor Yellow
+        Write-Host "    Deleting log group..." -NoNewline
+        aws logs delete-log-group --log-group-name $logGroupName --region $Rgn 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host " deleted" -ForegroundColor Green
+        } else {
+            Write-Host " FAILED" -ForegroundColor Red
+        }
+    } else {
+        Write-Host " not found (good)" -ForegroundColor Green
+    }
+
+    Write-Success "Cleanup check complete"
+}
+
+# ============================================================================
 # Pre-flight checks
 # ============================================================================
 Write-Host ""
@@ -107,6 +196,9 @@ if (-not $SkipConfirm) {
 function Deploy-Infrastructure {
     Write-Step "Deploying CloudFormation infrastructure..."
 
+    # First, clean up any orphaned resources from previous failed deployments
+    Cleanup-OrphanedResources -AccountId $script:AccountId -Env $Environment -Rgn $Region
+
     $cfnDir = Join-Path $PSScriptRoot "..\infrastructure\cloudformation" | Resolve-Path
     $templateFile = Join-Path $cfnDir "main.yaml"
 
@@ -126,6 +218,11 @@ function Deploy-Infrastructure {
         Write-Fail "Parameters not found: $paramFile"
         exit 1
     }
+
+    Write-Host ""
+    Write-Host "    Template: $templateFile"
+    Write-Host "    Parameters: $paramFile"
+    Write-Host ""
 
     # Get DB password (required for infra deployment)
     $dbPwd = $DBPassword
@@ -200,22 +297,41 @@ function Deploy-Infrastructure {
     }
     Write-Host " OK" -ForegroundColor Green
 
-    # Check for placeholder Lambda code
+    # Check for placeholder Lambda code - REQUIRED for stack creation
     Write-Host "    Checking for Lambda code..." -NoNewline
     $codeCheck = aws s3api head-object --bucket $lambdaBucket --key "api/latest.zip" --region $Region 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host " not found" -ForegroundColor Yellow
-        $placeholderPath = Join-Path $cfnDir "..\lambda-placeholder.zip"
-        if (Test-Path $placeholderPath) {
-            Write-Host "    Uploading placeholder Lambda..." -NoNewline
-            aws s3 cp $placeholderPath "s3://$lambdaBucket/api/latest.zip" --region $Region 2>&1 | Out-Null
+
+        # Look for placeholder in multiple locations
+        $placeholderPaths = @(
+            (Join-Path $cfnDir "..\lambda-placeholder.zip"),
+            (Join-Path $PSScriptRoot "..\infrastructure\lambda-placeholder.zip")
+        )
+
+        $placeholderPath = $null
+        foreach ($path in $placeholderPaths) {
+            if (Test-Path $path) {
+                $placeholderPath = $path
+                break
+            }
+        }
+
+        if ($placeholderPath) {
+            Write-Host "    Uploading placeholder Lambda from $placeholderPath..." -NoNewline
+            $uploadResult = aws s3 cp $placeholderPath "s3://$lambdaBucket/api/latest.zip" --region $Region 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Host " OK" -ForegroundColor Green
             } else {
-                Write-Host " FAILED (non-critical)" -ForegroundColor Yellow
+                Write-Host " FAILED" -ForegroundColor Red
+                Write-Fail "Lambda code upload failed: $uploadResult"
+                Write-Fail "Stack creation will fail without Lambda code. Fix this first."
+                exit 1
             }
         } else {
-            Write-Warn "No placeholder found at $placeholderPath"
+            Write-Fail "No Lambda placeholder found!"
+            Write-Fail "Create placeholder: cd backend/lambda/api && zip ../../../infrastructure/lambda-placeholder.zip index.js"
+            exit 1
         }
     } else {
         Write-Host " exists" -ForegroundColor Green
@@ -271,9 +387,20 @@ function Deploy-Infrastructure {
         } else {
             Write-Host " initiated" -ForegroundColor Green
             Write-Host "    Waiting for stack update (5-15 min)..." -ForegroundColor Yellow
-            aws cloudformation wait stack-update-complete --stack-name $StackName --region $Region
+            aws cloudformation wait stack-update-complete --stack-name $StackName --region $Region 2>&1
             if ($LASTEXITCODE -ne 0) {
-                Write-Fail "Stack update failed. Check CloudFormation console."
+                Write-Host ""
+                Write-Fail "Stack update failed!"
+
+                # Get the failure reason
+                Write-Host ""
+                Write-Host "    Stack Events (failures):" -ForegroundColor Red
+                aws cloudformation describe-stack-events `
+                    --stack-name $StackName `
+                    --region $Region `
+                    --query 'StackEvents[?ResourceStatus==`UPDATE_FAILED`].[LogicalResourceId,ResourceStatusReason]' `
+                    --output table 2>&1
+
                 exit 1
             }
             Write-Success "Stack updated successfully"
@@ -298,10 +425,47 @@ function Deploy-Infrastructure {
         }
         Write-Host " initiated" -ForegroundColor Green
 
-        Write-Host "    Waiting for stack creation (15-30 min)..." -ForegroundColor Yellow
-        aws cloudformation wait stack-create-complete --stack-name $StackName --region $Region
+        Write-Host ""
+        Write-Host "    Stack creation started. This typically takes 15-30 minutes." -ForegroundColor Yellow
+        Write-Host "    The longest part is RDS database creation (~10 min) and ACM certificate validation (~5 min)." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "    Monitor progress: https://console.aws.amazon.com/cloudformation/home?region=$Region#/stacks" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "    Waiting..." -ForegroundColor Yellow
+
+        aws cloudformation wait stack-create-complete --stack-name $StackName --region $Region 2>&1
         if ($LASTEXITCODE -ne 0) {
-            Write-Fail "Stack creation failed. Check CloudFormation console."
+            Write-Host ""
+            Write-Fail "Stack creation failed!"
+
+            # Get the failure reason
+            Write-Host ""
+            Write-Host "    Stack Events (failures):" -ForegroundColor Red
+            aws cloudformation describe-stack-events `
+                --stack-name $StackName `
+                --region $Region `
+                --query 'StackEvents[?ResourceStatus==`CREATE_FAILED`].[LogicalResourceId,ResourceStatusReason]' `
+                --output table 2>&1
+
+            Write-Host ""
+            Write-Host "    To see full events, run:" -ForegroundColor Yellow
+            Write-Host "    aws cloudformation describe-stack-events --stack-name $StackName --region $Region" -ForegroundColor Yellow
+            Write-Host ""
+
+            # Check if it was certificate validation
+            $certFailed = aws cloudformation describe-stack-events `
+                --stack-name $StackName `
+                --region $Region `
+                --query 'StackEvents[?LogicalResourceId==`Certificate` && ResourceStatus==`CREATE_FAILED`].ResourceStatusReason' `
+                --output text 2>&1
+
+            if ($certFailed) {
+                Write-Warn "Certificate validation may have failed. Ensure:"
+                Write-Host "    1. Your Route53 hosted zone ($($env:COMPLENS_HOSTED_ZONE_ID)) is correct" -ForegroundColor Yellow
+                Write-Host "    2. The domain name in parameters matches the hosted zone" -ForegroundColor Yellow
+                Write-Host "    3. DNS propagation can take up to 5 minutes" -ForegroundColor Yellow
+            }
+
             exit 1
         }
         Write-Success "Stack created successfully"
@@ -525,12 +689,55 @@ try {
     Write-Host "  Time: $([math]::Round($elapsed.TotalMinutes, 1)) minutes" -ForegroundColor Green
     Write-Host "========================================" -ForegroundColor Green
 
+    # Show deployment summary
+    Write-Host ""
+    Write-Host "Quick Reference:" -ForegroundColor Cyan
+    Write-Host "================" -ForegroundColor Cyan
+
+    # Get key URLs from stack if infra was deployed
+    $apiUrl = aws cloudformation describe-stacks `
+        --stack-name $StackName `
+        --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayURL`].OutputValue' `
+        --output text --region $Region 2>&1
+
+    $cfUrl = aws cloudformation describe-stacks `
+        --stack-name $StackName `
+        --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' `
+        --output text --region $Region 2>&1
+
+    $domainName = aws cloudformation describe-stacks `
+        --stack-name $StackName `
+        --query 'Stacks[0].Outputs[?OutputKey==`CustomDomainName`].OutputValue' `
+        --output text --region $Region 2>&1
+
+    if ($LASTEXITCODE -eq 0 -and $apiUrl) {
+        Write-Host ""
+        Write-Host "  API URL:      $apiUrl" -ForegroundColor Yellow
+        Write-Host "  CloudFront:   $cfUrl" -ForegroundColor Yellow
+        if ($domainName -and $domainName -ne "None") {
+            Write-Host "  Domain:       https://$domainName" -ForegroundColor Yellow
+        }
+        Write-Host ""
+        Write-Host "  Test Commands:" -ForegroundColor Cyan
+        Write-Host "    curl $apiUrl/health" -ForegroundColor White
+        Write-Host ""
+    }
+
 } catch {
     Write-Host ""
     Write-Fail "Deployment failed: $_"
     Write-Host $_.ScriptStackTrace -ForegroundColor Red
     Write-Host ""
-    Write-Host "Check CloudFormation console:" -ForegroundColor Yellow
-    Write-Host "https://console.aws.amazon.com/cloudformation/home?region=$Region#/stacks" -ForegroundColor Yellow
+    Write-Host "Troubleshooting:" -ForegroundColor Yellow
+    Write-Host "  1. Check CloudFormation console:" -ForegroundColor White
+    Write-Host "     https://console.aws.amazon.com/cloudformation/home?region=$Region#/stacks" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  2. View stack events:" -ForegroundColor White
+    Write-Host "     aws cloudformation describe-stack-events --stack-name $StackName --region $Region" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  3. Re-run with cleanup if stack is in failed state:" -ForegroundColor White
+    Write-Host "     aws cloudformation delete-stack --stack-name $StackName --region $Region" -ForegroundColor Cyan
+    Write-Host "     Then run this script again" -ForegroundColor White
+    Write-Host ""
     exit 1
 }
