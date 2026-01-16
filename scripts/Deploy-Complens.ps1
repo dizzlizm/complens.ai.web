@@ -262,6 +262,11 @@ function Deploy-Infrastructure {
         # Check environment variable
         $dbPwd = $env:COMPLENS_DB_PASSWORD
     }
+    if (-not $dbPwd -and $Environment -eq 'dev') {
+        # Use default dev password for convenience (not for production!)
+        $dbPwd = "ComplensDevPass2024!"
+        Write-Warn "Using default dev database password"
+    }
     if (-not $dbPwd) {
         Write-Host ""
         Write-Warn "Database password required for infrastructure deployment"
@@ -448,7 +453,7 @@ function Deploy-Infrastructure {
             --parameters $params `
             --capabilities CAPABILITY_NAMED_IAM `
             --region $Region `
-            --tags Key=Environment,Value=$Environment Key=Project,Value=Complens 2>&1
+            --tags "Key=Environment,Value=$Environment" "Key=Project,Value=Complens" 2>&1
 
         if ($LASTEXITCODE -ne 0) {
             Write-Host " FAILED" -ForegroundColor Red
