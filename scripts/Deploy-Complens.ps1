@@ -312,8 +312,8 @@ function Deploy-Infrastructure {
         Write-Host " OK" -ForegroundColor Green
     }
 
-    # Upload template to S3
-    Write-Host "    Uploading CloudFormation template..." -NoNewline
+    # Upload template to S3 (for reference/backup)
+    Write-Host "    Uploading CloudFormation template to S3..." -NoNewline
     $uploadResult = aws s3 cp $templateFile "s3://$lambdaBucket/cfn/main.yaml" --region $Region 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host " FAILED" -ForegroundColor Red
@@ -322,11 +322,15 @@ function Deploy-Infrastructure {
     }
     Write-Host " OK" -ForegroundColor Green
 
-    $templateUrl = "https://$lambdaBucket.s3.$Region.amazonaws.com/cfn/main.yaml"
+    # Read template content for direct use (avoids S3 access issues)
+    Write-Host "    Reading template..." -NoNewline
+    $templateBody = Get-Content $templateFile -Raw -Encoding UTF8
+    Write-Host " OK ($([math]::Round($templateBody.Length / 1024)) KB)" -ForegroundColor Green
 
-    # Validate template
+    # Validate template using S3 URL (validation can use IAM auth)
+    $templateUrl = "https://$lambdaBucket.s3.$Region.amazonaws.com/cfn/main.yaml"
     Write-Host "    Validating template..." -NoNewline
-    $validateResult = aws cloudformation validate-template --template-url $templateUrl --region $Region 2>&1
+    $validateResult = aws cloudformation validate-template --template-body "$templateBody" --region $Region 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host " FAILED" -ForegroundColor Red
         Write-Fail "Validation failed: $validateResult"
@@ -407,7 +411,7 @@ function Deploy-Infrastructure {
         Write-Host "    Updating stack..." -NoNewline
         $updateResult = aws cloudformation update-stack `
             --stack-name $StackName `
-            --template-url $templateUrl `
+            --template-body "$templateBody" `
             --parameters $params `
             --capabilities CAPABILITY_NAMED_IAM `
             --region $Region 2>&1
@@ -449,7 +453,7 @@ function Deploy-Infrastructure {
         Write-Host "    Creating stack..." -NoNewline
         $createResult = aws cloudformation create-stack `
             --stack-name $StackName `
-            --template-url $templateUrl `
+            --template-body "$templateBody" `
             --parameters $params `
             --capabilities CAPABILITY_NAMED_IAM `
             --region $Region `
