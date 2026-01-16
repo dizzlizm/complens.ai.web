@@ -106,25 +106,7 @@ function Deploy-Infrastructure {
     $templateFile = Join-Path $cfnDir "main.yaml"
     $paramFile = Join-Path $cfnDir "parameters\$Environment.json"
 
-    # Convert to forward slashes for AWS CLI on Windows
-    $templateFileUri = "file://" + ($templateFile -replace '\\', '/')
-    $paramFileUri = "file://" + ($paramFile -replace '\\', '/')
-
-    # Validate template
-    Write-Host "    Validating template..."
-    aws cloudformation validate-template `
-        --template-body $templateFileUri `
-        --region $Region | Out-Null
-    Write-Success "Template valid"
-
-    # Check if stack exists
-    $stackExists = $false
-    try {
-        aws cloudformation describe-stacks --stack-name $StackName --region $Region 2>&1 | Out-Null
-        $stackExists = $true
-    } catch {}
-
-    # Ensure Lambda code bucket exists
+    # Ensure Lambda code bucket exists first (we'll use it for template too)
     $lambdaBucket = "$accountId-$Environment-complens-lambda-code"
     Write-Host "    Checking Lambda bucket: $lambdaBucket"
 
@@ -138,6 +120,28 @@ function Deploy-Infrastructure {
             --region $Region
     }
 
+    # Upload template to S3 (avoids Windows file:// encoding issues)
+    Write-Host "    Uploading template to S3..."
+    aws s3 cp $templateFile "s3://$lambdaBucket/cfn/main.yaml" --region $Region | Out-Null
+    $templateUrl = "https://$lambdaBucket.s3.$Region.amazonaws.com/cfn/main.yaml"
+    Write-Success "Template uploaded"
+
+    # Validate template
+    Write-Host "    Validating template..."
+    $validateResult = aws cloudformation validate-template --template-url $templateUrl --region $Region 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "Template validation failed: $validateResult"
+        exit 1
+    }
+    Write-Success "Template valid"
+
+    # Check if stack exists
+    $stackExists = $false
+    try {
+        aws cloudformation describe-stacks --stack-name $StackName --region $Region 2>&1 | Out-Null
+        $stackExists = $true
+    } catch {}
+
     # Check for placeholder Lambda
     $hasCode = (aws s3 ls "s3://$lambdaBucket/api/latest.zip" --region $Region 2>&1) -notmatch "NoSuchKey"
     if (-not $hasCode) {
@@ -148,34 +152,36 @@ function Deploy-Infrastructure {
         }
     }
 
-    # Read parameters as JSON (inline, not file://)
+    # Read parameters as JSON
     $params = Get-Content $paramFile -Raw
 
     if ($stackExists) {
         Write-Host "    Updating existing stack..."
-        try {
-            aws cloudformation update-stack `
-                --stack-name $StackName `
-                --template-body $templateFileUri `
-                --parameters $params `
-                --capabilities CAPABILITY_NAMED_IAM `
-                --region $Region
+        $updateResult = aws cloudformation update-stack `
+            --stack-name $StackName `
+            --template-url $templateUrl `
+            --parameters $params `
+            --capabilities CAPABILITY_NAMED_IAM `
+            --region $Region 2>&1
 
-            Write-Host "    Waiting for stack update (this may take 5-15 minutes)..."
-            aws cloudformation wait stack-update-complete --stack-name $StackName --region $Region
-            Write-Success "Stack updated"
-        } catch {
-            if ($_ -match "No updates are to be performed") {
+        if ($LASTEXITCODE -ne 0) {
+            if ($updateResult -match "No updates are to be performed") {
                 Write-Success "Stack already up to date"
+                return
             } else {
-                throw $_
+                Write-Fail "Update failed: $updateResult"
+                exit 1
             }
         }
+
+        Write-Host "    Waiting for stack update (this may take 5-15 minutes)..."
+        aws cloudformation wait stack-update-complete --stack-name $StackName --region $Region
+        Write-Success "Stack updated"
     } else {
         Write-Host "    Creating new stack..."
         aws cloudformation create-stack `
             --stack-name $StackName `
-            --template-body $templateFileUri `
+            --template-url $templateUrl `
             --parameters $params `
             --capabilities CAPABILITY_NAMED_IAM `
             --region $Region `
