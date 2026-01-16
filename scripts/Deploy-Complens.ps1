@@ -323,15 +323,15 @@ function Deploy-Infrastructure {
     }
     Write-Host " OK" -ForegroundColor Green
 
-    # Read template content for direct use (avoids S3 access issues)
+    # Read template for size check
     Write-Host "    Reading template..." -NoNewline
-    $templateBody = Get-Content $templateFile -Raw -Encoding UTF8
-    Write-Host " OK ($([math]::Round($templateBody.Length / 1024)) KB)" -ForegroundColor Green
+    $templateContent = Get-Content $templateFile -Raw -Encoding UTF8
+    Write-Host " OK ($([math]::Round($templateContent.Length / 1024)) KB)" -ForegroundColor Green
 
-    # Validate template using S3 URL (validation can use IAM auth)
-    $templateUrl = "https://$lambdaBucket.s3.$Region.amazonaws.com/cfn/main.yaml"
+    # Validate template using file:// protocol (avoids command line length issues)
     Write-Host "    Validating template..." -NoNewline
-    $validateResult = aws cloudformation validate-template --template-body "$templateBody" --region $Region 2>&1
+    $templateFileUri = "file://$($templateFile -replace '\\', '/')"
+    $validateResult = aws cloudformation validate-template --template-body $templateFileUri --region $Region 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host " FAILED" -ForegroundColor Red
         Write-Fail "Validation failed: $validateResult"
@@ -408,11 +408,11 @@ function Deploy-Infrastructure {
     if ($stackExists) {
         Write-Host " exists, updating" -ForegroundColor Green
 
-        # Update stack
+        # Update stack using file:// protocol
         Write-Host "    Updating stack..." -NoNewline
         $updateResult = aws cloudformation update-stack `
             --stack-name $StackName `
-            --template-body "$templateBody" `
+            --template-body $templateFileUri `
             --parameters $params `
             --capabilities CAPABILITY_NAMED_IAM `
             --region $Region 2>&1
@@ -454,7 +454,7 @@ function Deploy-Infrastructure {
         Write-Host "    Creating stack..." -NoNewline
         $createResult = aws cloudformation create-stack `
             --stack-name $StackName `
-            --template-body "$templateBody" `
+            --template-body $templateFileUri `
             --parameters $params `
             --capabilities CAPABILITY_NAMED_IAM `
             --region $Region `
