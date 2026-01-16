@@ -88,12 +88,16 @@ class GoogleWorkspaceSecurityService {
         return !has2FA && !user.suspended;
       });
 
-      // Store findings in database
+      // Store findings in database (upsert - update if exists, insert if new)
       for (const user of usersWithout2FA) {
         await this.db.query(
           `INSERT INTO findings (org_id, type, severity, resource, description, discovered_at, metadata)
            VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-           ON CONFLICT DO NOTHING`,
+           ON CONFLICT (org_id, type, resource) DO UPDATE SET
+             severity = $3,
+             description = $5,
+             discovered_at = NOW(),
+             metadata = $6`,
           [
             orgId,
             'missing_2fa',
@@ -104,6 +108,7 @@ class GoogleWorkspaceSecurityService {
               isAdmin: user.isAdmin,
               lastLoginTime: user.lastLoginTime,
               creationTime: user.creationTime,
+              source: 'api_scan',
             }),
           ]
         );
@@ -177,12 +182,15 @@ class GoogleWorkspaceSecurityService {
 
       const externalFiles = response.data.files || [];
 
-      // Store findings
+      // Store findings (upsert - update if exists, insert if new)
       for (const file of externalFiles) {
         await this.db.query(
           `INSERT INTO findings (org_id, type, severity, resource, description, discovered_at, metadata)
            VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-           ON CONFLICT DO NOTHING`,
+           ON CONFLICT (org_id, type, resource) DO UPDATE SET
+             description = $5,
+             discovered_at = NOW(),
+             metadata = $6`,
           [
             orgId,
             'external_sharing',
@@ -194,6 +202,7 @@ class GoogleWorkspaceSecurityService {
               mimeType: file.mimeType,
               link: file.webViewLink,
               owners: file.owners,
+              source: 'api_scan',
             }),
           ]
         );
@@ -300,12 +309,16 @@ class GoogleWorkspaceSecurityService {
         });
       }
 
-      // Store critical findings in database
+      // Store critical findings in database (upsert - update if exists, insert if new)
       for (const finding of findings.filter(f => f.severity === 'critical' || f.severity === 'high')) {
         await this.db.query(
           `INSERT INTO findings (org_id, type, severity, resource, description, discovered_at, metadata)
            VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-           ON CONFLICT DO NOTHING`,
+           ON CONFLICT (org_id, type, resource) DO UPDATE SET
+             severity = $3,
+             description = $5,
+             discovered_at = NOW(),
+             metadata = $6`,
           [
             orgId,
             finding.type,
@@ -316,6 +329,7 @@ class GoogleWorkspaceSecurityService {
               recommendation: finding.recommendation,
               affectedCount: finding.affectedCount,
               affectedUsers: finding.affectedUsers,
+              source: 'api_scan',
             }),
           ]
         );

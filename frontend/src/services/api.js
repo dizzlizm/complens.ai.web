@@ -233,4 +233,78 @@ export async function deleteUser(userId) {
   }
 }
 
+// ============================================
+// Security Dashboard API Functions
+// ============================================
+
+/**
+ * Get security summary with findings count by type and severity
+ * @returns {Promise<Object>} - Security summary
+ */
+export async function getSecuritySummary() {
+  try {
+    const response = await apiClient.get('/security/summary');
+    return response.data;
+  } catch (error) {
+    console.error('Error getting security summary:', error);
+    throw error;
+  }
+}
+
+/**
+ * Check security policies and get security score
+ * @returns {Promise<Object>} - Security policies analysis
+ */
+export async function getSecurityPolicies() {
+  try {
+    const response = await apiClient.get('/security/policies');
+    return response.data;
+  } catch (error) {
+    console.error('Error getting security policies:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get users without 2FA enabled
+ * @returns {Promise<Object>} - Users without 2FA
+ */
+export async function getUsersWithout2FA() {
+  try {
+    const response = await apiClient.get('/security/users-without-2fa');
+    return response.data;
+  } catch (error) {
+    console.error('Error getting users without 2FA:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get admin accounts
+ * @returns {Promise<Object>} - Admin accounts
+ */
+export async function getAdminAccounts() {
+  try {
+    const response = await apiClient.get('/security/admin-accounts');
+    return response.data;
+  } catch (error) {
+    console.error('Error getting admin accounts:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get externally shared files
+ * @returns {Promise<Object>} - External sharing analysis
+ */
+export async function getExternalSharing() {
+  try {
+    const response = await apiClient.get('/security/external-sharing');
+    return response.data;
+  } catch (error) {
+    console.error('Error getting external sharing:', error);
+    throw error;
+  }
+}
+
 export default apiClient;

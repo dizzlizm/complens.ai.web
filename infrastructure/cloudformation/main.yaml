@@ -1534,9 +1534,8 @@ Resources:
           SECRETS_ARN: !Ref ApplicationSecrets
           REGION: !Ref AWS::Region
           ALERTS_SNS_TOPIC_ARN: !Ref SecurityAlertsTopic
-          GOOGLE_CLIENT_ID: '{{resolve:secretsmanager:${ApplicationSecrets}:SecretString:googleClientId}}'
-          GOOGLE_CLIENT_SECRET: '{{resolve:secretsmanager:${ApplicationSecrets}:SecretString:googleClientSecret}}'
-          GOOGLE_REDIRECT_URI: '{{resolve:secretsmanager:${ApplicationSecrets}:SecretString:googleRedirectUri}}'
+          # Google OAuth credentials are fetched from Secrets Manager at runtime
+          # Add googleClientId, googleClientSecret, googleRedirectUri to ApplicationSecrets
       Timeout: 300  # 5 minutes for scanning multiple orgs
       MemorySize: 512
       ReservedConcurrentExecutions: 1  # Only one scan at a time

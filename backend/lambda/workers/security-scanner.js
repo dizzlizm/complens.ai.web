@@ -24,21 +24,52 @@ const { google } = require('googleapis');
 const secretsClient = new SecretsManagerClient({ region: process.env.REGION || 'us-east-1' });
 const snsClient = new SNSClient({ region: process.env.REGION || 'us-east-1' });
 
-let dbCredentials = null;
+let cachedSecrets = null;
 
 /**
- * Get database credentials from Secrets Manager
+ * Get all secrets from Secrets Manager (DB + Google OAuth)
  */
-async function getDbCredentials() {
-  if (dbCredentials) return dbCredentials;
+async function getSecrets() {
+  if (cachedSecrets) return cachedSecrets;
 
   const command = new GetSecretValueCommand({
     SecretId: process.env.SECRETS_ARN,
   });
 
   const response = await secretsClient.send(command);
-  dbCredentials = JSON.parse(response.SecretString);
-  return dbCredentials;
+  cachedSecrets = JSON.parse(response.SecretString);
+  return cachedSecrets;
+}
+
+/**
+ * Get database credentials from Secrets Manager
+ */
+async function getDbCredentials() {
+  const secrets = await getSecrets();
+  return {
+    dbHost: secrets.dbHost,
+    dbPort: secrets.dbPort,
+    dbName: secrets.dbName,
+    dbUsername: secrets.dbUsername,
+    dbPassword: secrets.dbPassword,
+  };
+}
+
+/**
+ * Get Google OAuth credentials from Secrets Manager
+ */
+async function getGoogleCredentials() {
+  const secrets = await getSecrets();
+
+  if (!secrets.googleClientId || !secrets.googleClientSecret) {
+    throw new Error('Google OAuth credentials not configured in Secrets Manager. Add googleClientId, googleClientSecret, and googleRedirectUri to the application secret.');
+  }
+
+  return {
+    clientId: secrets.googleClientId,
+    clientSecret: secrets.googleClientSecret,
+    redirectUri: secrets.googleRedirectUri,
+  };
 }
 
 /**
@@ -83,10 +114,12 @@ async function getConnectedOrganizations(dbClient) {
  * Create authenticated Google client
  */
 async function getGoogleClient(connection, dbClient) {
+  const googleCreds = await getGoogleCredentials();
+
   const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
+    googleCreds.clientId,
+    googleCreds.clientSecret,
+    googleCreds.redirectUri
   );
 
   oauth2Client.setCredentials({
