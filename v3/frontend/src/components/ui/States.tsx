@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { Loader2, AlertCircle, CheckCircle, Inbox, Search, Shield, Wifi, WifiOff } from 'lucide-react';
+import { Loader2, AlertCircle, CheckCircle, Inbox, Search, Shield, WifiOff } from 'lucide-react';
 import { Button } from './Button';
 
 // Loading spinner

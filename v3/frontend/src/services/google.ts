@@ -84,7 +84,7 @@ class GoogleService {
       picture: user.imageUrl,
       accessToken: user.authentication.accessToken,
       refreshToken: user.authentication.refreshToken,
-      scopes: user.authentication.scopes || [],
+      scopes: (user.authentication as { scopes?: string[] }).scopes || [],
       status: 'connected',
     };
 
