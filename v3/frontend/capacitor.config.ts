@@ -28,8 +28,8 @@ const config: CapacitorConfig = {
         'https://www.googleapis.com/auth/drive.appdata',
         'https://www.googleapis.com/auth/drive.metadata.readonly'
       ],
-      // Web client ID from Google Cloud Console
-      serverClientId: 'YOUR_WEB_CLIENT_ID.apps.googleusercontent.com',
+      // Web client ID from Google Cloud Console (its-complens project)
+      serverClientId: '459546029929-6f3gimiuo3pg4esqr710bamvlig8l6op.apps.googleusercontent.com',
       // Set to true to get refresh token
       forceCodeForRefreshToken: true,
     },
