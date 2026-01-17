@@ -1,0 +1,33 @@
+# SAM configuration for Complens.ai v3
+version = 0.1
+
+[default.global.parameters]
+stack_name = "complens-dev"
+
+[default.deploy.parameters]
+stack_name = "complens-dev"
+resolve_s3 = true
+s3_prefix = "complens-dev"
+region = "us-east-1"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Environment=dev"
+disable_rollback = true
+
+[dev.deploy.parameters]
+stack_name = "complens-dev"
+resolve_s3 = true
+s3_prefix = "complens-dev"
+region = "us-east-1"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Environment=dev"
+
+[prod.deploy.parameters]
+stack_name = "complens-prod"
+resolve_s3 = true
+s3_prefix = "complens-prod"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Environment=prod"
