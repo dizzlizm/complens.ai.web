@@ -52,7 +52,7 @@ const config: CapacitorConfig = {
   android: {
     allowMixedContent: false,
     captureInput: true,
-    webContentsDebuggingEnabled: false, // Set to true for dev
+    webContentsDebuggingEnabled: true, // Enable for development
   },
 };
 
