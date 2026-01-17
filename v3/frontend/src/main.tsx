@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { SplashScreen } from '@capacitor/splash-screen';
 import { Capacitor } from '@capacitor/core';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import App from './App';
 import './index.css';
 
@@ -18,10 +19,12 @@ async function initNative() {
   }
 }
 
-// Render app
+// Render app with error boundary
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>
 );
 
