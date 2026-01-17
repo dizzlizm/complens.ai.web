@@ -1,49 +1,22 @@
-import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Shield, AlertTriangle, AlertCircle, CheckCircle, ExternalLink, Filter } from 'lucide-react';
-import { api } from '../services/api';
-
-interface App {
-  appId: string;
-  name: string;
-  platform: string;
-  accountId: string;
-  riskLevel: 'high' | 'medium' | 'low';
-  permissions: string[];
-  lastAccessed?: string;
-  discoveredAt: string;
-}
+import { useAppStore } from '../stores/appStore';
+import { googleService } from '../services/google';
 
 export default function Apps() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [apps, setApps] = useState<App[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<string>(searchParams.get('risk') || 'all');
-
-  useEffect(() => {
-    loadApps();
-  }, []);
-
-  async function loadApps() {
-    try {
-      const res = await api.getApps();
-      setApps(res.apps);
-    } catch (err) {
-      console.error('Failed to load apps:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const { apps, stats } = useAppStore();
+  const filter = searchParams.get('risk') || 'all';
 
   const filteredApps = filter === 'all'
     ? apps
     : apps.filter(app => app.riskLevel === filter);
 
   const counts = {
-    all: apps.length,
-    high: apps.filter(a => a.riskLevel === 'high').length,
-    medium: apps.filter(a => a.riskLevel === 'medium').length,
-    low: apps.filter(a => a.riskLevel === 'low').length,
+    all: stats.appCount,
+    high: stats.highRisk,
+    medium: stats.mediumRisk,
+    low: stats.lowRisk,
   };
 
   function getRiskBadge(level: string) {
@@ -69,12 +42,8 @@ export default function Apps() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-4 border-brand-200 border-t-brand-600 rounded-full animate-spin" />
-      </div>
-    );
+  async function handleManageApp() {
+    await googleService.openPermissionsPage();
   }
 
   return (
@@ -95,7 +64,6 @@ export default function Apps() {
           <button
             key={key}
             onClick={() => {
-              setFilter(key);
               setSearchParams(key === 'all' ? {} : { risk: key });
             }}
             className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
@@ -138,17 +106,21 @@ export default function Apps() {
       ) : (
         <div className="space-y-3">
           {filteredApps.map(app => (
-            <div key={app.appId} className="bg-white rounded-xl p-4 shadow-sm">
+            <div key={app.id} className="bg-white rounded-xl p-4 shadow-sm">
               <div className="flex items-start justify-between">
                 <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                    <span className="text-gray-600 font-semibold">
-                      {app.name.charAt(0).toUpperCase()}
-                    </span>
+                  <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden">
+                    {app.iconUrl ? (
+                      <img src={app.iconUrl} alt="" className="w-10 h-10 object-cover" />
+                    ) : (
+                      <span className="text-gray-600 font-semibold">
+                        {app.name.charAt(0).toUpperCase()}
+                      </span>
+                    )}
                   </div>
                   <div>
                     <div className="font-semibold text-gray-900">{app.name}</div>
-                    <div className="text-sm text-gray-500 capitalize">{app.platform}</div>
+                    <div className="text-sm text-gray-500 capitalize">Google Drive</div>
                   </div>
                 </div>
                 {getRiskBadge(app.riskLevel)}
@@ -174,9 +146,12 @@ export default function Apps() {
 
               <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
                 <div className="text-xs text-gray-400">
-                  Discovered {new Date(app.discoveredAt).toLocaleDateString()}
+                  {app.discoveredAt && `Discovered ${new Date(app.discoveredAt).toLocaleDateString()}`}
                 </div>
-                <button className="flex items-center gap-1 text-brand-600 text-sm font-medium hover:underline">
+                <button
+                  onClick={handleManageApp}
+                  className="flex items-center gap-1 text-brand-600 text-sm font-medium hover:underline"
+                >
                   Manage <ExternalLink className="w-3 h-3" />
                 </button>
               </div>

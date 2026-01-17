@@ -42,32 +42,13 @@ const MEDIUM_RISK_SCOPES = [
 ];
 
 class GoogleService {
-  private initialized = false;
-
-  async init(): Promise<void> {
-    if (this.initialized) return;
-
-    // Initialize Google Auth plugin (native only)
-    if (Capacitor.isNativePlatform()) {
-      await GoogleAuth.initialize({
-        clientId: import.meta.env.VITE_GOOGLE_WEB_CLIENT_ID,
-        scopes: [
-          'profile',
-          'email',
-          'https://www.googleapis.com/auth/drive.metadata.readonly',
-        ],
-        grantOfflineAccess: true,
-      });
-    }
-
-    this.initialized = true;
-  }
-
   /**
    * Sign in with Google (native OAuth)
+   *
+   * On native platforms, the GoogleAuth plugin reads config from capacitor.config.ts
+   * which includes serverClientId and scopes. No explicit initialization needed.
    */
   async signIn(): Promise<Account> {
-    await this.init();
 
     if (!Capacitor.isNativePlatform()) {
       // For web, redirect to OAuth flow

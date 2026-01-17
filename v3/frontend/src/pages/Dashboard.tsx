@@ -1,55 +1,11 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Shield, AlertTriangle, CheckCircle, Plus, ArrowRight } from 'lucide-react';
-import { api } from '../services/api';
-
-interface Account {
-  accountId: string;
-  platform: string;
-  email?: string;
-  status: string;
-  lastScannedAt?: string;
-}
-
-interface App {
-  appId: string;
-  name: string;
-  riskLevel: 'high' | 'medium' | 'low';
-}
+import { useAppStore } from '../stores/appStore';
 
 export default function Dashboard() {
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [apps, setApps] = useState<App[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { accounts, stats } = useAppStore();
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [accountsRes, appsRes] = await Promise.all([
-          api.getAccounts(),
-          api.getApps()
-        ]);
-        setAccounts(accountsRes.accounts);
-        setApps(appsRes.apps);
-      } catch (err) {
-        console.error('Failed to load dashboard:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
-
-  const highRisk = apps.filter(a => a.riskLevel === 'high').length;
-  const mediumRisk = apps.filter(a => a.riskLevel === 'medium').length;
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-4 border-brand-200 border-t-brand-600 rounded-full animate-spin" />
-      </div>
-    );
-  }
+  const { highRisk, mediumRisk } = stats;
 
   return (
     <div className="p-4 space-y-6">
@@ -62,11 +18,11 @@ export default function Dashboard() {
       {/* Quick stats */}
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-white rounded-xl p-4 text-center shadow-sm">
-          <div className="text-2xl font-bold text-gray-900">{accounts.length}</div>
+          <div className="text-2xl font-bold text-gray-900">{stats.accountCount}</div>
           <div className="text-xs text-gray-500 mt-1">Accounts</div>
         </div>
         <div className="bg-white rounded-xl p-4 text-center shadow-sm">
-          <div className="text-2xl font-bold text-gray-900">{apps.length}</div>
+          <div className="text-2xl font-bold text-gray-900">{stats.appCount}</div>
           <div className="text-xs text-gray-500 mt-1">Apps</div>
         </div>
         <div className={`rounded-xl p-4 text-center shadow-sm ${
@@ -126,7 +82,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {highRisk === 0 && mediumRisk === 0 && apps.length > 0 && (
+          {highRisk === 0 && mediumRisk === 0 && stats.appCount > 0 && (
             <div className="bg-green-50 border border-green-200 rounded-xl p-4">
               <div className="flex items-start gap-3">
                 <CheckCircle className="w-5 h-5 text-green-600 mt-0.5" />
@@ -150,7 +106,7 @@ export default function Dashboard() {
             </div>
             <div className="space-y-2">
               {accounts.slice(0, 3).map(account => (
-                <div key={account.accountId} className="bg-white rounded-lg p-3 flex items-center gap-3 shadow-sm">
+                <div key={account.id} className="bg-white rounded-lg p-3 flex items-center gap-3 shadow-sm">
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                     account.platform === 'google' ? 'bg-red-100' :
                     account.platform === 'microsoft' ? 'bg-blue-100' :
