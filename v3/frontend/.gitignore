@@ -9,8 +9,13 @@ dist/
 .env.local
 .env.*.local
 
-# Capacitor
-android/
+# Capacitor - track android folder but ignore build artifacts
+# android/ - we track this for developers
+android/app/build/
+android/.gradle/
+android/capacitor-cordova-android-plugins/build/
+
+# iOS (not used yet)
 ios/
 
 # IDE
