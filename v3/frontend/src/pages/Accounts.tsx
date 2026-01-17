@@ -1,59 +1,39 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus, Trash2, RefreshCw, X } from 'lucide-react';
-import { api } from '../services/api';
-
-interface Account {
-  accountId: string;
-  platform: string;
-  email?: string;
-  status: string;
-  lastScannedAt?: string;
-  createdAt: string;
-}
+import { useAppStore } from '../stores/appStore';
+import { googleService } from '../services/google';
 
 const PLATFORMS = [
   { id: 'google', name: 'Google', color: 'bg-red-500', description: 'Gmail, Drive, Calendar, etc.' },
-  { id: 'microsoft', name: 'Microsoft', color: 'bg-blue-500', description: 'Outlook, OneDrive, Teams, etc.' },
-  { id: 'github', name: 'GitHub', color: 'bg-gray-800', description: 'Repositories, Actions, Packages' },
-  { id: 'slack', name: 'Slack', color: 'bg-purple-500', description: 'Workspaces, channels, DMs' },
-  { id: 'dropbox', name: 'Dropbox', color: 'bg-blue-600', description: 'Files and folders' },
+  { id: 'microsoft', name: 'Microsoft', color: 'bg-blue-500', description: 'Outlook, OneDrive, Teams, etc.', disabled: true },
+  { id: 'github', name: 'GitHub', color: 'bg-gray-800', description: 'Repositories, Actions, Packages', disabled: true },
 ];
 
 export default function Accounts() {
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { accounts, isScanning, scanAccount, removeAccount, signInWithGoogle } = useAppStore();
   const [showModal, setShowModal] = useState(false);
-  const [scanning, setScanningId] = useState<string | null>(null);
-
-  useEffect(() => {
-    loadAccounts();
-  }, []);
-
-  async function loadAccounts() {
-    try {
-      const res = await api.getAccounts();
-      setAccounts(res.accounts);
-    } catch (err) {
-      console.error('Failed to load accounts:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [scanningId, setScanningId] = useState<string | null>(null);
 
   async function handleConnect(platform: string) {
-    // TODO: Implement proper OAuth flow
-    // For now, show a message
-    alert(`OAuth flow for ${platform} coming soon! This will redirect you to ${platform} to authorize access.`);
+    if (platform === 'google') {
+      // For Google, use the same sign-in flow which adds an account
+      try {
+        await signInWithGoogle();
+        setShowModal(false);
+      } catch (err) {
+        console.error('Failed to connect Google account:', err);
+      }
+    } else {
+      // Other platforms not yet implemented
+      alert(`${platform} integration coming soon!`);
+    }
     setShowModal(false);
   }
 
   async function handleScan(accountId: string) {
     setScanningId(accountId);
     try {
-      await api.startScan(accountId);
-      await loadAccounts();
-    } catch (err) {
-      console.error('Scan failed:', err);
+      await scanAccount(accountId);
     } finally {
       setScanningId(null);
     }
@@ -62,19 +42,14 @@ export default function Accounts() {
   async function handleDelete(accountId: string) {
     if (!confirm('Remove this account? This will also remove all discovered apps.')) return;
     try {
-      await api.deleteAccount(accountId);
-      setAccounts(accounts.filter(a => a.accountId !== accountId));
+      await removeAccount(accountId);
     } catch (err) {
       console.error('Delete failed:', err);
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-4 border-brand-200 border-t-brand-600 rounded-full animate-spin" />
-      </div>
-    );
+  async function handleManagePermissions() {
+    await googleService.openPermissionsPage();
   }
 
   return (
@@ -112,7 +87,7 @@ export default function Accounts() {
       ) : (
         <div className="space-y-3">
           {accounts.map(account => (
-            <div key={account.accountId} className="bg-white rounded-xl p-4 shadow-sm">
+            <div key={account.id} className="bg-white rounded-xl p-4 shadow-sm">
               <div className="flex items-center gap-3">
                 <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
                   account.platform === 'google' ? 'bg-red-100 text-red-600' :
@@ -120,9 +95,13 @@ export default function Accounts() {
                   account.platform === 'github' ? 'bg-gray-100 text-gray-600' :
                   'bg-gray-100 text-gray-600'
                 }`}>
-                  <span className="font-bold text-lg">
-                    {account.platform.charAt(0).toUpperCase()}
-                  </span>
+                  {account.picture ? (
+                    <img src={account.picture} alt="" className="w-12 h-12 rounded-full" />
+                  ) : (
+                    <span className="font-bold text-lg">
+                      {account.platform.charAt(0).toUpperCase()}
+                    </span>
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-gray-900 capitalize">{account.platform}</div>
@@ -136,19 +115,24 @@ export default function Accounts() {
               </div>
               <div className="flex gap-2 mt-4 pt-3 border-t border-gray-100">
                 <button
-                  onClick={() => handleScan(account.accountId)}
-                  disabled={scanning === account.accountId}
+                  onClick={() => handleScan(account.id)}
+                  disabled={isScanning || scanningId === account.id}
                   className="flex-1 flex items-center justify-center gap-2 bg-gray-100 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors disabled:opacity-50"
                 >
-                  <RefreshCw className={`w-4 h-4 ${scanning === account.accountId ? 'animate-spin' : ''}`} />
-                  {scanning === account.accountId ? 'Scanning...' : 'Scan'}
+                  <RefreshCw className={`w-4 h-4 ${scanningId === account.id ? 'animate-spin' : ''}`} />
+                  {scanningId === account.id ? 'Scanning...' : 'Scan'}
                 </button>
                 <button
-                  onClick={() => handleDelete(account.accountId)}
+                  onClick={handleManagePermissions}
+                  className="flex items-center justify-center gap-2 bg-blue-50 text-blue-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors"
+                >
+                  Manage
+                </button>
+                <button
+                  onClick={() => handleDelete(account.id)}
                   className="flex items-center justify-center gap-2 bg-red-50 text-red-600 px-3 py-2 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors"
                 >
                   <Trash2 className="w-4 h-4" />
-                  Remove
                 </button>
               </div>
             </div>
@@ -171,7 +155,12 @@ export default function Accounts() {
                 <button
                   key={platform.id}
                   onClick={() => handleConnect(platform.id)}
-                  className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors text-left"
+                  disabled={platform.disabled}
+                  className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors text-left ${
+                    platform.disabled
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'hover:bg-gray-50'
+                  }`}
                 >
                   <div className={`w-10 h-10 ${platform.color} rounded-full flex items-center justify-center`}>
                     <span className="text-white font-bold">
@@ -179,7 +168,10 @@ export default function Accounts() {
                     </span>
                   </div>
                   <div>
-                    <div className="font-medium text-gray-900">{platform.name}</div>
+                    <div className="font-medium text-gray-900">
+                      {platform.name}
+                      {platform.disabled && <span className="text-xs text-gray-400 ml-2">(Coming soon)</span>}
+                    </div>
                     <div className="text-sm text-gray-500">{platform.description}</div>
                   </div>
                 </button>

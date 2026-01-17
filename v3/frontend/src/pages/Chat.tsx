@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Sparkles } from 'lucide-react';
-import { api } from '../services/api';
+import { useAppStore } from '../stores/appStore';
 
 interface Message {
   id: string;
@@ -16,7 +16,38 @@ const SUGGESTIONS = [
   "Explain the risks of high-risk apps",
 ];
 
+// Simple local responses based on user data
+function generateLocalResponse(message: string, stats: { highRisk: number; mediumRisk: number; appCount: number }): string {
+  const lowerMessage = message.toLowerCase();
+
+  if (lowerMessage.includes('high') && lowerMessage.includes('risk')) {
+    if (stats.highRisk === 0) {
+      return "Great news! You don't have any high-risk apps connected to your accounts. Keep monitoring your connected apps regularly to maintain good privacy hygiene.";
+    }
+    return `You have ${stats.highRisk} high-risk app${stats.highRisk > 1 ? 's' : ''} that have extensive access to your data. High-risk apps can read, modify, or send data on your behalf. Go to the Apps tab and filter by "High Risk" to review and revoke access to any apps you don't recognize or trust.`;
+  }
+
+  if (lowerMessage.includes('remove') || lowerMessage.includes('revoke')) {
+    return "To remove an app's access:\n\n1. Go to the Apps tab\n2. Find the app you want to remove\n3. Tap 'Manage' to open Google's permissions page\n4. Click 'Remove Access' next to the app\n\nI recommend reviewing high-risk apps first, especially ones you don't remember authorizing.";
+  }
+
+  if (lowerMessage.includes('email') || lowerMessage.includes('gmail')) {
+    return "Apps with email access are particularly sensitive as they can read your private communications. Look for apps with permissions like 'Read your emails' or 'Send emails on your behalf' in the Apps tab. If you don't actively use an app, consider revoking its email access.";
+  }
+
+  if (lowerMessage.includes('privacy') || lowerMessage.includes('improve') || lowerMessage.includes('protect')) {
+    return `Here are some tips to improve your privacy:\n\n1. Review all ${stats.appCount} connected apps and remove ones you don't use\n2. Pay special attention to the ${stats.highRisk} high-risk apps\n3. Be cautious when authorizing new apps - only grant necessary permissions\n4. Scan your accounts regularly to catch new apps\n5. Use strong, unique passwords for your Google account\n6. Enable 2-factor authentication if you haven't already`;
+  }
+
+  if (stats.appCount === 0) {
+    return "You haven't scanned any accounts yet. Go to the Accounts tab and run a scan to discover which third-party apps have access to your data.";
+  }
+
+  return `Based on your scan, you have ${stats.appCount} apps connected to your accounts. ${stats.highRisk > 0 ? `${stats.highRisk} of these are high-risk and should be reviewed.` : 'None are high-risk, which is great!'}\n\nI can help you understand:\n- What makes an app high-risk\n- How to remove apps you don't trust\n- Tips to improve your privacy\n\nWhat would you like to know?`;
+}
+
 export default function Chat() {
+  const { stats } = useAppStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -42,28 +73,19 @@ export default function Chat() {
     setInput('');
     setLoading(true);
 
-    try {
-      const response = await api.chat(message);
-      const assistantMessage: Message = {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: response.response,
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, assistantMessage]);
-    } catch (err) {
-      console.error('Chat error:', err);
-      const errorMessage: Message = {
-        id: `error-${Date.now()}`,
-        role: 'assistant',
-        content: "Sorry, I'm having trouble responding right now. Please try again.",
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setLoading(false);
-      inputRef.current?.focus();
-    }
+    // Simulate a brief delay for natural feel
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const response = generateLocalResponse(message, stats);
+    const assistantMessage: Message = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: response,
+      timestamp: new Date(),
+    };
+    setMessages(prev => [...prev, assistantMessage]);
+    setLoading(false);
+    inputRef.current?.focus();
   }
 
   return (

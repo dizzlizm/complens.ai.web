@@ -1,58 +1,31 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Bell, RefreshCw, Shield, Info } from 'lucide-react';
-import { api } from '../services/api';
-
-interface UserSettings {
-  notifications: boolean;
-  autoScan: boolean;
-}
+import { useAppStore } from '../stores/appStore';
+import { db } from '../services/db';
 
 export default function Settings() {
-  const [settings, setSettings] = useState<UserSettings>({
-    notifications: true,
-    autoScan: false,
-  });
-  const [loading, setLoading] = useState(true);
+  const { profile, refreshData } = useAppStore();
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    loadSettings();
-  }, []);
+  const settings = profile?.settings || {
+    notifications: true,
+    autoScan: false,
+  };
 
-  async function loadSettings() {
-    try {
-      const profile = await api.getMe();
-      if (profile.settings) {
-        setSettings(profile.settings);
-      }
-    } catch (err) {
-      console.error('Failed to load settings:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function updateSetting(key: keyof UserSettings, value: boolean) {
+  async function updateSetting(key: 'notifications' | 'autoScan', value: boolean) {
     const newSettings = { ...settings, [key]: value };
-    setSettings(newSettings);
     setSaving(true);
     try {
-      await api.updateMe({ settings: newSettings });
+      await db.saveProfile({
+        ...profile,
+        settings: newSettings,
+      });
+      await refreshData();
     } catch (err) {
       console.error('Failed to save settings:', err);
-      // Revert on error
-      setSettings(settings);
     } finally {
       setSaving(false);
     }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-4 border-brand-200 border-t-brand-600 rounded-full animate-spin" />
-      </div>
-    );
   }
 
   return (
@@ -78,7 +51,7 @@ export default function Settings() {
           <label className="relative inline-flex items-center cursor-pointer">
             <input
               type="checkbox"
-              checked={settings.notifications}
+              checked={settings.notifications ?? true}
               onChange={(e) => updateSetting('notifications', e.target.checked)}
               className="sr-only peer"
             />
@@ -100,7 +73,7 @@ export default function Settings() {
           <label className="relative inline-flex items-center cursor-pointer">
             <input
               type="checkbox"
-              checked={settings.autoScan}
+              checked={settings.autoScan ?? false}
               onChange={(e) => updateSetting('autoScan', e.target.checked)}
               className="sr-only peer"
             />
@@ -114,9 +87,9 @@ export default function Settings() {
         <div className="flex items-start gap-3">
           <Shield className="w-5 h-5 text-brand-600 mt-0.5" />
           <div>
-            <h3 className="font-semibold text-brand-900">Your data is safe</h3>
+            <h3 className="font-semibold text-brand-900">Your data stays on your device</h3>
             <p className="text-brand-700 text-sm mt-1">
-              We only store metadata about connected apps. We never store your passwords or access your actual data.
+              All data is stored locally on your device. We never upload your information to the cloud.
             </p>
           </div>
         </div>
@@ -138,7 +111,7 @@ export default function Settings() {
             Complens helps you understand and manage which third-party apps have access to your personal accounts.
           </p>
           <p>
-            Connect your Google, Microsoft, GitHub, and other accounts to discover apps with access to your data.
+            Connect your Google account to discover apps with access to your data.
           </p>
         </div>
         <div className="mt-4 pt-4 border-t border-gray-100 flex gap-4">
