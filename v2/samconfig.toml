@@ -20,6 +20,8 @@ resolve_s3 = true
 stack_name = "complens-oauth-audit-dev"
 s3_prefix = "complens-oauth-audit-dev"
 region = "us-east-1"
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+resolve_s3 = true
 parameter_overrides = "Environment=dev MicrosoftClientId=04db0b39-1e36-44a1-abcb-b7f9b0d01a64 MicrosoftClientSecretArn=arn:aws:secretsmanager:us-east-1:716521514377:secret:complens/microsoft-client-secret-RJZQ7J"
 confirm_changeset = false
 
@@ -29,5 +31,7 @@ confirm_changeset = false
 stack_name = "complens-oauth-audit-prod"
 s3_prefix = "complens-oauth-audit-prod"
 region = "us-east-1"
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+resolve_s3 = true
 parameter_overrides = "Environment=prod MicrosoftClientId=04db0b39-1e36-44a1-abcb-b7f9b0d01a64 MicrosoftClientSecretArn=arn:aws:secretsmanager:us-east-1:716521514377:secret:complens/microsoft-client-secret-RJZQ7J"
 confirm_changeset = true
