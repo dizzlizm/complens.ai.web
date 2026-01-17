@@ -1,0 +1,45 @@
+# SAM configuration for Complens.ai v3
+#
+# To deploy:
+#   sam build && sam deploy --config-env dev
+#
+# Required: Get your Route53 Hosted Zone ID from AWS Console
+#   aws route53 list-hosted-zones --query "HostedZones[?Name=='complens.ai.'].Id" --output text
+#
+# Optional: Social sign-in (add to parameter_overrides if configured)
+#   GoogleClientId=xxx GoogleClientSecret=xxx
+#   FacebookAppId=xxx FacebookAppSecret=xxx
+
+version = 0.1
+
+[default.global.parameters]
+stack_name = "complens-dev"
+
+[default.deploy.parameters]
+stack_name = "complens-dev"
+resolve_s3 = true
+s3_prefix = "complens-dev"
+region = "us-east-1"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Environment=dev HostedZoneId=Z02373573N3XBHSZBERY6"
+disable_rollback = true
+
+[dev.deploy.parameters]
+stack_name = "complens-dev"
+resolve_s3 = true
+s3_prefix = "complens-dev"
+region = "us-east-1"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Environment=dev HostedZoneId=Z02373573N3XBHSZBERY6"
+disable_rollback = true
+
+[prod.deploy.parameters]
+stack_name = "complens-prod"
+resolve_s3 = true
+s3_prefix = "complens-prod"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Environment=prod HostedZoneId=Z02373573N3XBHSZBERY6"
