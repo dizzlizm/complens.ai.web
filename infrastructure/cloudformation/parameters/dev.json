@@ -34,5 +34,9 @@
   {
     "ParameterKey": "BedrockSecurityModelId",
     "ParameterValue": "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+  },
+  {
+    "ParameterKey": "EnableWAF",
+    "ParameterValue": "false"
   }
 ]

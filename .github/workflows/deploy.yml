@@ -419,13 +419,24 @@ jobs:
           cd backend/lambda/api
           npm install --production
 
+      - name: Install worker dependencies
+        run: |
+          cd backend/lambda/workers
+          npm install --production
+
       - name: Build Lambda package
         run: |
           cd backend/lambda/api
           zip -r ../api-${{ github.sha }}.zip . -x '*.git*' 'node_modules/.cache/*' 'tests/*' '*.md'
 
+      - name: Build Worker Lambda package
+        run: |
+          cd backend/lambda/workers
+          zip -r ../workers-${{ github.sha }}.zip . -x '*.git*' 'node_modules/.cache/*' 'tests/*' '*.md'
+
       - name: Upload to S3
         run: |
+          # Upload API Lambda
           aws s3 cp backend/lambda/api-${{ github.sha }}.zip \
             s3://${{ steps.get-bucket.outputs.lambda-bucket }}/api/latest.zip \
             --region ${{ env.AWS_REGION }}
@@ -433,6 +444,15 @@ jobs:
           # Also upload with commit hash for versioning
           aws s3 cp backend/lambda/api-${{ github.sha }}.zip \
             s3://${{ steps.get-bucket.outputs.lambda-bucket }}/api/${{ github.sha }}.zip \
+            --region ${{ env.AWS_REGION }}
+
+          # Upload Worker Lambda
+          aws s3 cp backend/lambda/workers-${{ github.sha }}.zip \
+            s3://${{ steps.get-bucket.outputs.lambda-bucket }}/workers/latest.zip \
+            --region ${{ env.AWS_REGION }}
+
+          aws s3 cp backend/lambda/workers-${{ github.sha }}.zip \
+            s3://${{ steps.get-bucket.outputs.lambda-bucket }}/workers/${{ github.sha }}.zip \
             --region ${{ env.AWS_REGION }}
 
       - name: Update Lambda function (if exists)
@@ -455,6 +475,30 @@ jobs:
             aws lambda wait function-updated \
               --function-name ${FUNCTION_NAME} \
               --region ${{ env.AWS_REGION }}
+          fi
+
+      - name: Update Worker Lambda function (if exists)
+        run: |
+          FUNCTION_NAME="${{ needs.setup.outputs.environment }}-complens-security-scanner"
+
+          # Check if function exists
+          if aws lambda get-function --function-name ${FUNCTION_NAME} --region ${{ env.AWS_REGION }} 2>&1 | grep -q "ResourceNotFoundException"; then
+            echo "Worker Lambda function not yet created by CloudFormation"
+            echo "This is expected on first deployment - CloudFormation will create it"
+          else
+            echo "Updating Worker Lambda function code..."
+            aws lambda update-function-code \
+              --function-name ${FUNCTION_NAME} \
+              --s3-bucket ${{ steps.get-bucket.outputs.lambda-bucket }} \
+              --s3-key workers/latest.zip \
+              --region ${{ env.AWS_REGION }}
+
+            # Wait for update to complete
+            aws lambda wait function-updated \
+              --function-name ${FUNCTION_NAME} \
+              --region ${{ env.AWS_REGION }}
+
+            echo "Worker Lambda updated successfully"
           fi
 
   # Deploy frontend

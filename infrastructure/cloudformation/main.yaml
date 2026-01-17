@@ -59,6 +59,14 @@ Parameters:
     Default: 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'
     Description: 'Bedrock model for security analysis (requires strong reasoning). Recommended: Claude 3.5 Sonnet v2'
 
+  EnableWAF:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: 'Enable WAF protection on CloudFront (adds ~$5/mo minimum)'
+
 # ============================================================================
 # Mappings - Network Configuration
 # ============================================================================
@@ -86,6 +94,7 @@ Conditions:
     - !Condition HasDomain
     - !Not [!Condition HasHostedZone]
   EnableBillingAlerts: !Not [!Equals [!Ref BillingAlertEmail, '']]
+  EnableWAFCondition: !Equals [!Ref EnableWAF, 'true']
 
 Resources:
   # ============================================================================
@@ -499,6 +508,102 @@ Resources:
             Action: 's3:GetObject'
             Resource: !Sub '${FrontendBucket.Arn}/*'
 
+  # ============================================================================
+  # WAF Web ACL for CloudFront (DDoS, SQL Injection, XSS Protection)
+  # Note: WAF for CloudFront must be deployed in us-east-1
+  # ============================================================================
+
+  WAFWebACL:
+    Type: AWS::WAFv2::WebACL
+    Condition: EnableWAFCondition
+    Properties:
+      Name: !Sub '${Environment}-complens-waf'
+      Description: WAF protection for Complens.ai CloudFront distribution
+      Scope: CLOUDFRONT  # CLOUDFRONT for CloudFront, REGIONAL for API Gateway
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub '${Environment}-complens-waf'
+        SampledRequestsEnabled: true
+      Rules:
+        # Rule 1: Rate limiting - Block IPs making too many requests
+        - Name: RateLimitRule
+          Priority: 1
+          Statement:
+            RateBasedStatement:
+              Limit: 2000  # Max 2000 requests per 5 minutes per IP
+              AggregateKeyType: IP
+          Action:
+            Block: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub '${Environment}-rate-limit'
+            SampledRequestsEnabled: true
+
+        # Rule 2: AWS Managed Rules - Common Rule Set (blocks known bad inputs)
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              ExcludedRules: []
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub '${Environment}-common-rules'
+            SampledRequestsEnabled: true
+
+        # Rule 3: AWS Managed Rules - Known Bad Inputs
+        - Name: AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 3
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub '${Environment}-bad-inputs'
+            SampledRequestsEnabled: true
+
+        # Rule 4: AWS Managed Rules - SQL Injection Protection
+        - Name: AWSManagedRulesSQLiRuleSet
+          Priority: 4
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesSQLiRuleSet
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub '${Environment}-sqli-rules'
+            SampledRequestsEnabled: true
+
+        # Rule 5: Block requests from known bad IP reputation list
+        - Name: AWSManagedRulesAmazonIpReputationList
+          Priority: 5
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub '${Environment}-ip-reputation'
+            SampledRequestsEnabled: true
+
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: complens-ai
+
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -506,6 +611,7 @@ Resources:
         Enabled: true
         DefaultRootObject: index.html
         Comment: !Sub '${Environment} Complens.ai Frontend'
+        WebACLId: !If [EnableWAFCondition, !GetAtt WAFWebACL.Arn, !Ref 'AWS::NoValue']
         Aliases: !If
           - HasDomain
           - [!Ref DomainName]
@@ -998,23 +1104,36 @@ Resources:
       - OAuthDisconnectRoute
       - OAuthDisconnectOptionsRoute
       - OAuthStatusRoute
+      - GWSUsersWithout2FARoute
+      - GWSAdminAccountsRoute
+      - GWSExternalSharingRoute
+      - GWSPoliciesRoute
+      - GWSSummaryRoute
       - DefaultRoute
     Properties:
       ApiId: !Ref ApiGateway
       StageName: !Ref Environment
       AutoDeploy: true
-      # Rate limiting to prevent DoS attacks
+      # API Gateway Rate Limiting / Throttling
       DefaultRouteSettings:
-        ThrottlingBurstLimit: !If [IsProd, 200, 50]  # Max concurrent requests
-        ThrottlingRateLimit: !If [IsProd, 100, 25]   # Requests per second
-      # Per-route throttling for expensive endpoints
+        ThrottlingBurstLimit: !If [IsProd, 200, 50]   # Max concurrent requests
+        ThrottlingRateLimit: !If [IsProd, 100, 25]    # Requests per second
+      # Route-specific throttling (stricter limits on expensive endpoints)
       RouteSettings:
+        # Chat endpoint - more expensive (calls Bedrock)
         'POST /chat':
           ThrottlingBurstLimit: !If [IsProd, 50, 10]
           ThrottlingRateLimit: !If [IsProd, 20, 5]
+        # Security endpoints - also call external APIs
+        'GET /security/nist/search':
+          ThrottlingBurstLimit: !If [IsProd, 30, 10]
+          ThrottlingRateLimit: !If [IsProd, 10, 5]
+        'GET /security/chrome-extension/{extensionId}':
+          ThrottlingBurstLimit: !If [IsProd, 30, 10]
+          ThrottlingRateLimit: !If [IsProd, 10, 5]
       AccessLogSettings:
         DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
-        Format: '$context.requestId $context.error.message $context.error.messageString'
+        Format: '$context.requestId $context.error.message $context.error.messageString $context.status $context.responseLatency'
       Tags:
         Environment: !Ref Environment
 
@@ -1173,6 +1292,55 @@ Resources:
       AuthorizationType: JWT
       AuthorizerId: !Ref ApiGatewayAuthorizer
 
+  # ============================================================================
+  # Google Workspace Security Analysis Routes
+  # ============================================================================
+
+  GWSUsersWithout2FARoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /security/users-without-2fa'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+
+  GWSAdminAccountsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /security/admin-accounts'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+
+  GWSExternalSharingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /security/external-sharing'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+
+  GWSPoliciesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /security/policies'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+
+  GWSSummaryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /security/summary'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+
   # Catch-all route for other paths
   DefaultRoute:
     Type: AWS::ApiGatewayV2::Route
@@ -1298,6 +1466,154 @@ Resources:
       Tags:
         - Key: Environment
           Value: !Ref Environment
+
+  # ============================================================================
+  # Background Workers - Scheduled Security Scanning
+  # ============================================================================
+
+  # SNS Topic for Security Alerts
+  SecurityAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${Environment}-complens-security-alerts'
+      DisplayName: Complens Security Alerts
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  SecurityAlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: EnableBillingAlerts  # Reuse billing alert email
+    Properties:
+      Protocol: email
+      TopicArn: !Ref SecurityAlertsTopic
+      Endpoint: !Ref BillingAlertEmail
+
+  # IAM Role for Worker Lambda
+  WorkerLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-complens-worker-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref ApplicationSecrets
+        - PolicyName: SNSPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref SecurityAlertsTopic
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${AWS::AccountId}-${Environment}-complens-lambda-code/*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Security Scanner Worker Lambda
+  SecurityScannerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-complens-security-scanner'
+      Runtime: nodejs20.x
+      Handler: security-scanner.handler
+      Role: !GetAtt WorkerLambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Sub '${AWS::AccountId}-${Environment}-complens-lambda-code'
+        S3Key: workers/latest.zip
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          SECRETS_ARN: !Ref ApplicationSecrets
+          REGION: !Ref AWS::Region
+          ALERTS_SNS_TOPIC_ARN: !Ref SecurityAlertsTopic
+          # Google OAuth credentials are fetched from Secrets Manager at runtime
+          # Add googleClientId, googleClientSecret, googleRedirectUri to ApplicationSecrets
+      Timeout: 300  # 5 minutes for scanning multiple orgs
+      MemorySize: 512
+      ReservedConcurrentExecutions: 1  # Only one scan at a time
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # CloudWatch Log Group for Worker
+  SecurityScannerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Environment}-complens-security-scanner'
+      RetentionInDays: !If [IsProd, 30, 7]
+
+  # EventBridge Rule - Daily Security Scan at 2 AM UTC
+  DailySecurityScanRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${Environment}-complens-daily-security-scan'
+      Description: Triggers daily security scan of all connected Google Workspaces
+      ScheduleExpression: 'cron(0 2 * * ? *)'  # 2 AM UTC daily
+      State: !If [IsProd, ENABLED, DISABLED]  # Only enabled in prod by default
+      Targets:
+        - Id: SecurityScannerTarget
+          Arn: !GetAtt SecurityScannerFunction.Arn
+          Input: '{"source": "scheduled", "scanType": "full"}'
+
+  # Permission for EventBridge to invoke Lambda
+  SecurityScannerEventBridgePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SecurityScannerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailySecurityScanRule.Arn
+
+  # CloudWatch Alarm for Worker Errors
+  SecurityScannerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableBillingAlerts
+    Properties:
+      AlarmName: !Sub '${Environment}-complens-security-scanner-errors'
+      AlarmDescription: Alert when security scanner encounters errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 86400  # 24 hours (one scan per day)
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SecurityScannerFunction
 
   # ============================================================================
   # CloudWatch Monitoring and Alarms
@@ -1538,3 +1854,35 @@ Outputs:
       1. Connect to bastion: aws ssm start-session --target ${BastionHost} --region ${AWS::Region}
       2. Run helper script: sudo /usr/local/bin/connect-rds.sh
       OR run migrations: cd /tmp && upload SQL files, then sudo /usr/local/bin/run-migrations.sh
+
+  WAFWebACLArn:
+    Description: WAF Web ACL ARN protecting CloudFront
+    Value: !GetAtt WAFWebACL.Arn
+    Export:
+      Name: !Sub '${Environment}-complens-waf-arn'
+
+  APIRateLimits:
+    Description: API Gateway rate limiting configuration
+    Value: !Sub |
+      Default: ${!If [IsProd, 100, 20]} req/sec, ${!If [IsProd, 200, 50]} burst
+      Chat endpoint: ${!If [IsProd, 20, 5]} req/sec, ${!If [IsProd, 50, 10]} burst
+      Security endpoints: ${!If [IsProd, 10, 5]} req/sec, ${!If [IsProd, 30, 10]} burst
+
+  SecurityScannerFunctionArn:
+    Description: ARN of Security Scanner Worker Lambda
+    Value: !GetAtt SecurityScannerFunction.Arn
+    Export:
+      Name: !Sub '${Environment}-complens-security-scanner-arn'
+
+  SecurityAlertsTopicArn:
+    Description: SNS Topic ARN for security alerts
+    Value: !Ref SecurityAlertsTopic
+    Export:
+      Name: !Sub '${Environment}-complens-security-alerts-arn'
+
+  SecurityScanSchedule:
+    Description: Security scan schedule
+    Value: !Sub |
+      Schedule: Daily at 2 AM UTC (cron(0 2 * * ? *))
+      Status: ${!If [IsProd, ENABLED, DISABLED]}
+      Manual trigger: aws lambda invoke --function-name ${Environment}-complens-security-scanner output.json

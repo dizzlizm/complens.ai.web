@@ -5,6 +5,7 @@ import AdminLayout from './pages/Admin/AdminLayout';
 import Dashboard from './pages/Admin/Dashboard';
 import OAuth from './pages/Admin/OAuth';
 import UserManagement from './pages/Admin/UserManagement';
+import SecurityDashboard from './pages/Admin/SecurityDashboard';
 import Login from './components/Auth/Login';
 import Signup from './components/Auth/Signup';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
@@ -33,7 +34,7 @@ function App() {
         <Route index element={<Dashboard />} />
         <Route path="oauth" element={<OAuth />} />
         <Route path="users" element={<UserManagement />} />
-        {/* Add more admin routes here as needed */}
+        <Route path="security" element={<SecurityDashboard />} />
       </Route>
 
       {/* Catch all - redirect to home */}

@@ -40,6 +40,14 @@ function AdminLayout() {
             User Management
           </Link>
 
+          <Link
+            to="/admin/security"
+            className={`nav-item ${isActive('/admin/security') ? 'active' : ''}`}
+          >
+            <span className="nav-icon">🛡️</span>
+            Security Dashboard
+          </Link>
+
           <div className="nav-section-title">Coming Soon</div>
 
           <div className="nav-item disabled">
