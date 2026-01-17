@@ -7,24 +7,20 @@ exports.handler = async (event) => {
     const user = requireAuth(event);
 
     // Get or create user profile
-    let profile = await db.getUser(user.userId);
+    const profile = await db.getOrCreateUser(user.userId, user.email);
 
-    if (!profile) {
-      profile = await db.createUser(user.userId, user.email);
-    }
-
-    // Get user's connections
-    const connections = await db.listConnections(user.userId);
+    // Get user's organizations
+    const organizations = await db.listUserOrganizations(user.userId);
 
     return response.ok({
       userId: profile.userId,
       email: profile.email,
       createdAt: profile.createdAt,
-      connections: connections.map(c => ({
-        connectionId: c.connectionId,
-        provider: c.provider,
-        tenantName: c.tenantName,
-        lastScannedAt: c.lastScannedAt,
+      organizations: organizations.map(org => ({
+        orgId: org.orgId,
+        name: org.name,
+        role: org.role,
+        createdAt: org.createdAt,
       })),
     });
   } catch (error) {

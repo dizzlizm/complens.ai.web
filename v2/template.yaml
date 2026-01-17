@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
   Complens.ai - OAuth App Audit
-  See every third-party app with access to your M365 or Google Workspace.
+  Multi-tenant platform to audit third-party OAuth apps in Microsoft 365.
 
 Globals:
   Function:
@@ -13,7 +13,6 @@ Globals:
       Variables:
         ENVIRONMENT: !Ref Environment
         TABLE_NAME: !Ref DataTable
-        COGNITO_USER_POOL_ID: !Ref UserPool
 
 Parameters:
   Environment:
@@ -23,11 +22,10 @@ Parameters:
       - dev
       - prod
 
-  # Microsoft Entra (Azure AD) App Registration
   MicrosoftClientId:
     Type: String
     Default: ''
-    Description: Microsoft Entra App Client ID
+    Description: Microsoft Entra App Client ID (for validating connections)
 
   MicrosoftClientSecretArn:
     Type: String
@@ -36,222 +34,7 @@ Parameters:
 
 Resources:
   #############################################
-  # API Gateway
-  #############################################
-  HttpApi:
-    Type: AWS::Serverless::HttpApi
-    Properties:
-      StageName: !Ref Environment
-      CorsConfiguration:
-        AllowOrigins:
-          - !If [IsProd, 'https://app.complens.ai', 'http://localhost:3000']
-          - !If [IsProd, !Ref 'AWS::NoValue', 'http://localhost:5173']
-        AllowHeaders:
-          - Authorization
-          - Content-Type
-        AllowMethods:
-          - GET
-          - POST
-          - DELETE
-          - OPTIONS
-      Auth:
-        DefaultAuthorizer: CognitoAuthorizer
-        Authorizers:
-          CognitoAuthorizer:
-            AuthorizationScopes:
-              - openid
-              - email
-            IdentitySource: $request.header.Authorization
-            JwtConfiguration:
-              issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
-              audience:
-                - !Ref UserPoolClient
-      # Note: Throttling for HTTP API is configured via RouteSettings or AWS::ApiGatewayV2::Stage
-      # Omitted for MVP - add later if needed
-
-  #############################################
-  # Lambda Functions
-  #############################################
-
-  # Health check - no auth required
-  HealthFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: src/functions/health/
-      Handler: index.handler
-      Events:
-        Health:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /health
-            Method: GET
-            Auth:
-              Authorizer: NONE
-
-  # Get current user info
-  MeFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: src/functions/me/
-      Handler: index.handler
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref DataTable
-      Events:
-        GetMe:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /me
-            Method: GET
-
-  # OAuth callback from Microsoft
-  OAuthCallbackFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: src/functions/oauth-callback/
-      Handler: index.handler
-      Timeout: 60
-      Environment:
-        Variables:
-          MICROSOFT_CLIENT_ID: !Ref MicrosoftClientId
-          MICROSOFT_CLIENT_SECRET_ARN: !Ref MicrosoftClientSecretArn
-          FRONTEND_URL: !If [IsProd, 'https://app.complens.ai', 'http://localhost:3000']
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref DataTable
-        - Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Ref MicrosoftClientSecretArn
-      Events:
-        Callback:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /oauth/callback/microsoft
-            Method: GET
-            Auth:
-              Authorizer: NONE
-
-  # Start OAuth flow
-  OAuthStartFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: src/functions/oauth-start/
-      Handler: index.handler
-      Environment:
-        Variables:
-          MICROSOFT_CLIENT_ID: !Ref MicrosoftClientId
-          API_BASE_URL: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref DataTable
-      Events:
-        Start:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /oauth/start/microsoft
-            Method: POST
-
-  # List connected accounts
-  ConnectionsFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: src/functions/connections/
-      Handler: index.handler
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref DataTable
-      Events:
-        List:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /connections
-            Method: GET
-        Delete:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /connections/{connectionId}
-            Method: DELETE
-
-  # Get OAuth apps for a connection
-  AppsFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: src/functions/apps/
-      Handler: index.handler
-      Timeout: 60
-      Environment:
-        Variables:
-          MICROSOFT_CLIENT_ID: !Ref MicrosoftClientId
-          MICROSOFT_CLIENT_SECRET_ARN: !Ref MicrosoftClientSecretArn
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref DataTable
-        - Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Ref MicrosoftClientSecretArn
-      Events:
-        List:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /connections/{connectionId}/apps
-            Method: GET
-        Scan:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /connections/{connectionId}/scan
-            Method: POST
-
-  #############################################
-  # DynamoDB
-  #############################################
-  DataTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: !Sub 'complens-${Environment}'
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: PK
-          AttributeType: S
-        - AttributeName: SK
-          AttributeType: S
-        - AttributeName: GSI1PK
-          AttributeType: S
-        - AttributeName: GSI1SK
-          AttributeType: S
-      KeySchema:
-        - AttributeName: PK
-          KeyType: HASH
-        - AttributeName: SK
-          KeyType: RANGE
-      GlobalSecondaryIndexes:
-        - IndexName: GSI1
-          KeySchema:
-            - AttributeName: GSI1PK
-              KeyType: HASH
-            - AttributeName: GSI1SK
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
-      TimeToLiveSpecification:
-        AttributeName: ttl
-        Enabled: true
-
-  #############################################
-  # Cognito
+  # Cognito (must be defined before HttpApi)
   #############################################
   UserPool:
     Type: AWS::Cognito::UserPool
@@ -303,6 +86,306 @@ Resources:
       UserPoolId: !Ref UserPool
 
   #############################################
+  # API Gateway HTTP API
+  #############################################
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    DependsOn:
+      - UserPool
+      - UserPoolClient
+    Properties:
+      StageName: !Ref Environment
+      CorsConfiguration:
+        AllowOrigins:
+          - !If [IsProd, 'https://app.complens.ai', 'http://localhost:3000']
+          - !If [IsProd, !Ref 'AWS::NoValue', 'http://localhost:5173']
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            AuthorizationScopes:
+              - openid
+              - email
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
+              audience:
+                - !Ref UserPoolClient
+
+  #############################################
+  # Lambda Functions
+  #############################################
+
+  # Health check - no auth required
+  HealthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/functions/health/
+      Handler: index.handler
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /health
+            Method: GET
+            Auth:
+              Authorizer: NONE
+
+  # Get current user info and their organizations
+  MeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/functions/me/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DataTable
+      Events:
+        GetMe:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /me
+            Method: GET
+
+  # Organization management
+  OrganizationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/functions/organizations/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DataTable
+      Events:
+        List:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations
+            Method: GET
+        Create:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations
+            Method: POST
+        Get:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}
+            Method: GET
+        Update:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}
+            Method: PUT
+
+  # Members management (within an org)
+  MembersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/functions/members/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DataTable
+      Events:
+        List:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/members
+            Method: GET
+        Add:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/members
+            Method: POST
+        Update:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/members/{userId}
+            Method: PUT
+        Remove:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/members/{userId}
+            Method: DELETE
+
+  # Properties management (business units within an org)
+  PropertiesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/functions/properties/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DataTable
+      Events:
+        List:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/properties
+            Method: GET
+        Create:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/properties
+            Method: POST
+        Get:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/properties/{propId}
+            Method: GET
+        Update:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/properties/{propId}
+            Method: PUT
+        Delete:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/properties/{propId}
+            Method: DELETE
+
+  # Connections management (Microsoft tenants linked to a property)
+  ConnectionsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/functions/connections/
+      Handler: index.handler
+      Timeout: 60
+      Environment:
+        Variables:
+          MICROSOFT_CLIENT_ID: !Ref MicrosoftClientId
+          MICROSOFT_CLIENT_SECRET_ARN: !Ref MicrosoftClientSecretArn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DataTable
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref MicrosoftClientSecretArn
+      Events:
+        List:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/properties/{propId}/connections
+            Method: GET
+        Create:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/properties/{propId}/connections
+            Method: POST
+        Get:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/properties/{propId}/connections/{connId}
+            Method: GET
+        Delete:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/properties/{propId}/connections/{connId}
+            Method: DELETE
+
+  # OAuth Apps - scan and list apps for a connection
+  AppsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/functions/apps/
+      Handler: index.handler
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          MICROSOFT_CLIENT_ID: !Ref MicrosoftClientId
+          MICROSOFT_CLIENT_SECRET_ARN: !Ref MicrosoftClientSecretArn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DataTable
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref MicrosoftClientSecretArn
+      Events:
+        List:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/properties/{propId}/connections/{connId}/apps
+            Method: GET
+        Scan:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /organizations/{orgId}/properties/{propId}/connections/{connId}/scan
+            Method: POST
+
+  #############################################
+  # DynamoDB
+  #############################################
+  DataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'complens-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  #############################################
   # S3 + CloudFront (Frontend)
   #############################################
   FrontendBucket:
@@ -345,7 +428,7 @@ Resources:
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
           Compress: true
         CustomErrorResponses:
           - ErrorCode: 404
@@ -376,6 +459,10 @@ Outputs:
   FrontendUrl:
     Description: CloudFront URL
     Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+
+  FrontendBucket:
+    Description: S3 bucket for frontend deployment
+    Value: !Ref FrontendBucket
 
   UserPoolId:
     Description: Cognito User Pool ID
