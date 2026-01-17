@@ -66,8 +66,8 @@ Resources:
               issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
               audience:
                 - !Ref UserPoolClient
-      ThrottlingBurstLimit: !If [IsProd, 100, 20]
-      ThrottlingRateLimit: !If [IsProd, 50, 10]
+      # Note: Throttling for HTTP API is configured via RouteSettings or AWS::ApiGatewayV2::Stage
+      # Omitted for MVP - add later if needed
 
   #############################################
   # Lambda Functions
