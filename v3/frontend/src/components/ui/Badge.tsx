@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { AlertTriangle, AlertCircle, CheckCircle, Info, Shield, Zap } from 'lucide-react';
+import { AlertTriangle, AlertCircle, CheckCircle, Info } from 'lucide-react';
 
 type BadgeVariant = 'default' | 'primary' | 'success' | 'warning' | 'danger' | 'info';
 type BadgeSize = 'sm' | 'md' | 'lg';
