@@ -1,0 +1,29 @@
+# SAM CLI configuration for Complens.ai OAuth App Audit
+
+version = 0.1
+
+[default.global.parameters]
+stack_name = "complens-oauth-audit"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+confirm_changeset = true
+resolve_s3 = true
+
+# Dev environment
+[dev]
+[dev.deploy.parameters]
+stack_name = "complens-oauth-audit-dev"
+parameter_overrides = "Environment=dev"
+confirm_changeset = false
+
+# Prod environment
+[prod]
+[prod.deploy.parameters]
+stack_name = "complens-oauth-audit-prod"
+parameter_overrides = "Environment=prod"
+confirm_changeset = true
