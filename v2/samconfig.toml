@@ -18,12 +18,16 @@ resolve_s3 = true
 [dev]
 [dev.deploy.parameters]
 stack_name = "complens-oauth-audit-dev"
-parameter_overrides = "Environment=dev"
+s3_prefix = "complens-oauth-audit-dev"
+region = "us-east-1"
+parameter_overrides = "Environment=dev MicrosoftClientId=04db0b39-1e36-44a1-abcb-b7f9b0d01a64 MicrosoftClientSecretArn=arn:aws:secretsmanager:us-east-1:716521514377:secret:complens/microsoft-client-secret-RJZQ7J"
 confirm_changeset = false
 
 # Prod environment
 [prod]
 [prod.deploy.parameters]
 stack_name = "complens-oauth-audit-prod"
-parameter_overrides = "Environment=prod"
+s3_prefix = "complens-oauth-audit-prod"
+region = "us-east-1"
+parameter_overrides = "Environment=prod MicrosoftClientId=04db0b39-1e36-44a1-abcb-b7f9b0d01a64 MicrosoftClientSecretArn=arn:aws:secretsmanager:us-east-1:716521514377:secret:complens/microsoft-client-secret-RJZQ7J"
 confirm_changeset = true
