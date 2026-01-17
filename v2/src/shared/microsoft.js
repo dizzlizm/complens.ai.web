@@ -1,131 +1,92 @@
 /**
  * Microsoft Graph API integration
- * Handles OAuth flow and API calls for OAuth App Audit
+ * Uses client credentials flow (app-only auth) for tenant-wide access
+ *
+ * Required Azure AD App permissions (Application, not Delegated):
+ * - Application.Read.All
+ * - Directory.Read.All
+ * - AuditLog.Read.All (optional, for consent history)
  */
 
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 
 const secretsClient = new SecretsManagerClient({});
 
-// Cache the client secret
-let cachedClientSecret = null;
+// Token cache: { tenantId: { token, expiry } }
+const tokenCache = new Map();
 
 /**
- * Get Microsoft client secret from Secrets Manager
+ * Get client secret from Secrets Manager
  */
-async function getClientSecret() {
-  if (cachedClientSecret) return cachedClientSecret;
-
-  const secretArn = process.env.MICROSOFT_CLIENT_SECRET_ARN;
-  if (!secretArn) {
-    throw new Error('MICROSOFT_CLIENT_SECRET_ARN not configured');
-  }
-
+async function getClientSecret(secretArn) {
   const result = await secretsClient.send(new GetSecretValueCommand({
     SecretId: secretArn,
   }));
-
-  cachedClientSecret = result.SecretString;
-  return cachedClientSecret;
+  return result.SecretString;
 }
 
 /**
- * Build OAuth authorization URL
+ * Get app-only access token using client credentials flow
+ * This allows tenant-wide access without user interaction
  */
-exports.buildAuthUrl = (state, redirectUri) => {
-  const clientId = process.env.MICROSOFT_CLIENT_ID;
+exports.getAppOnlyToken = async (tenantId, clientId, clientSecretArn) => {
+  // Check cache first
+  const cached = tokenCache.get(tenantId);
+  if (cached && cached.expiry > Date.now() + 60000) { // 1 min buffer
+    return cached.token;
+  }
 
-  // Scopes needed to audit OAuth apps:
-  // - User.Read: Get current user info
-  // - Application.Read.All: List service principals (OAuth apps)
-  // - AuditLog.Read.All: Read sign-in and app consent logs
-  // - Directory.Read.All: Read tenant info
-  const scopes = [
-    'openid',
-    'profile',
-    'email',
-    'offline_access', // For refresh token
-    'User.Read',
-    'Application.Read.All',
-    'Directory.Read.All',
-  ].join(' ');
+  const clientSecret = await getClientSecret(clientSecretArn);
 
-  const params = new URLSearchParams({
-    client_id: clientId,
-    response_type: 'code',
-    redirect_uri: redirectUri,
-    scope: scopes,
-    state,
-    response_mode: 'query',
-  });
-
-  return `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params}`;
-};
-
-/**
- * Exchange authorization code for tokens
- */
-exports.exchangeCodeForTokens = async (code, redirectUri) => {
-  const clientId = process.env.MICROSOFT_CLIENT_ID;
-  const clientSecret = await getClientSecret();
-
-  const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      code,
-      redirect_uri: redirectUri,
-      grant_type: 'authorization_code',
-    }),
-  });
+  const response = await fetch(
+    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        scope: 'https://graph.microsoft.com/.default',
+        grant_type: 'client_credentials',
+      }),
+    }
+  );
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Token exchange failed: ${error}`);
+    throw new Error(`Failed to get app-only token: ${error}`);
   }
 
-  const tokens = await response.json();
-  return {
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    expiresIn: tokens.expires_in,
-    tokenExpiry: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-    scopes: tokens.scope?.split(' ') || [],
-  };
+  const data = await response.json();
+  const token = data.access_token;
+  const expiry = Date.now() + (data.expires_in * 1000);
+
+  // Cache the token
+  tokenCache.set(tenantId, { token, expiry });
+
+  return token;
 };
 
 /**
- * Refresh access token
+ * Validate connection credentials by attempting to get a token and org info
  */
-exports.refreshAccessToken = async (refreshToken) => {
-  const clientId = process.env.MICROSOFT_CLIENT_ID;
-  const clientSecret = await getClientSecret();
+exports.validateConnection = async (tenantId, clientId, clientSecretArn) => {
+  try {
+    const token = await exports.getAppOnlyToken(tenantId, clientId, clientSecretArn);
+    const org = await exports.getOrganization(token);
 
-  const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: refreshToken,
-      grant_type: 'refresh_token',
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Token refresh failed: ${error}`);
+    return {
+      valid: true,
+      tenantId: org.id,
+      tenantName: org.displayName,
+      verifiedDomains: org.verifiedDomains?.map(d => d.name) || [],
+    };
+  } catch (error) {
+    return {
+      valid: false,
+      error: error.message,
+    };
   }
-
-  const tokens = await response.json();
-  return {
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token || refreshToken,
-    expiresIn: tokens.expires_in,
-    tokenExpiry: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-  };
 };
 
 /**
@@ -154,13 +115,6 @@ async function graphRequest(accessToken, endpoint, options = {}) {
 }
 
 /**
- * Get current user profile
- */
-exports.getMe = async (accessToken) => {
-  return graphRequest(accessToken, '/me');
-};
-
-/**
  * Get organization info
  */
 exports.getOrganization = async (accessToken) => {
@@ -169,12 +123,11 @@ exports.getOrganization = async (accessToken) => {
 };
 
 /**
- * List all OAuth/Enterprise apps (service principals) with consent grants
- * This is the core of OAuth App Audit
+ * List all service principals (OAuth/Enterprise apps)
  */
-exports.listOAuthApps = async (accessToken) => {
+exports.listServicePrincipals = async (accessToken) => {
   const apps = [];
-  let nextLink = '/servicePrincipals?$select=id,appId,displayName,appDisplayName,publisherName,homepage,replyUrls,servicePrincipalType,tags,accountEnabled,createdDateTime&$top=100';
+  let nextLink = '/servicePrincipals?$select=id,appId,displayName,appDisplayName,publisherName,homepage,replyUrls,servicePrincipalType,tags,accountEnabled,createdDateTime,appOwnerOrganizationId&$top=100';
 
   while (nextLink) {
     const result = await graphRequest(accessToken, nextLink);
@@ -186,7 +139,7 @@ exports.listOAuthApps = async (accessToken) => {
 };
 
 /**
- * Get OAuth2 permission grants (what permissions have been consented)
+ * Get OAuth2 permission grants (delegated permissions that have been consented)
  */
 exports.listOAuth2Grants = async (accessToken) => {
   const grants = [];
@@ -202,7 +155,7 @@ exports.listOAuth2Grants = async (accessToken) => {
 };
 
 /**
- * Get app role assignments (application permissions)
+ * Get app role assignments for a service principal (application permissions)
  */
 exports.listAppRoleAssignments = async (accessToken, servicePrincipalId) => {
   try {
@@ -212,9 +165,26 @@ exports.listAppRoleAssignments = async (accessToken, servicePrincipalId) => {
     );
     return result.value || [];
   } catch (e) {
-    // Some service principals may not allow this query
     return [];
   }
+};
+
+/**
+ * Get all app role assignments in the tenant
+ */
+exports.listAllAppRoleAssignments = async (accessToken, servicePrincipals) => {
+  const assignments = new Map();
+
+  // Get app role assignments for each service principal
+  // This shows what application permissions each app has
+  for (const sp of servicePrincipals) {
+    const roles = await exports.listAppRoleAssignments(accessToken, sp.id);
+    if (roles.length > 0) {
+      assignments.set(sp.id, roles);
+    }
+  }
+
+  return assignments;
 };
 
 /**
@@ -222,13 +192,13 @@ exports.listAppRoleAssignments = async (accessToken, servicePrincipalId) => {
  * Returns structured data about all OAuth apps and their permissions
  */
 exports.scanOAuthApps = async (accessToken) => {
-  // Get all service principals (OAuth apps)
-  const servicePrincipals = await exports.listOAuthApps(accessToken);
+  // Get all service principals
+  const servicePrincipals = await exports.listServicePrincipals(accessToken);
 
   // Get all delegated permission grants
   const grants = await exports.listOAuth2Grants(accessToken);
 
-  // Build a map of grants by service principal
+  // Build a map of grants by service principal ID
   const grantsByPrincipal = {};
   for (const grant of grants) {
     const clientId = grant.clientId;
@@ -237,66 +207,107 @@ exports.scanOAuthApps = async (accessToken) => {
     }
     grantsByPrincipal[clientId].push({
       scope: grant.scope,
-      consentType: grant.consentType, // 'AllPrincipals' or 'Principal'
+      consentType: grant.consentType,
       principalId: grant.principalId,
     });
   }
 
-  // Combine into audit results
+  // Filter to third-party apps and build audit results
   const auditedApps = servicePrincipals
-    .filter(sp => sp.servicePrincipalType === 'Application')
+    .filter(sp => {
+      // Include apps that are:
+      // 1. Application type (not managed identity, etc.)
+      // 2. Third-party (different owner org) OR have permission grants
+      return sp.servicePrincipalType === 'Application' &&
+        (sp.appOwnerOrganizationId !== sp.appId || grantsByPrincipal[sp.id]);
+    })
     .map(sp => {
       const delegatedGrants = grantsByPrincipal[sp.id] || [];
-      const allScopes = [...new Set(
+      const delegatedScopes = [...new Set(
         delegatedGrants.flatMap(g => g.scope?.split(' ') || []).filter(Boolean)
       )];
 
+      const isFirstParty = isFirstPartyApp(sp.appOwnerOrganizationId);
+
       return {
         appId: sp.appId,
+        servicePrincipalId: sp.id,
         displayName: sp.appDisplayName || sp.displayName,
-        publisher: sp.publisherName,
+        publisher: sp.publisherName || (isFirstParty ? 'Microsoft' : 'Unknown'),
+        publisherOrgId: sp.appOwnerOrganizationId,
+        isFirstParty,
         enabled: sp.accountEnabled,
         createdAt: sp.createdDateTime,
         homepage: sp.homepage,
-        servicePrincipalId: sp.id,
-        delegatedPermissions: allScopes,
+        delegatedPermissions: delegatedScopes,
         consentType: delegatedGrants.some(g => g.consentType === 'AllPrincipals')
           ? 'admin_consent'
           : delegatedGrants.length > 0
             ? 'user_consent'
             : 'none',
-        riskLevel: calculateRiskLevel(allScopes),
+        userCount: new Set(delegatedGrants.map(g => g.principalId).filter(Boolean)).size,
+        riskLevel: calculateRiskLevel(delegatedScopes, isFirstParty),
+        riskFactors: getRiskFactors(delegatedScopes, sp),
       };
     });
 
+  // Sort by risk level
+  const riskOrder = { high: 0, medium: 1, low: 2 };
+  auditedApps.sort((a, b) => riskOrder[a.riskLevel] - riskOrder[b.riskLevel]);
+
   return {
     totalApps: auditedApps.length,
+    summary: {
+      highRisk: auditedApps.filter(a => a.riskLevel === 'high').length,
+      mediumRisk: auditedApps.filter(a => a.riskLevel === 'medium').length,
+      lowRisk: auditedApps.filter(a => a.riskLevel === 'low').length,
+      thirdParty: auditedApps.filter(a => !a.isFirstParty).length,
+      firstParty: auditedApps.filter(a => a.isFirstParty).length,
+    },
     apps: auditedApps,
     scannedAt: new Date().toISOString(),
   };
 };
 
 /**
+ * Check if app is Microsoft first-party
+ */
+function isFirstPartyApp(ownerOrgId) {
+  const microsoftOrgIds = [
+    'f8cdef31-a31e-4b4a-93e4-5f571e91255a', // Microsoft Services
+    '72f988bf-86f1-41af-91ab-2d7cd011db47', // Microsoft Corp
+  ];
+  return microsoftOrgIds.includes(ownerOrgId);
+}
+
+/**
  * Calculate risk level based on permissions
  */
-function calculateRiskLevel(scopes) {
+function calculateRiskLevel(scopes, isFirstParty) {
+  // First-party Microsoft apps are generally lower risk
+  if (isFirstParty && scopes.length === 0) return 'low';
+
   const highRiskScopes = [
-    'Mail.ReadWrite',
-    'Mail.Send',
+    'Mail.ReadWrite', 'Mail.ReadWrite.All',
+    'Mail.Send', 'Mail.Send.All',
     'Files.ReadWrite.All',
     'Directory.ReadWrite.All',
     'User.ReadWrite.All',
     'Application.ReadWrite.All',
     'RoleManagement.ReadWrite.Directory',
+    'Sites.ReadWrite.All',
+    'Group.ReadWrite.All',
   ];
 
   const mediumRiskScopes = [
-    'Mail.Read',
+    'Mail.Read', 'Mail.Read.All',
     'Files.Read.All',
-    'Calendars.ReadWrite',
-    'Contacts.ReadWrite',
+    'Calendars.ReadWrite', 'Calendars.ReadWrite.All',
+    'Contacts.ReadWrite', 'Contacts.ReadWrite.All',
     'Directory.Read.All',
     'User.Read.All',
+    'Sites.Read.All',
+    'Group.Read.All',
   ];
 
   const hasHighRisk = scopes.some(s => highRiskScopes.includes(s));
@@ -305,4 +316,37 @@ function calculateRiskLevel(scopes) {
   if (hasHighRisk) return 'high';
   if (hasMediumRisk) return 'medium';
   return 'low';
+}
+
+/**
+ * Get specific risk factors for an app
+ */
+function getRiskFactors(scopes, sp) {
+  const factors = [];
+
+  // Check for risky permissions
+  if (scopes.some(s => s.includes('Mail.Send'))) {
+    factors.push({ type: 'permission', severity: 'high', description: 'Can send email as users' });
+  }
+  if (scopes.some(s => s.includes('Mail.ReadWrite'))) {
+    factors.push({ type: 'permission', severity: 'high', description: 'Can read and modify email' });
+  }
+  if (scopes.some(s => s.includes('Files.ReadWrite.All'))) {
+    factors.push({ type: 'permission', severity: 'high', description: 'Can access all files in OneDrive/SharePoint' });
+  }
+  if (scopes.some(s => s.includes('Directory.ReadWrite'))) {
+    factors.push({ type: 'permission', severity: 'high', description: 'Can modify directory objects' });
+  }
+
+  // Check for unknown publisher
+  if (!sp.publisherName && !isFirstPartyApp(sp.appOwnerOrganizationId)) {
+    factors.push({ type: 'publisher', severity: 'medium', description: 'Unknown publisher' });
+  }
+
+  // Check if app is disabled (might indicate it was found malicious)
+  if (!sp.accountEnabled) {
+    factors.push({ type: 'status', severity: 'info', description: 'App is disabled' });
+  }
+
+  return factors;
 }
