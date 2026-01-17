@@ -1,30 +1,29 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { Amplify } from 'aws-amplify';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { SplashScreen } from '@capacitor/splash-screen';
+import { Capacitor } from '@capacitor/core';
 import App from './App';
 import './index.css';
 
-// Configure Amplify - values come from environment or are set after deployment
-Amplify.configure({
-  Auth: {
-    Cognito: {
-      userPoolId: import.meta.env.VITE_USER_POOL_ID || '',
-      userPoolClientId: import.meta.env.VITE_USER_POOL_CLIENT_ID || '',
-      loginWith: {
-        oauth: {
-          domain: import.meta.env.VITE_COGNITO_DOMAIN || '',
-          scopes: ['email', 'openid', 'profile'],
-          redirectSignIn: [window.location.origin + '/callback'],
-          redirectSignOut: [window.location.origin],
-          responseType: 'code'
-        }
-      }
-    }
-  }
-});
+// Initialize native features
+async function initNative() {
+  if (Capacitor.isNativePlatform()) {
+    // Configure status bar
+    await StatusBar.setStyle({ style: Style.Light });
+    await StatusBar.setBackgroundColor({ color: '#2563eb' });
 
+    // Hide splash screen after app loads
+    await SplashScreen.hide();
+  }
+}
+
+// Render app
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
 );
+
+// Initialize native features
+initNative().catch(console.error);

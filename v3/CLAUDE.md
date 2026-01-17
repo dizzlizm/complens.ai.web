@@ -1,219 +1,215 @@
-# CLAUDE.md - Complens.ai Consumer App
+# CLAUDE.md - Complens Android App
 
 ## What is Complens?
 
-Complens.ai is a **mobile-first consumer privacy app** that helps everyday people understand and control what third-party apps have access to their digital accounts (Google, Microsoft, Facebook, GitHub, etc.).
+Complens is a **local-first Android app** that shows users what third-party apps have access to their Google account. All data stays on the device - no cloud storage required.
 
-Think of it as a "privacy dashboard" - connect your accounts once, and we'll show you every app that can access your data, with AI-powered risk scoring and one-tap revocation.
+**Core Value Prop**: "See everything that has access to your Google account. In 30 seconds. 100% private."
 
-## Target User
+## Architecture
 
-- **Primary**: Privacy-conscious consumers (25-45)
-- **Pain point**: "I have no idea what apps have access to my Google account"
-- **Value prop**: "See everything. Control everything. 60 seconds."
+```
+┌─────────────────────────────────────────────┐
+│              ANDROID APP                     │
+│  ┌─────────────────────────────────────────┐│
+│  │     React + TypeScript UI               ││
+│  │     (mobile-first, TailwindCSS)         ││
+│  └─────────────────────────────────────────┘│
+│  ┌─────────────────────────────────────────┐│
+│  │     Capacitor (native bridge)           ││
+│  │  ┌────────────┐ ┌────────────────────┐  ││
+│  │  │  SQLite    │ │  Google Sign-In    │  ││
+│  │  │  (local)   │ │  (native OAuth)    │  ││
+│  │  └────────────┘ └────────────────────┘  ││
+│  └─────────────────────────────────────────┘│
+└─────────────────────────────────────────────┘
+         │
+         │ Direct API calls (no middleman)
+         ▼
+┌─────────────────────────────────────────────┐
+│         GOOGLE APIs                          │
+│  - Drive API (list connected apps)          │
+│  - OAuth2 token info                        │
+│  - User info                                │
+└─────────────────────────────────────────────┘
+```
+
+## What's LOCAL (no cloud needed)
+
+| Feature | Storage |
+|---------|---------|
+| User profile | SQLite on device |
+| Google account tokens | SQLite on device |
+| Discovered apps list | SQLite on device |
+| Risk scores | Calculated on device |
+| Scan history | SQLite on device |
+
+## What's OPTIONAL (cloud features)
+
+| Feature | Requires |
+|---------|----------|
+| AI chat | AWS Bedrock |
+| Cross-device sync | DynamoDB + encryption |
+| Push notifications | FCM + Lambda |
+
+**The core app works 100% offline after initial Google sign-in.**
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | React 18 + TypeScript + TailwindCSS (PWA) |
-| Hosting | S3 + CloudFront (dev.complens.ai / app.complens.ai) |
-| API | API Gateway HTTP API + Lambda |
-| Database | DynamoDB (single-table, serverless) |
-| Auth | AWS Cognito (email + Google + Facebook) |
-| AI | Amazon Bedrock (Claude for chat/analysis) |
-| IaC | AWS SAM |
-
-**No VPC. No NAT Gateway. No RDS.** = ~$10/month at low scale.
+| UI | React 18 + TypeScript + TailwindCSS |
+| Native Wrapper | Capacitor 5 |
+| Local Database | SQLite via @capacitor-community/sqlite |
+| Auth | Google Sign-In via @codetrix-studio/capacitor-google-auth |
+| State | Zustand |
+| Icons | Lucide React |
 
 ## Project Structure
 
 ```
-v3/
-├── template.yaml              # SAM template (infra as code)
-├── samconfig.toml             # Deployment config
-├── backend/
-│   └── src/
-│       ├── index.js           # All API routes
-│       └── package.json
-└── frontend/
-    ├── src/
-    │   ├── App.tsx            # Router + Amplify auth
-    │   ├── components/
-    │   │   ├── Layout.tsx     # Mobile nav shell
-    │   │   └── ui/            # Component library
-    │   │       ├── Button.tsx
-    │   │       ├── Card.tsx
-    │   │       ├── Badge.tsx
-    │   │       ├── Modal.tsx
-    │   │       ├── Tabs.tsx
-    │   │       ├── Input.tsx
-    │   │       ├── Avatar.tsx
-    │   │       ├── States.tsx # Loading/Empty/Error states
-    │   │       └── index.ts   # Exports
-    │   ├── pages/
-    │   │   ├── Dashboard.tsx  # Home with risk overview
-    │   │   ├── Accounts.tsx   # Connected accounts
-    │   │   ├── Apps.tsx       # Discovered apps + filters
-    │   │   ├── Chat.tsx       # AI privacy assistant
-    │   │   └── Settings.tsx   # User preferences
-    │   ├── services/
-    │   │   └── api.ts         # API client with auth
-    │   └── index.css          # Design system + TailwindCSS
-    └── package.json
+v3/frontend/
+├── src/
+│   ├── App.tsx                    # Router + auth check
+│   ├── main.tsx                   # Entry point + native init
+│   ├── index.css                  # TailwindCSS + design system
+│   ├── components/
+│   │   ├── Layout.tsx             # App shell with bottom nav
+│   │   └── ui/                    # Reusable component library
+│   ├── pages/
+│   │   ├── Login.tsx              # Google sign-in screen
+│   │   ├── Dashboard.tsx          # Home with risk overview
+│   │   ├── Accounts.tsx           # Connected accounts
+│   │   ├── Apps.tsx               # Discovered apps list
+│   │   └── Settings.tsx           # Preferences
+│   ├── services/
+│   │   ├── db.ts                  # Local SQLite database
+│   │   └── google.ts              # Google auth + API calls
+│   └── stores/
+│       └── appStore.ts            # Zustand global state
+├── capacitor.config.ts            # Native app config
+├── package.json
+└── android/                       # Generated Android project
 ```
 
-## Commands
+## Development Commands
 
 ```bash
-# Deploy backend (from v3/)
-sam build && sam deploy
+# Install dependencies
+cd v3/frontend
+npm install
 
-# Run frontend locally (from v3/frontend/)
-npm install && npm run dev
+# Run in browser (development)
+npm run dev
 
-# Deploy frontend (after build)
-aws s3 sync dist/ s3://$BUCKET --delete
-aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*"
+# Build for production
+npm run build
+
+# Initialize Capacitor (first time only)
+npm run cap:init
+npm run cap:add   # Adds Android platform
+
+# Sync web code to Android
+npm run cap:sync
+
+# Open Android Studio
+npm run cap:open
+
+# Build and run on Android
+npm run android:run
 ```
 
-## Deployment Parameters
+## Google Cloud Setup
 
-When deploying, you need:
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Select project "its-complens"
+3. Go to APIs & Services → Credentials
+4. Create OAuth 2.0 Client ID:
+   - Type: Android
+   - Package name: `ai.complens.app`
+   - SHA-1: Get from `keytool -list -v -keystore ~/.android/debug.keystore`
+5. Also create Web client ID (needed for Capacitor plugin)
+6. Enable APIs:
+   - Google Drive API
+   - Google People API
 
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| HostedZoneId | Route53 zone for complens.ai | Z0123456ABCDEFG |
-| GoogleClientId | From Google Cloud Console | xxx.apps.googleusercontent.com |
-| GoogleClientSecret | From Google Cloud Console | GOCSPX-xxx |
-| FacebookAppId | From Facebook Developer | 123456789 |
-| FacebookAppSecret | From Facebook Developer | abc123 |
+## Environment Variables
 
-## API Endpoints
+Create `.env` in `v3/frontend/`:
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | /health | No | Health check |
-| GET | /me | Yes | Get user profile |
-| PUT | /me | Yes | Update settings |
-| GET | /accounts | Yes | List connected accounts |
-| POST | /accounts | Yes | Connect new account |
-| DELETE | /accounts/{id} | Yes | Disconnect account |
-| GET | /apps | Yes | List discovered apps |
-| POST | /scan | Yes | Trigger account scan |
-| GET | /scan/{id} | Yes | Get scan status |
-| POST | /chat | Yes | AI chat |
+```
+VITE_GOOGLE_WEB_CLIENT_ID=xxx.apps.googleusercontent.com
+```
 
-## DynamoDB Schema
+Update `capacitor.config.ts` with the same client ID.
 
-Single-table design:
+## Local Database Schema
 
-| Entity | PK | SK |
-|--------|----|----|
-| User | `USER#{userId}` | `PROFILE` |
-| Account | `USER#{userId}` | `ACCOUNT#{accountId}` |
-| App | `USER#{userId}` | `APP#{accountId}#{appId}` |
-| Scan | `USER#{userId}` | `SCAN#{scanId}` |
+```sql
+-- User profile (single row)
+profile: id, google_id, email, name, picture, settings, created_at
 
-## Design Principles
+-- Connected accounts
+accounts: id, platform, email, access_token, refresh_token, scopes, status, last_scanned_at
 
-1. **Mobile-first, mobile-only** - Optimize for phones. Desktop is secondary.
-2. **60-second time-to-value** - User should see their first risk within a minute.
-3. **Visual risk scoring** - Red/yellow/green. No jargon.
-4. **AI-powered explanations** - "This app can read your email" not "mail.read scope".
-5. **One-tap actions** - Revoke access should be instant (where possible).
+-- Discovered apps
+apps: id, account_id, name, client_id, scopes, permissions, risk_level, risk_score
 
----
+-- Scan history
+scans: id, account_id, status, apps_found, high_risk, medium_risk, low_risk
+```
 
-# ROADMAP
+## Risk Scoring
 
-## Phase 1: Foundation (Current)
-- [x] SAM template with Cognito + DynamoDB + Lambda
-- [x] CloudFront + Route53 + ACM for custom domains
-- [x] Social sign-in (Google, Facebook)
-- [x] Mobile-first React PWA
+| Risk Level | Criteria |
+|------------|----------|
+| **High** | Can read/write email, contacts, calendar, or files |
+| **Medium** | Read-only access to sensitive data |
+| **Low** | Basic profile access only |
+
+Scopes that trigger HIGH risk:
+- `mail.google.com`, `gmail.modify`, `gmail.send`
+- `drive` (full access), `calendar`, `contacts`
+
+## Roadmap
+
+### Phase 1: MVP (Current)
+- [x] Capacitor Android wrapper
+- [x] Local SQLite database
+- [x] Google Sign-In (native)
+- [x] Google Drive API integration
+- [x] Risk scoring algorithm
 - [x] UI component library
-- [ ] Deploy to dev.complens.ai
+- [ ] Build and test on Android device
 
-## Phase 2: Core Scanning
-- [ ] Google OAuth flow (list authorized apps)
-- [ ] Microsoft OAuth flow (list authorized apps)
-- [ ] GitHub OAuth flow (list grants + installations)
-- [ ] Risk scoring algorithm
-- [ ] App detail pages with permission breakdown
+### Phase 2: Discovery
+- [ ] Gmail connected apps
+- [ ] Calendar connected apps
+- [ ] Google Account permissions page deep-link
+- [ ] Manual app review flow
 
-## Phase 3: Actions & Intelligence
-- [ ] Direct app revocation (where APIs allow)
-- [ ] Redirect to provider's app management page (fallback)
-- [ ] AI chat with context awareness
-- [ ] Proactive risk alerts (new high-risk app detected)
-- [ ] Weekly privacy digest email
+### Phase 3: Actions
+- [ ] "Review on Google" button (deep-links to Google's page)
+- [ ] Track revocation status
+- [ ] Scan scheduling
 
-## Phase 4: Expansion
-- [ ] Facebook/Instagram connected apps
-- [ ] Slack workspace apps
-- [ ] Twitter/X connected apps
-- [ ] LinkedIn apps
-- [ ] Dropbox connected apps
+### Phase 4: Expansion
+- [ ] Microsoft account support
+- [ ] GitHub account support
+- [ ] Facebook account support
 
-## Phase 5: Agentic Features
-- [ ] AI agent that monitors for new app connections
-- [ ] Automatic risk assessment of new apps
-- [ ] Smart recommendations ("You haven't used X in 6 months, revoke?")
-- [ ] Privacy score trending over time
-
-## Phase 6: Social & Heuristics
-- [ ] Social media privacy settings audit
-- [ ] "Who can see your posts" analysis
-- [ ] Web scraping for data broker presence
-- [ ] Have I Been Pwned integration
-- [ ] Dark web monitoring (partner integration)
+### Phase 5: Cloud Features (Optional)
+- [ ] AI chat (Bedrock)
+- [ ] Cross-device sync (encrypted)
+- [ ] Push notifications
 
 ---
 
-# NOTES FOR FUTURE DEVELOPMENT
+## Privacy First
 
-## Social Sign-In as Scanning Permission
+- **No cloud required** for core functionality
+- **No tracking** or analytics
+- **No data leaves device** unless user explicitly syncs
+- **Open source** (future)
 
-When users sign in with Google/Facebook, we're already getting OAuth consent. Consider:
-- Requesting broader scopes during sign-in
-- User signs in with Google → we already have permission to list their apps
-- Reduces friction vs. separate "connect" flow
-
-## Platform API Limitations
-
-| Platform | Can List Apps? | Can Revoke? | Notes |
-|----------|---------------|-------------|-------|
-| Google | Limited | No | Redirect to myaccount.google.com/permissions |
-| Microsoft | Limited | No | Redirect to account.live.com/consent/Manage |
-| GitHub | Yes | Yes | Full API support |
-| Facebook | Yes | Yes | Apps using your info endpoint |
-| Slack | Yes | Partial | Workspace admin may restrict |
-
-## Heuristic Scanning Ideas
-
-Beyond API-based discovery:
-- Email pattern analysis ("Your app X was authorized...")
-- Browser extension for real-time monitoring
-- Calendar invite analysis for third-party schedulers
-- Chrome/Safari saved passwords for connected services
-
----
-
-# ENVIRONMENT VARIABLES
-
-Frontend (`.env`):
-```
-VITE_USER_POOL_ID=us-east-1_xxx
-VITE_USER_POOL_CLIENT_ID=xxx
-VITE_COGNITO_DOMAIN=https://complens-dev-xxx.auth.us-east-1.amazoncognito.com
-VITE_API_URL=https://api-dev.complens.ai
-```
-
-Lambda (via SAM template):
-```
-ENVIRONMENT=dev
-TABLE_NAME=complens-dev
-USER_POOL_ID=us-east-1_xxx
-USER_POOL_CLIENT_ID=xxx
-```
+This is not a "freemium" app that harvests data. It's a privacy tool that respects privacy.

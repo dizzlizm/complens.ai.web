@@ -1,45 +1,51 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Authenticator } from '@aws-amplify/ui-react';
-import '@aws-amplify/ui-react/styles.css';
+import { useAppStore } from './stores/appStore';
 
 import Layout from './components/Layout';
+import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Accounts from './pages/Accounts';
 import Apps from './pages/Apps';
-import Chat from './pages/Chat';
 import Settings from './pages/Settings';
+import { LoadingScreen } from './components/ui';
 
 function App() {
+  const { isAuthenticated, isLoading, init } = useAppStore();
+
+  useEffect(() => {
+    init();
+  }, [init]);
+
+  // Show loading screen while initializing
+  if (isLoading) {
+    return <LoadingScreen message="Loading..." />;
+  }
+
+  // Not authenticated - show login
+  if (!isAuthenticated) {
+    return (
+      <BrowserRouter>
+        <Routes>
+          <Route path="*" element={<Login />} />
+        </Routes>
+      </BrowserRouter>
+    );
+  }
+
+  // Authenticated - show main app
   return (
-    <Authenticator
-      signUpAttributes={['email']}
-      components={{
-        Header() {
-          return (
-            <div className="text-center py-6">
-              <h1 className="text-2xl font-bold text-brand-600">Complens</h1>
-              <p className="text-gray-500 text-sm mt-1">Your digital privacy dashboard</p>
-            </div>
-          );
-        }
-      }}
-    >
-      {({ signOut, user }) => (
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Layout user={user} signOut={signOut} />}>
-              <Route index element={<Dashboard />} />
-              <Route path="accounts" element={<Accounts />} />
-              <Route path="apps" element={<Apps />} />
-              <Route path="chat" element={<Chat />} />
-              <Route path="settings" element={<Settings />} />
-            </Route>
-            <Route path="/callback" element={<Navigate to="/" replace />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
-      )}
-    </Authenticator>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Layout />}>
+          <Route index element={<Dashboard />} />
+          <Route path="accounts" element={<Accounts />} />
+          <Route path="apps" element={<Apps />} />
+          <Route path="settings" element={<Settings />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 
