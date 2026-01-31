@@ -55,20 +55,20 @@ local-invoke:
 
 # Deployment
 deploy:
-	$(SAM) deploy --config-env $(STAGE)
+	$(SAM) deploy --config-env $(STAGE) --resolve-s3
 
 deploy-guided:
 	$(SAM) deploy --guided --config-env $(STAGE)
 
 # Specific stage deployments
 deploy-dev:
-	$(SAM) deploy --config-env dev
+	$(SAM) deploy --config-env dev --resolve-s3
 
 deploy-staging:
-	$(SAM) deploy --config-env staging
+	$(SAM) deploy --config-env staging --resolve-s3
 
 deploy-prod:
-	$(SAM) deploy --config-env prod
+	$(SAM) deploy --config-env prod --resolve-s3 --no-confirm-changeset
 
 # Package for deployment
 package:

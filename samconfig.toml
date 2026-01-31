@@ -28,7 +28,8 @@ stack_name = "complens-dev"
 s3_prefix = "complens-dev"
 region = "us-east-1"
 confirm_changeset = false
-capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
 parameter_overrides = "Stage=dev"
 
 [dev.local_start_api.parameters]
@@ -42,7 +43,8 @@ stack_name = "complens-staging"
 s3_prefix = "complens-staging"
 region = "us-east-1"
 confirm_changeset = true
-capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
 parameter_overrides = "Stage=staging"
 
 # Production environment
@@ -52,5 +54,6 @@ stack_name = "complens-prod"
 s3_prefix = "complens-prod"
 region = "us-east-1"
 confirm_changeset = true
-capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
 parameter_overrides = "Stage=prod"
