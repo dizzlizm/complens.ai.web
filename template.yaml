@@ -817,7 +817,6 @@ Resources:
       Environment:
         Variables:
           EVENT_BUS_NAME: !Ref WorkflowEventBus
-          WORKFLOW_STATE_MACHINE_ARN: !Ref WorkflowExecutorStateMachine
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
@@ -848,12 +847,17 @@ Resources:
       Timeout: 60
       Environment:
         Variables:
-          WORKFLOW_STATE_MACHINE_ARN: !Ref WorkflowExecutorStateMachine
+          # Use pattern-based ARN to avoid circular dependency
+          WORKFLOW_STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
-        - StepFunctionsExecutionPolicy:
-            StateMachineName: !GetAtt WorkflowExecutorStateMachine.Name
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource:
+                - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor"
       Events:
         SQSEvent:
           Type: SQS
@@ -874,7 +878,8 @@ Resources:
       MemorySize: 512
       Environment:
         Variables:
-          WORKFLOW_STATE_MACHINE_ARN: !Ref WorkflowExecutorStateMachine
+          # Use pattern-based ARN to avoid circular dependency
+          WORKFLOW_STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor"
           SCHEDULER_ROLE_ARN: !GetAtt SchedulerRole.Arn
       Policies:
         - DynamoDBCrudPolicy:
@@ -912,6 +917,7 @@ Resources:
                 - !GetAtt SchedulerRole.Arn
 
   # IAM Role for EventBridge Scheduler to start Step Functions
+  # Uses pattern-based ARN to avoid circular dependency
   SchedulerRole:
     Type: AWS::IAM::Role
     Properties:
@@ -932,7 +938,7 @@ Resources:
                 Action:
                   - states:StartExecution
                 Resource:
-                  - !Ref WorkflowExecutorStateMachine
+                  - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor"
       Tags:
         - Key: Service
           Value: complens
