@@ -44,6 +44,36 @@ class Workspace(BaseModel):
         """Get GSI1 keys for workspace lookup by ID."""
         return {"GSI1PK": f"WS#{self.id}", "GSI1SK": "META"}
 
+    def get_gsi2_keys(self) -> dict[str, str] | None:
+        """Get GSI2 keys for workspace lookup by phone number.
+
+        Returns:
+            GSI2 keys if phone number is configured, None otherwise.
+        """
+        if self.twilio_phone_number:
+            # Normalize phone for lookup
+            normalized = self._normalize_phone(self.twilio_phone_number)
+            return {"GSI2PK": f"PHONE#{normalized}", "GSI2SK": f"WS#{self.id}"}
+        return None
+
+    @staticmethod
+    def _normalize_phone(phone: str) -> str:
+        """Normalize phone number for consistent lookups.
+
+        Args:
+            phone: Phone number in various formats.
+
+        Returns:
+            Normalized phone number (digits only with country code).
+        """
+        if phone.startswith("+"):
+            return "".join(filter(str.isdigit, phone))
+        cleaned = "".join(filter(str.isdigit, phone))
+        # Assume US if 10 digits
+        if len(cleaned) == 10:
+            return "1" + cleaned
+        return cleaned
+
 
 class CreateWorkspaceRequest(PydanticBaseModel):
     """Request model for creating a workspace."""

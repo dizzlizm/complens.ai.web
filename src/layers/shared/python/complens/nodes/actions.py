@@ -29,6 +29,8 @@ class SendSmsAction(BaseNode):
         Returns:
             NodeResult with send status.
         """
+        from complens.services.twilio_service import TwilioError, get_twilio_service
+
         # Get message template and render
         message_template = self._get_config_value("sms_message", "")
         message = context.render_template(message_template)
@@ -46,22 +48,64 @@ class SendSmsAction(BaseNode):
         if not message:
             return NodeResult.failed(error="Message content is empty")
 
+        # Get from number from config or workspace settings
+        from_number = self._get_config_value("sms_from")
+        if not from_number and hasattr(context, "workspace"):
+            from_number = getattr(context.workspace, "twilio_phone_number", None)
+
         self.logger.info(
             "Sending SMS",
             to=to_number,
             message_length=len(message),
         )
 
-        # TODO: Integrate with Twilio
-        # For now, simulate successful send
-        return NodeResult.completed(
-            output={
-                "message_sid": f"SM{context.workflow_run.id[:32]}",
-                "to": to_number,
-                "body": message,
-                "status": "queued",
-            }
-        )
+        # Get Twilio service
+        twilio = get_twilio_service()
+
+        # Check if Twilio is configured
+        if not twilio.is_configured:
+            self.logger.warning("Twilio not configured, simulating send")
+            return NodeResult.completed(
+                output={
+                    "message_sid": f"SM_SIMULATED_{context.workflow_run.id[:24]}",
+                    "to": to_number,
+                    "body": message,
+                    "status": "simulated",
+                    "simulated": True,
+                }
+            )
+
+        try:
+            result = twilio.send_sms(
+                to=to_number,
+                body=message,
+                from_number=from_number,
+            )
+
+            return NodeResult.completed(
+                output={
+                    "message_sid": result["message_sid"],
+                    "to": result["to"],
+                    "body": message,
+                    "status": result["status"],
+                    "from": result.get("from"),
+                },
+                variables={"last_sms_sid": result["message_sid"]},
+            )
+
+        except TwilioError as e:
+            self.logger.error(
+                "SMS send failed",
+                error=e.message,
+                error_code=e.code,
+            )
+            return NodeResult.failed(
+                error=f"Failed to send SMS: {e.message}",
+                error_details={
+                    "error_code": e.code,
+                    "to": to_number,
+                },
+            )
 
     def get_required_config(self) -> list[str]:
         """Get required configuration."""
@@ -82,6 +126,8 @@ class SendEmailAction(BaseNode):
         Returns:
             NodeResult with send status.
         """
+        from complens.services.email_service import EmailError, get_email_service
+
         # Get recipient
         to_template = self._get_config_value("email_to", "{{contact.email}}")
         to_email = context.render_template(to_template)
@@ -97,28 +143,83 @@ class SendEmailAction(BaseNode):
         subject = context.render_template(subject_template)
 
         body_template = self._get_config_value("email_body", "")
-        body = context.render_template(body_template)
+        body_text = context.render_template(body_template)
 
-        template_id = self._get_config_value("email_template_id")
+        # Support HTML body
+        html_template = self._get_config_value("email_body_html", "")
+        body_html = context.render_template(html_template) if html_template else None
 
-        if not body and not template_id:
+        # Support SES templates
+        template_name = self._get_config_value("email_template_name")
+        template_data = self._get_config_value("email_template_data", {})
+
+        # Get from email from config
+        from_email = self._get_config_value("email_from")
+
+        if not body_text and not body_html and not template_name:
             return NodeResult.failed(error="Email body or template is required")
 
         self.logger.info(
             "Sending email",
             to=to_email,
             subject=subject,
+            has_html=bool(body_html),
+            use_template=bool(template_name),
         )
 
-        # TODO: Integrate with SES/SendGrid
-        return NodeResult.completed(
-            output={
-                "message_id": f"email-{context.workflow_run.id[:16]}",
-                "to": to_email,
-                "subject": subject,
-                "status": "queued",
-            }
-        )
+        # Get email service
+        email_service = get_email_service()
+
+        try:
+            if template_name:
+                # Use SES template
+                # Render template data values
+                rendered_data = {}
+                for key, value in template_data.items():
+                    if isinstance(value, str):
+                        rendered_data[key] = context.render_template(value)
+                    else:
+                        rendered_data[key] = value
+
+                result = email_service.send_templated_email(
+                    to=to_email,
+                    template_name=template_name,
+                    template_data=rendered_data,
+                    from_email=from_email,
+                )
+            else:
+                # Send regular email
+                result = email_service.send_email(
+                    to=to_email,
+                    subject=subject,
+                    body_text=body_text,
+                    body_html=body_html,
+                    from_email=from_email,
+                )
+
+            return NodeResult.completed(
+                output={
+                    "message_id": result["message_id"],
+                    "to": to_email,
+                    "subject": subject,
+                    "status": result["status"],
+                },
+                variables={"last_email_id": result["message_id"]},
+            )
+
+        except EmailError as e:
+            self.logger.error(
+                "Email send failed",
+                error=e.message,
+                error_code=e.code,
+            )
+            return NodeResult.failed(
+                error=f"Failed to send email: {e.message}",
+                error_details={
+                    "error_code": e.code,
+                    "to": to_email,
+                },
+            )
 
     def get_required_config(self) -> list[str]:
         """Get required configuration."""

@@ -173,18 +173,61 @@ def _validate_twilio_signature(event: dict, body: str) -> bool:
     """
     auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
     if not auth_token:
+        logger.debug("Twilio auth token not configured, skipping signature validation")
         return True  # Skip validation if not configured
 
     headers = event.get("headers", {}) or {}
     signature = headers.get("X-Twilio-Signature") or headers.get("x-twilio-signature")
 
     if not signature:
+        logger.warning("No Twilio signature header found")
         return False
 
-    # Build the URL
-    # In production, you'd reconstruct the full URL
-    # For now, skip validation
-    return True
+    try:
+        from twilio.request_validator import RequestValidator
+
+        # Reconstruct the URL
+        # API Gateway provides these in the requestContext
+        request_context = event.get("requestContext", {})
+        domain = request_context.get("domainName", "")
+        path = event.get("path", "")
+        stage = request_context.get("stage", "")
+
+        # Build the full URL
+        if domain:
+            # Remove stage from path if it's duplicated
+            if path.startswith(f"/{stage}"):
+                path = path[len(f"/{stage}"):]
+            url = f"https://{domain}/{stage}{path}"
+        else:
+            # Fallback: cannot validate without URL
+            logger.warning("Cannot determine webhook URL for signature validation")
+            return True
+
+        # Parse the body into params
+        params = {}
+        if body:
+            parsed = parse_qs(body)
+            params = {k: v[0] if len(v) == 1 else v for k, v in parsed.items()}
+
+        validator = RequestValidator(auth_token)
+        is_valid = validator.validate(url, params, signature)
+
+        if not is_valid:
+            logger.warning(
+                "Invalid Twilio signature",
+                url=url,
+                signature=signature[:20] + "...",
+            )
+
+        return is_valid
+
+    except ImportError:
+        logger.warning("twilio package not available for signature validation")
+        return True
+    except Exception as e:
+        logger.error("Signature validation error", error=str(e))
+        return True  # Fail open to avoid blocking webhooks
 
 
 def _twiml_response(twiml: str) -> dict:
@@ -219,8 +262,13 @@ def _find_workspace_by_phone(phone: str) -> dict | None:
     Returns:
         Workspace dict or None.
     """
-    # TODO: Implement proper lookup
-    # For now, return None (would need a GSI on workspaces by phone)
+    from complens.repositories.workspace import WorkspaceRepository
+
+    repo = WorkspaceRepository()
+    workspace = repo.find_by_phone(phone)
+
+    if workspace:
+        return workspace.model_dump()
     return None
 
 

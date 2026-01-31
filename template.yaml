@@ -35,6 +35,28 @@ Parameters:
     Default: ""
     Description: Optional existing ACM certificate ARN. If empty, a new certificate will be created.
 
+  # Integration Parameters
+  TwilioAccountSid:
+    Type: String
+    Default: ""
+    Description: Twilio Account SID for SMS integration
+
+  TwilioAuthToken:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Twilio Auth Token for SMS integration
+
+  TwilioPhoneNumber:
+    Type: String
+    Default: ""
+    Description: Default Twilio phone number for sending SMS
+
+  SesFromEmail:
+    Type: String
+    Default: ""
+    Description: Default sender email address for SES
+
 Globals:
   Function:
     Runtime: python3.12
@@ -53,6 +75,11 @@ Globals:
         WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
         EVENT_BUS_NAME: !Sub "complens-${Stage}-workflow-events"
         WEBSOCKET_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+        # Integration settings
+        TWILIO_ACCOUNT_SID: !Ref TwilioAccountSid
+        TWILIO_AUTH_TOKEN: !Ref TwilioAuthToken
+        TWILIO_PHONE_NUMBER: !Ref TwilioPhoneNumber
+        SES_FROM_EMAIL: !Ref SesFromEmail
     Layers:
       - !Ref SharedLayer
     VpcConfig:
@@ -936,6 +963,13 @@ Resources:
                 - iam:PassRole
               Resource:
                 - !GetAtt SchedulerRole.Arn
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+                - ses:SendTemplatedEmail
+              Resource: "*"
 
   # IAM Role for EventBridge Scheduler to start Step Functions
   # Uses pattern-based ARN to avoid circular dependency

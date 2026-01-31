@@ -45,6 +45,41 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         )
         return items
 
+    def find_by_phone(self, phone: str) -> Workspace | None:
+        """Find workspace by Twilio phone number using GSI2.
+
+        Args:
+            phone: Phone number (will be normalized).
+
+        Returns:
+            Workspace or None if not found.
+        """
+        # Normalize phone for lookup
+        normalized = Workspace._normalize_phone(phone)
+
+        items, _ = self.query(
+            pk=f"PHONE#{normalized}",
+            sk_begins_with="WS#",
+            index_name="GSI2",
+            limit=1,
+        )
+        return items[0] if items else None
+
+    def _get_all_gsi_keys(self, workspace: Workspace) -> dict[str, str]:
+        """Get all GSI keys for a workspace.
+
+        Args:
+            workspace: The workspace.
+
+        Returns:
+            Dict with all GSI keys.
+        """
+        keys = workspace.get_gsi1_keys()
+        gsi2_keys = workspace.get_gsi2_keys()
+        if gsi2_keys:
+            keys.update(gsi2_keys)
+        return keys
+
     def create_workspace(self, workspace: Workspace) -> Workspace:
         """Create a new workspace.
 
@@ -54,7 +89,7 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         Returns:
             The created workspace.
         """
-        return self.create(workspace, gsi_keys=workspace.get_gsi1_keys())
+        return self.create(workspace, gsi_keys=self._get_all_gsi_keys(workspace))
 
     def update_workspace(self, workspace: Workspace) -> Workspace:
         """Update an existing workspace.
@@ -65,7 +100,7 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         Returns:
             The updated workspace.
         """
-        return self.update(workspace, gsi_keys=workspace.get_gsi1_keys())
+        return self.update(workspace, gsi_keys=self._get_all_gsi_keys(workspace))
 
     def delete_workspace(self, agency_id: str, workspace_id: str) -> bool:
         """Delete a workspace.

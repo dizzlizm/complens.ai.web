@@ -232,10 +232,40 @@ The core infrastructure is set up:
 
 ## Next Steps
 
-### Phase 2: Integrations
-- [ ] Twilio integration for SMS sending
-- [ ] SES/SendGrid integration for email
-- [ ] Complete webhook handlers
+### Phase 2: Integrations ✅
+
+- [x] **Twilio integration for SMS sending**
+  - `TwilioService` in `src/layers/shared/python/complens/services/twilio_service.py`
+  - `SendSmsAction` node updated with real Twilio integration
+  - Twilio inbound webhook handler with workspace lookup by phone (GSI2)
+  - Signature validation support
+- [x] **SES integration for email**
+  - `EmailService` in `src/layers/shared/python/complens/services/email_service.py`
+  - `SendEmailAction` node updated with real SES integration
+  - Template email support via `send_templated_email()`
+- [x] **Webhook handlers improved**
+  - `_find_workspace_by_phone()` uses GSI2 lookup
+  - Proper Twilio signature validation
+- [x] **API testing script**: `scripts/test_api.py`
+
+**Integration Configuration (template.yaml parameters):**
+
+| Parameter | Description |
+|-----------|-------------|
+| `TwilioAccountSid` | Twilio Account SID |
+| `TwilioAuthToken` | Twilio Auth Token (NoEcho) |
+| `TwilioPhoneNumber` | Default Twilio phone number |
+| `SesFromEmail` | Default SES sender email |
+
+**Deploy with integrations:**
+```bash
+sam deploy --config-env dev --parameter-overrides \
+  "Stage=dev \
+   TwilioAccountSid=ACxxxxxxx \
+   TwilioAuthToken=xxxxxxxx \
+   TwilioPhoneNumber=+15551234567 \
+   SesFromEmail=noreply@complens.ai"
+```
 
 ### Phase 3: AI Features
 - [ ] Full Bedrock integration for AI nodes
