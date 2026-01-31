@@ -12,6 +12,16 @@ Parameters:
       - prod
     Description: Deployment stage
 
+  DomainName:
+    Type: String
+    Default: "dev.complens.ai"
+    Description: Base domain name for the API
+
+  HostedZoneId:
+    Type: String
+    Default: "Z02373573N3XBHSZBERY6"
+    Description: Route 53 hosted zone ID for the domain
+
 Globals:
   Function:
     Runtime: python3.12
@@ -392,8 +402,6 @@ Resources:
           HttpMethod: "*"
           ThrottlingBurstLimit: !If [IsProd, 200, 50]
           ThrottlingRateLimit: !If [IsProd, 100, 25]
-          LoggingLevel: INFO
-          DataTraceEnabled: true
           MetricsEnabled: true
 
   # ============================================
@@ -1064,6 +1072,105 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflow-trigger"
       RetentionInDays: !If [IsProd, 90, 14]
 
+  # ============================================
+  # ACM Certificate for Custom Domain
+  # ============================================
+  ApiCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Sub "*.${DomainName}"
+      SubjectAlternativeNames:
+        - !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub "*.${DomainName}"
+          HostedZoneId: !Ref HostedZoneId
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  # ============================================
+  # REST API Custom Domain
+  # ============================================
+  RestApiDomainName:
+    Type: AWS::ApiGateway::DomainName
+    DependsOn: ApiCertificate
+    Properties:
+      DomainName: !Sub "api.${DomainName}"
+      RegionalCertificateArn: !Ref ApiCertificate
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      SecurityPolicy: TLS_1_2
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  RestApiBasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    DependsOn: RestApiDomainName
+    Properties:
+      DomainName: !Ref RestApiDomainName
+      RestApiId: !Ref RestApi
+      Stage: !Ref Stage
+
+  # ============================================
+  # WebSocket API Custom Domain
+  # ============================================
+  WebSocketApiDomainName:
+    Type: AWS::ApiGatewayV2::DomainName
+    DependsOn: ApiCertificate
+    Properties:
+      DomainName: !Sub "ws.${DomainName}"
+      DomainNameConfigurations:
+        - CertificateArn: !Ref ApiCertificate
+          EndpointType: REGIONAL
+          SecurityPolicy: TLS_1_2
+      Tags:
+        Service: complens
+        Stage: !Ref Stage
+
+  WebSocketApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    DependsOn:
+      - WebSocketApiDomainName
+      - WebSocketStage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      DomainName: !Ref WebSocketApiDomainName
+      Stage: !Ref Stage
+
+  # ============================================
+  # Route 53 DNS Records
+  # ============================================
+  RestApiDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "api.${DomainName}"
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt RestApiDomainName.RegionalDomainName
+        HostedZoneId: !GetAtt RestApiDomainName.RegionalHostedZoneId
+        EvaluateTargetHealth: false
+
+  WebSocketApiDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "ws.${DomainName}"
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt WebSocketApiDomainName.RegionalDomainName
+        HostedZoneId: !GetAtt WebSocketApiDomainName.RegionalHostedZoneId
+        EvaluateTargetHealth: false
+
 Conditions:
   IsProd: !Equals [!Ref Stage, "prod"]
 
@@ -1074,11 +1181,23 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-RestApiUrl"
 
+  RestApiCustomUrl:
+    Description: REST API Custom Domain URL
+    Value: !Sub "https://api.${DomainName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-RestApiCustomUrl"
+
   WebSocketUrl:
     Description: WebSocket API URL
     Value: !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
     Export:
       Name: !Sub "${AWS::StackName}-WebSocketUrl"
+
+  WebSocketCustomUrl:
+    Description: WebSocket API Custom Domain URL
+    Value: !Sub "wss://ws.${DomainName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-WebSocketCustomUrl"
 
   UserPoolId:
     Description: Cognito User Pool ID

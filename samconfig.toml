@@ -30,13 +30,14 @@ region = "us-east-1"
 confirm_changeset = false
 resolve_s3 = true
 capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
-parameter_overrides = "Stage=dev"
+parameter_overrides = "Stage=dev DomainName=dev.complens.ai HostedZoneId=Z02373573N3XBHSZBERY6"
 
 [dev.local_start_api.parameters]
 port = 3001
 env_vars = "env.json"
 
 # Staging environment
+# Note: Update DomainName and HostedZoneId when staging hosted zone is created
 [staging]
 [staging.deploy.parameters]
 stack_name = "complens-staging"
@@ -45,9 +46,10 @@ region = "us-east-1"
 confirm_changeset = true
 resolve_s3 = true
 capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
-parameter_overrides = "Stage=staging"
+parameter_overrides = "Stage=staging DomainName=staging.complens.ai HostedZoneId=PLACEHOLDER"
 
 # Production environment
+# Note: Update DomainName and HostedZoneId when production hosted zone is created
 [prod]
 [prod.deploy.parameters]
 stack_name = "complens-prod"
@@ -56,4 +58,4 @@ region = "us-east-1"
 confirm_changeset = true
 resolve_s3 = true
 capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
-parameter_overrides = "Stage=prod"
+parameter_overrides = "Stage=prod DomainName=complens.ai HostedZoneId=PLACEHOLDER"
