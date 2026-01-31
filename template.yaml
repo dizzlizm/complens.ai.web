@@ -1250,6 +1250,146 @@ Resources:
         HostedZoneId: !GetAtt WebSocketApiDomainName.RegionalHostedZoneId
         EvaluateTargetHealth: false
 
+  # ============================================
+  # S3 Bucket for Frontend Static Hosting
+  # ============================================
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Condition: CustomDomainEnabled
+    Properties:
+      BucketName: !Sub "complens-${Stage}-frontend-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - HEAD
+            AllowedOrigins:
+              - !Sub "https://${DomainName}"
+            MaxAge: 3600
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CustomDomainEnabled
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontAccess
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
+
+  # ============================================
+  # CloudFront Distribution for Frontend
+  # ============================================
+  FrontendOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Condition: CustomDomainEnabled
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "complens-${Stage}-frontend-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: CustomDomainEnabled
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "Complens ${Stage} Frontend"
+        DefaultRootObject: index.html
+        Aliases:
+          - !Ref DomainName
+        ViewerCertificate:
+          AcmCertificateArn: !If [UseCertificateArn, !Ref CertificateArn, !Ref ApiCertificate]
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt FrontendOriginAccessControl.Id
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf  # CORS-S3Origin
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03  # SecurityHeadersPolicy
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 10
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 10
+        PriceClass: PriceClass_100
+        HttpVersion: http2and3
+        IPV6Enabled: true
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  FrontendDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CustomDomainEnabled
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt FrontendDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (constant)
+        EvaluateTargetHealth: false
+
+  FrontendDnsRecordIPv6:
+    Type: AWS::Route53::RecordSet
+    Condition: CustomDomainEnabled
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt FrontendDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (constant)
+        EvaluateTargetHealth: false
+
 Conditions:
   IsProd: !Equals [!Ref Stage, "prod"]
   CustomDomainEnabled: !Equals [!Ref EnableCustomDomain, "true"]
@@ -1328,3 +1468,31 @@ Outputs:
     Value: !Ref WorkflowExecutorStateMachine
     Export:
       Name: !Sub "${AWS::StackName}-WorkflowStateMachineArn"
+
+  FrontendUrl:
+    Condition: CustomDomainEnabled
+    Description: Frontend URL
+    Value: !Sub "https://${DomainName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-FrontendUrl"
+
+  FrontendBucketName:
+    Condition: CustomDomainEnabled
+    Description: Frontend S3 Bucket Name
+    Value: !Ref FrontendBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-FrontendBucketName"
+
+  FrontendDistributionId:
+    Condition: CustomDomainEnabled
+    Description: CloudFront Distribution ID
+    Value: !Ref FrontendDistribution
+    Export:
+      Name: !Sub "${AWS::StackName}-FrontendDistributionId"
+
+  FrontendDistributionDomainName:
+    Condition: CustomDomainEnabled
+    Description: CloudFront Distribution Domain Name
+    Value: !GetAtt FrontendDistribution.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-FrontendDistributionDomainName"
