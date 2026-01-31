@@ -212,6 +212,89 @@ class ScheduleTrigger(BaseTrigger):
         }
 
 
+class SegmentEventTrigger(BaseTrigger):
+    """Trigger on Segment track events.
+
+    Fires when a Segment track event matching the configured event name is received.
+    """
+
+    node_type = "trigger_segment_event"
+
+    def validate_trigger_data(self, data: dict) -> list[str]:
+        """Validate Segment event data."""
+        errors = []
+        if not data.get("event"):
+            errors.append("event name is required")
+        return errors
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract Segment event data."""
+        return {
+            "event": data.get("event"),
+            "properties": data.get("properties", {}),
+            "user_id": data.get("user_id"),
+            "anonymous_id": data.get("anonymous_id"),
+            "timestamp": data.get("timestamp"),
+            "message_id": data.get("message_id"),
+        }
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Check if event matches configured event name.
+
+        Args:
+            context: Execution context with trigger data.
+
+        Returns:
+            NodeResult - completed if event matches, skipped otherwise.
+        """
+        # Get configured event name to match
+        event_filter = self._get_config_value("segment_event_name")
+        trigger_event = context.trigger_data.get("event")
+
+        self.logger.info(
+            "Segment trigger checking event",
+            configured_event=event_filter,
+            received_event=trigger_event,
+        )
+
+        # If no filter configured, match all events
+        if not event_filter:
+            return await super().execute(context)
+
+        # Check if event matches (supports wildcards with *)
+        if self._event_matches(trigger_event, event_filter):
+            return await super().execute(context)
+        else:
+            return NodeResult.completed(
+                output={"skipped": True, "reason": "event name did not match"},
+            )
+
+    def _event_matches(self, event: str, pattern: str) -> bool:
+        """Check if event name matches pattern.
+
+        Args:
+            event: Actual event name.
+            pattern: Pattern to match (supports * wildcard).
+
+        Returns:
+            True if matches.
+        """
+        if not event or not pattern:
+            return False
+
+        # Exact match
+        if pattern == event:
+            return True
+
+        # Wildcard matching
+        if "*" in pattern:
+            import fnmatch
+            return fnmatch.fnmatch(event.lower(), pattern.lower())
+
+        # Case-insensitive match
+        return event.lower() == pattern.lower()
+
+
 # Registry of trigger node classes
 TRIGGER_NODES = {
     "trigger_form_submitted": FormSubmittedTrigger,
@@ -221,4 +304,5 @@ TRIGGER_NODES = {
     "trigger_email_received": EmailReceivedTrigger,
     "trigger_webhook": WebhookTrigger,
     "trigger_schedule": ScheduleTrigger,
+    "trigger_segment_event": SegmentEventTrigger,
 }

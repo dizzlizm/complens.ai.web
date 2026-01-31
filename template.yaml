@@ -57,6 +57,12 @@ Parameters:
     Default: ""
     Description: Default sender email address for SES
 
+  SegmentSharedSecret:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Segment webhook shared secret for signature verification
+
 Globals:
   Function:
     Runtime: python3.12
@@ -80,6 +86,7 @@ Globals:
         TWILIO_AUTH_TOKEN: !Ref TwilioAuthToken
         TWILIO_PHONE_NUMBER: !Ref TwilioPhoneNumber
         SES_FROM_EMAIL: !Ref SesFromEmail
+        SEGMENT_SHARED_SECRET: !Ref SegmentSharedSecret
     Layers:
       - !Ref SharedLayer
     VpcConfig:
@@ -1029,6 +1036,28 @@ Resources:
           Properties:
             RestApiId: !Ref RestApi
             Path: /webhooks/twilio/voice
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+  SegmentInboundFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-segment-inbound"
+      Handler: segment_inbound.handler
+      CodeUri: src/handlers/webhooks/
+      Description: Handles inbound Segment events (identify, track, etc.)
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WorkflowQueue.QueueName
+      Events:
+        SegmentWebhook:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /webhooks/segment/{workspace_id}
             Method: POST
             Auth:
               Authorizer: NONE

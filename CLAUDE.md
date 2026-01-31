@@ -247,6 +247,12 @@ The core infrastructure is set up:
   - `_find_workspace_by_phone()` uses GSI2 lookup
   - Proper Twilio signature validation
 - [x] **API testing script**: `scripts/test_api.py`
+- [x] **Segment integration for customer data**
+  - Webhook handler at `POST /webhooks/segment/{workspace_id}`
+  - `identify` calls create/update contacts
+  - `track` calls trigger workflows via `trigger_segment_event`
+  - `group` calls associate contacts with companies
+  - HMAC-SHA1 signature verification
 
 **Integration Configuration (template.yaml parameters):**
 
@@ -256,6 +262,7 @@ The core infrastructure is set up:
 | `TwilioAuthToken` | Twilio Auth Token (NoEcho) |
 | `TwilioPhoneNumber` | Default Twilio phone number |
 | `SesFromEmail` | Default SES sender email |
+| `SegmentSharedSecret` | Segment webhook shared secret (NoEcho) |
 
 **Deploy with integrations:**
 ```bash
@@ -264,8 +271,27 @@ sam deploy --config-env dev --parameter-overrides \
    TwilioAccountSid=ACxxxxxxx \
    TwilioAuthToken=xxxxxxxx \
    TwilioPhoneNumber=+15551234567 \
-   SesFromEmail=noreply@complens.ai"
+   SesFromEmail=noreply@complens.ai \
+   SegmentSharedSecret=your-segment-secret"
 ```
+
+**Setting up Segment as a source:**
+
+1. In Segment, go to **Connections > Destinations > Add Destination**
+2. Search for "Webhooks" and select it
+3. Configure the webhook URL:
+   ```
+   https://api.{your-domain}/webhooks/segment/{workspace_id}
+   ```
+4. Set the shared secret (same as `SegmentSharedSecret` parameter)
+5. Enable the events you want to send (identify, track, etc.)
+
+**Segment events supported:**
+- `identify` → Creates/updates contacts with traits
+- `track` → Triggers workflows matching the event name
+- `page`/`screen` → Acknowledged (for analytics)
+- `group` → Associates contact with company
+- `alias` → Links user identities
 
 ### Phase 3: AI Features
 - [ ] Full Bedrock integration for AI nodes
