@@ -12,6 +12,7 @@ import ForgotPassword from './pages/auth/ForgotPassword';
 // App pages
 import Dashboard from './pages/Dashboard';
 import Workflows from './pages/Workflows';
+import WorkflowEditor from './pages/WorkflowEditor';
 import Contacts from './pages/Contacts';
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
@@ -39,6 +40,7 @@ function App() {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/workflows" element={<Workflows />} />
+            <Route path="/workflows/:id" element={<WorkflowEditor />} />
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/profile" element={<Profile />} />
