@@ -378,12 +378,27 @@ sam deploy --config-env dev --parameter-overrides \
 - `web/src/lib/api.ts` - Axios client with auth
 - `web/src/lib/hooks/` - React Query hooks (useWorkflows, useContacts, useWorkspaces)
 - `web/src/components/workflow/` - Workflow canvas and node components
-- `web/src/pages/WorkflowEditor.tsx` - Full workflow editor with save/load
+- `web/src/components/workflow/NodeConfigPanel.tsx` - Node configuration sidebar
+- `web/src/pages/WorkflowEditor.tsx` - Full workflow editor with save/load/test
+
+**Node Configuration Panel:**
+- [x] Click any node to open config panel
+- [x] Type-specific configuration fields for all node types:
+  - Triggers: Form ID, Tag name, Webhook path, Cron schedule
+  - Actions: Email (to/subject/body), SMS (message), Wait (duration), Webhook (URL/method/headers/body), Update Contact (tags/fields)
+  - Logic: If/Else (field/operator/value), Filter, Goal
+  - AI: Respond (prompt/channel), Decision (prompt/options), Generate (prompt/output variable)
+- [x] Dynamic field types (text, textarea, number, select, checkbox)
+- [x] Template variable hints ({{contact.field}})
+- [x] Node label editing
+
+**Workflow Testing:**
+- [x] Test button executes workflow via API
+- [x] Auto-saves before testing if unsaved changes
+- [x] Success/error result notifications
 
 **Still TODO:**
 - [ ] Real-time WebSocket updates
-- [ ] Node configuration panel (edit node settings)
-- [ ] Workflow execution/testing from UI
 
 ### Phase 5: Polish
 - [ ] Stripe billing integration

@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Play, Settings, Loader2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save, Play, Loader2 } from 'lucide-react';
 import { type Node, type Edge } from '@xyflow/react';
 import WorkflowCanvas, { type WorkflowCanvasRef } from '../components/workflow/WorkflowCanvas';
 import NodeToolbar from '../components/workflow/NodeToolbar';
+import NodeConfigPanel from '../components/workflow/NodeConfigPanel';
 import {
   useWorkflow,
   useCreateWorkflow,
   useUpdateWorkflow,
+  useExecuteWorkflow,
   useCurrentWorkspace,
   type WorkflowNode,
   type WorkflowEdge,
@@ -27,10 +29,14 @@ export default function WorkflowEditor() {
 
   const createWorkflow = useCreateWorkflow(workspaceId || '');
   const updateWorkflow = useUpdateWorkflow(workspaceId || '', id || '');
+  const executeWorkflow = useExecuteWorkflow(workspaceId || '', id || '');
 
   const [name, setName] = useState('Untitled Workflow');
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Load workflow data when available
   useEffect(() => {
@@ -61,6 +67,24 @@ export default function WorkflowEditor() {
   // Track changes
   const handleCanvasChange = useCallback(() => {
     setHasChanges(true);
+  }, []);
+
+  // Handle node selection
+  const handleNodeSelect = useCallback((node: Node | null) => {
+    setSelectedNode(node);
+  }, []);
+
+  // Handle node data update from config panel
+  const handleNodeUpdate = useCallback((nodeId: string, data: Record<string, unknown>) => {
+    if (canvasRef.current) {
+      canvasRef.current.updateNodeData(nodeId, data);
+      setHasChanges(true);
+      // Update selected node to reflect changes
+      const updatedNode = canvasRef.current.getNodes().find(n => n.id === nodeId);
+      if (updatedNode) {
+        setSelectedNode({ ...updatedNode });
+      }
+    }
   }, []);
 
   // Save workflow
@@ -121,6 +145,36 @@ export default function WorkflowEditor() {
     }
   };
 
+  // Test workflow execution
+  const handleTest = async () => {
+    if (isNew || !workspaceId) {
+      setTestResult({ success: false, message: 'Please save the workflow before testing.' });
+      return;
+    }
+
+    // If there are unsaved changes, save first
+    if (hasChanges) {
+      await handleSave();
+    }
+
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const result = await executeWorkflow.mutateAsync(undefined);
+      setTestResult({
+        success: true,
+        message: `Workflow executed successfully! Run ID: ${result.run_id || 'N/A'}`,
+      });
+    } catch (error) {
+      setTestResult({
+        success: false,
+        message: `Execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
   const isLoading = isLoadingWorkspace || (!isNew && isLoadingWorkflow);
 
   if (isLoading) {
@@ -159,16 +213,17 @@ export default function WorkflowEditor() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="text-xs text-gray-400 mr-2 hidden sm:block">
-            Select nodes and press <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-600">Delete</kbd> to remove
-          </div>
-          <button className="btn btn-secondary inline-flex items-center gap-2">
-            <Settings className="w-4 h-4" />
-            <span className="hidden sm:inline">Settings</span>
-          </button>
-          <button className="btn btn-secondary inline-flex items-center gap-2">
-            <Play className="w-4 h-4" />
-            <span className="hidden sm:inline">Test</span>
+          <button
+            onClick={handleTest}
+            disabled={isTesting || isNew}
+            className="btn btn-secondary inline-flex items-center gap-2 disabled:opacity-50"
+          >
+            {isTesting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Play className="w-4 h-4" />
+            )}
+            <span className="hidden sm:inline">{isTesting ? 'Running...' : 'Test'}</span>
           </button>
           <button
             onClick={handleSave}
@@ -185,6 +240,19 @@ export default function WorkflowEditor() {
         </div>
       </div>
 
+      {/* Test result notification */}
+      {testResult && (
+        <div className={`px-4 py-2 text-sm ${testResult.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+          {testResult.message}
+          <button
+            onClick={() => setTestResult(null)}
+            className="ml-2 underline hover:no-underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
         <NodeToolbar />
@@ -193,15 +261,24 @@ export default function WorkflowEditor() {
             ref={canvasRef}
             workflowId={id}
             onChange={handleCanvasChange}
+            onNodeSelect={handleNodeSelect}
           />
         </div>
+        {selectedNode && (
+          <NodeConfigPanel
+            node={selectedNode}
+            onClose={() => setSelectedNode(null)}
+            onUpdate={handleNodeUpdate}
+          />
+        )}
       </div>
 
-      {/* Delete hint overlay */}
-      <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg text-sm text-gray-600 flex items-center gap-2">
-        <Trash2 className="w-4 h-4" />
-        <span>Select + <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Delete</kbd> to remove nodes</span>
-      </div>
+      {/* Keyboard hint - only show when no config panel */}
+      {!selectedNode && (
+        <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg text-sm text-gray-600">
+          Click a node to configure • <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Delete</kbd> to remove
+        </div>
+      )}
     </div>
   );
 }

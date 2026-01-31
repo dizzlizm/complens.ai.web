@@ -11,6 +11,7 @@ import {
   type Edge,
   type Node,
   type NodeTypes,
+  type OnSelectionChangeParams,
   ReactFlowProvider,
   useReactFlow,
 } from '@xyflow/react';
@@ -33,6 +34,8 @@ export interface WorkflowCanvasRef {
   getEdges: () => Edge[];
   setNodes: (nodes: Node[]) => void;
   setEdges: (edges: Edge[]) => void;
+  updateNodeData: (nodeId: string, data: Record<string, unknown>) => void;
+  getSelectedNode: () => Node | null;
 }
 
 interface WorkflowCanvasProps {
@@ -40,6 +43,7 @@ interface WorkflowCanvasProps {
   initialNodes?: Node[];
   initialEdges?: Edge[];
   onChange?: (nodes: Node[], edges: Edge[]) => void;
+  onNodeSelect?: (node: Node | null) => void;
 }
 
 const defaultNodes: Node[] = [
@@ -56,11 +60,37 @@ const defaultNodes: Node[] = [
 ];
 
 const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
-  function WorkflowCanvasInner({ initialNodes, initialEdges, onChange }, ref) {
+  function WorkflowCanvasInner({ initialNodes, initialEdges, onChange, onNodeSelect }, ref) {
     const reactFlowWrapper = useRef<HTMLDivElement>(null);
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes || defaultNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges || []);
     const { screenToFlowPosition } = useReactFlow();
+
+    // Track selected node
+    const selectedNodeRef = useRef<Node | null>(null);
+
+    // Update node data
+    const updateNodeData = useCallback((nodeId: string, newData: Record<string, unknown>) => {
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id === nodeId) {
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                ...newData,
+              },
+            };
+          }
+          return node;
+        })
+      );
+    }, [setNodes]);
+
+    // Get selected node
+    const getSelectedNode = useCallback(() => {
+      return nodes.find((n) => n.selected) || null;
+    }, [nodes]);
 
     // Expose methods to parent via ref
     useImperativeHandle(ref, () => ({
@@ -68,12 +98,25 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
       getEdges: () => edges,
       setNodes: (newNodes: Node[]) => setNodes(newNodes),
       setEdges: (newEdges: Edge[]) => setEdges(newEdges),
-    }), [nodes, edges, setNodes, setEdges]);
+      updateNodeData,
+      getSelectedNode,
+    }), [nodes, edges, setNodes, setEdges, updateNodeData, getSelectedNode]);
 
     // Notify parent of changes
     useEffect(() => {
       onChange?.(nodes, edges);
     }, [nodes, edges, onChange]);
+
+    // Handle selection changes
+    const onSelectionChange = useCallback(({ nodes: selectedNodes }: OnSelectionChangeParams) => {
+      const newSelectedNode = selectedNodes.length === 1 ? selectedNodes[0] : null;
+
+      // Only notify if selection actually changed
+      if (newSelectedNode?.id !== selectedNodeRef.current?.id) {
+        selectedNodeRef.current = newSelectedNode;
+        onNodeSelect?.(newSelectedNode);
+      }
+    }, [onNodeSelect]);
 
     const onConnect = useCallback(
       (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
@@ -115,10 +158,21 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
     // Handle keyboard delete
     const onKeyDown = useCallback((event: React.KeyboardEvent) => {
       if (event.key === 'Delete' || event.key === 'Backspace') {
+        // Don't delete if we're in an input field
+        if ((event.target as HTMLElement).tagName === 'INPUT' ||
+            (event.target as HTMLElement).tagName === 'TEXTAREA') {
+          return;
+        }
         setNodes((nds) => nds.filter((node) => !node.selected));
         setEdges((eds) => eds.filter((edge) => !edge.selected));
       }
     }, [setNodes, setEdges]);
+
+    // Handle pane click (deselect)
+    const onPaneClick = useCallback(() => {
+      selectedNodeRef.current = null;
+      onNodeSelect?.(null);
+    }, [onNodeSelect]);
 
     return (
       <div
@@ -135,6 +189,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
           onConnect={onConnect}
           onDrop={onDrop}
           onDragOver={onDragOver}
+          onSelectionChange={onSelectionChange}
+          onPaneClick={onPaneClick}
           nodeTypes={nodeTypes}
           fitView
           snapToGrid
