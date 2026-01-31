@@ -17,8 +17,21 @@ install:
 install-prod:
 	$(UV) sync --no-dev
 
-build:
+build: build-layer
 	$(SAM) build
+
+# Build the shared layer with both pip packages and source code
+build-layer:
+	@echo "Building shared layer..."
+	@rm -rf .layer-build
+	@mkdir -p .layer-build/python
+	@pip install -r src/layers/shared/requirements.txt -t .layer-build/python --quiet
+	@cp -r src/layers/shared/python/complens .layer-build/python/
+	@rm -rf src/layers/shared/python.bak 2>/dev/null || true
+	@mv src/layers/shared/python src/layers/shared/python.bak 2>/dev/null || true
+	@mv .layer-build/python src/layers/shared/python
+	@rm -rf .layer-build
+	@echo "Layer built successfully!"
 
 build-cached:
 	$(SAM) build --cached --parallel

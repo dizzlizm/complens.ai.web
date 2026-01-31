@@ -68,3 +68,6 @@ node_modules/
 tmp/
 temp/
 *.tmp
+# Ignore pip packages in layer - only keep source code
+src/layers/shared/python/*
+!src/layers/shared/python/complens/

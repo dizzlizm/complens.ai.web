@@ -400,10 +400,8 @@ Resources:
       CompatibleRuntimes:
         - python3.12
       CompatibleArchitectures:
-        - arm64
+        - x86_64
       RetentionPolicy: Retain
-    Metadata:
-      BuildMethod: python3.12
 
   # ============================================
   # REST API Gateway
