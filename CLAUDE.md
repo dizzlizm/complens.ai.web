@@ -293,12 +293,47 @@ sam deploy --config-env dev --parameter-overrides \
 - `group` → Associates contact with company
 - `alias` → Links user identities
 
+---
+
+## Notes & Blockers
+
+### Twilio Verification (Blocked)
+- **Issue**: Twilio requires business verification to get a trial phone number
+- **Requirement**: Need a working website/product demo to show Twilio
+- **Action**: Build frontend first, then return to complete Twilio setup
+- **Status**: Code is ready (`TwilioService`, `action_send_sms`, inbound webhook) - just needs credentials
+
+### Segment Setup (Pending Deployment)
+- Code complete but requires:
+  1. Deploy to AWS to get webhook URL
+  2. Configure Segment destination with the URL
+  3. Set `SegmentSharedSecret` parameter
+
+### SES Email (Pending Verification)
+- SES starts in sandbox mode (can only send to verified emails)
+- Need to request production access after demo is ready
+- Code is ready (`EmailService`, `action_send_email`)
+
+### Technical Debt
+- [ ] Pydantic deprecation warnings (json_encoders, class-based config)
+- [ ] External ID lookup for Segment contacts uses scan (needs GSI for scale)
+- [ ] No integration tests for handlers yet
+- [ ] Step Functions state machine tests missing
+
+### Priority Order
+1. **Phase 4: Frontend** ← Current priority (unblocks Twilio verification)
+2. **Phase 3: AI Features** (can run in parallel with frontend)
+3. Complete Twilio/Segment setup after frontend deployed
+4. Phase 5: Polish
+
+---
+
 ### Phase 3: AI Features
 - [ ] Full Bedrock integration for AI nodes
 - [ ] AI workflow generation from natural language
 - [ ] Knowledge base integration
 
-### Phase 4: Frontend
+### Phase 4: Frontend (Current Priority)
 - [ ] React application with workflow canvas
 - [ ] React Flow integration
 - [ ] Real-time WebSocket updates
