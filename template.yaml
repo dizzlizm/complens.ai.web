@@ -70,7 +70,7 @@ Globals:
     MemorySize: 256
     Tracing: Active
     Architectures:
-      - arm64
+      - x86_64
     Environment:
       Variables:
         TABLE_NAME: !Ref MainTable
