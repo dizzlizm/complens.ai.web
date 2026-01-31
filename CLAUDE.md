@@ -79,12 +79,35 @@ make local
 make lint
 make format
 
-# Deploy
+# Deploy (without custom domain)
 make deploy STAGE=dev
-make deploy-dev
-make deploy-staging
-make deploy-prod
+
+# Deploy with custom domain
+sam deploy --config-env dev --parameter-overrides \
+  "Stage=dev EnableCustomDomain=true"
 ```
+
+## Custom Domain Configuration
+
+Custom domains are optional and controlled via parameters:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `EnableCustomDomain` | `false` | Enable/disable custom domain resources |
+| `DomainName` | `dev.complens.ai` | Base domain (creates api.X and ws.X) |
+| `HostedZoneId` | `Z02373573N3XBHSZBERY6` | Route 53 hosted zone ID |
+| `CertificateArn` | `""` | Optional existing ACM cert ARN |
+
+**Endpoints when enabled:**
+- REST API: `https://api.dev.complens.ai`
+- WebSocket: `wss://ws.dev.complens.ai`
+
+**How it works:**
+1. ACM certificate created with DNS validation via Route 53
+2. API Gateway custom domains configured for REST and WebSocket
+3. Route 53 A records point to the API Gateway endpoints
+
+**Note:** If `CertificateArn` is provided, that cert is used instead of creating a new one.
 
 ## DynamoDB Single-Table Design
 
@@ -203,6 +226,9 @@ The core infrastructure is set up:
 - WebSocket handlers for real-time updates
 - JWT authorizer for Cognito
 - Test fixtures with moto
+- **Scaling architecture:** SQS FIFO queues with MessageGroupId for fair multi-tenant processing
+- **EventBridge:** Event routing for triggers (tags, forms, inbound messages)
+- **Custom domain:** Optional ACM + Route 53 configuration for api/ws subdomains
 
 ## Next Steps
 
