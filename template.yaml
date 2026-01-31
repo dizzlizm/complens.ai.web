@@ -1,0 +1,913 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Complens.ai - AI-Native Marketing Automation Platform
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Deployment stage
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Tracing: Active
+    Architectures:
+      - arm64
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref MainTable
+        STAGE: !Ref Stage
+        SERVICE_NAME: complens
+        COGNITO_USER_POOL_ID: !Ref UserPool
+        AI_QUEUE_URL: !Ref AIProcessingQueue
+        WEBSOCKET_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+    Layers:
+      - !Ref SharedLayer
+    VpcConfig:
+      SecurityGroupIds: []
+      SubnetIds: []
+
+Resources:
+  # ============================================
+  # DynamoDB Table - Single Table Design
+  # ============================================
+  MainTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "complens-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+        - AttributeName: GSI2PK
+          AttributeType: S
+        - AttributeName: GSI2SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: GSI2
+          KeySchema:
+            - AttributeName: GSI2PK
+              KeyType: HASH
+            - AttributeName: GSI2SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  # WebSocket Connections Table
+  ConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "complens-${Stage}-connections"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: connectionId
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connectionId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserIdIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  # ============================================
+  # Cognito User Pool
+  # ============================================
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "complens-${Stage}-users"
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      MfaConfiguration: OPTIONAL
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+      Schema:
+        - Name: agency_id
+          AttributeDataType: String
+          Mutable: true
+        - Name: workspace_ids
+          AttributeDataType: String
+          Mutable: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      UserPoolTags:
+        Service: complens
+        Stage: !Ref Stage
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "complens-${Stage}-web"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      SupportedIdentityProviders:
+        - COGNITO
+
+  # ============================================
+  # SQS Queues
+  # ============================================
+  AIProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "complens-${Stage}-ai-queue"
+      VisibilityTimeout: 120
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AIDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  AIDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "complens-${Stage}-ai-dlq"
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  WorkflowQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "complens-${Stage}-workflow-queue"
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt WorkflowDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  WorkflowDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "complens-${Stage}-workflow-dlq"
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  # ============================================
+  # Lambda Layer
+  # ============================================
+  SharedLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "complens-${Stage}-shared"
+      Description: Shared code for Complens Lambda functions
+      ContentUri: src/layers/shared/
+      CompatibleRuntimes:
+        - python3.12
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Retain
+    Metadata:
+      BuildMethod: python3.12
+
+  # ============================================
+  # REST API Gateway
+  # ============================================
+  RestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "complens-${Stage}-api"
+      StageName: !Ref Stage
+      TracingEnabled: true
+      Cors:
+        AllowMethods: "'GET,POST,PUT,PATCH,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+        MaxAge: "'600'"
+      Auth:
+        DefaultAuthorizer: JwtAuthorizer
+        Authorizers:
+          JwtAuthorizer:
+            FunctionArn: !GetAtt JwtAuthorizerFunction.Arn
+            FunctionPayloadType: REQUEST
+            Identity:
+              Headers:
+                - Authorization
+              ReauthorizeEvery: 300
+      GatewayResponses:
+        UNAUTHORIZED:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: '{"message": "Unauthorized"}'
+        ACCESS_DENIED:
+          StatusCode: 403
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: '{"message": "Access denied"}'
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          ThrottlingBurstLimit: !If [IsProd, 200, 50]
+          ThrottlingRateLimit: !If [IsProd, 100, 25]
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+
+  # ============================================
+  # WebSocket API
+  # ============================================
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "complens-${Stage}-websocket"
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+      Tags:
+        Service: complens
+        Stage: !Ref Stage
+
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: !Ref Stage
+      AutoDeploy: true
+
+  WebSocketConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $connect
+      AuthorizationType: NONE
+      OperationName: Connect
+      Target: !Sub "integrations/${WebSocketConnectIntegration}"
+
+  WebSocketConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketConnectFunction.Arn}/invocations"
+
+  WebSocketDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      OperationName: Disconnect
+      Target: !Sub "integrations/${WebSocketDisconnectIntegration}"
+
+  WebSocketDisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketDisconnectFunction.Arn}/invocations"
+
+  WebSocketMessageRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: message
+      AuthorizationType: NONE
+      OperationName: Message
+      Target: !Sub "integrations/${WebSocketMessageIntegration}"
+
+  WebSocketMessageIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketMessageFunction.Arn}/invocations"
+
+  # ============================================
+  # Lambda Functions - Authorizer
+  # ============================================
+  JwtAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-jwt-authorizer"
+      Handler: jwt_authorizer.handler
+      CodeUri: src/handlers/authorizer/
+      Description: JWT token validation for API Gateway
+      Environment:
+        Variables:
+          COGNITO_USER_POOL_ID: !Ref UserPool
+          COGNITO_REGION: !Ref AWS::Region
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GetUser
+              Resource: !GetAtt UserPool.Arn
+
+  JwtAuthorizerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref JwtAuthorizerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*"
+
+  # ============================================
+  # Lambda Functions - API Handlers
+  # ============================================
+  WorkspacesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-workspaces"
+      Handler: workspaces.handler
+      CodeUri: src/handlers/api/
+      Description: Workspaces CRUD operations
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Events:
+        List:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces
+            Method: GET
+        Create:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces
+            Method: POST
+        Get:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}
+            Method: GET
+        Update:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}
+            Method: PUT
+        Delete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}
+            Method: DELETE
+
+  ContactsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-contacts"
+      Handler: contacts.handler
+      CodeUri: src/handlers/api/
+      Description: Contacts CRUD operations
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Events:
+        List:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts
+            Method: GET
+        Create:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts
+            Method: POST
+        Get:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}
+            Method: GET
+        Update:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}
+            Method: PUT
+        Delete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}
+            Method: DELETE
+
+  ConversationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-conversations"
+      Handler: conversations.handler
+      CodeUri: src/handlers/api/
+      Description: Conversations CRUD operations
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Events:
+        ListByWorkspace:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/conversations
+            Method: GET
+        ListByContact:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/conversations
+            Method: GET
+        Create:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/conversations
+            Method: POST
+        Get:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /conversations/{conversation_id}
+            Method: GET
+
+  MessagesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-messages"
+      Handler: messages.handler
+      CodeUri: src/handlers/api/
+      Description: Messages CRUD operations
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt AIProcessingQueue.QueueName
+      Events:
+        List:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /conversations/{conversation_id}/messages
+            Method: GET
+        Create:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /conversations/{conversation_id}/messages
+            Method: POST
+
+  WorkflowsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-workflows"
+      Handler: workflows.handler
+      CodeUri: src/handlers/api/
+      Description: Workflows CRUD and execution
+      Timeout: 60
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WorkflowQueue.QueueName
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt WorkflowExecutorStateMachine.Name
+      Events:
+        List:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflows
+            Method: GET
+        Create:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflows
+            Method: POST
+        Get:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflows/{workflow_id}
+            Method: GET
+        Update:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflows/{workflow_id}
+            Method: PUT
+        Delete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflows/{workflow_id}
+            Method: DELETE
+        Execute:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflows/{workflow_id}/execute
+            Method: POST
+        Runs:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflows/{workflow_id}/runs
+            Method: GET
+
+  # ============================================
+  # Lambda Functions - WebSocket
+  # ============================================
+  WebSocketConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-ws-connect"
+      Handler: connect.handler
+      CodeUri: src/handlers/websocket/
+      Description: WebSocket connection handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+
+  WebSocketConnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebSocketConnectFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+  WebSocketDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-ws-disconnect"
+      Handler: disconnect.handler
+      CodeUri: src/handlers/websocket/
+      Description: WebSocket disconnection handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+
+  WebSocketDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebSocketDisconnectFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+  WebSocketMessageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-ws-message"
+      Handler: message.handler
+      CodeUri: src/handlers/websocket/
+      Description: WebSocket message handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource:
+                - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+  WebSocketMessagePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebSocketMessageFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+  # ============================================
+  # Lambda Functions - Workers
+  # ============================================
+  AIProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-ai-processor"
+      Handler: ai_processor.handler
+      CodeUri: src/handlers/workers/
+      Description: Processes AI requests from queue
+      Timeout: 120
+      MemorySize: 512
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource:
+                - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt AIProcessingQueue.Arn
+            BatchSize: 1
+
+  WorkflowTriggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-workflow-trigger"
+      Handler: workflow_trigger.handler
+      CodeUri: src/handlers/workers/
+      Description: Handles workflow trigger events
+      Timeout: 60
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt WorkflowExecutorStateMachine.Name
+      Events:
+        DynamoDBStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt MainTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 10
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName": ["INSERT", "MODIFY"]}'
+
+  WorkflowExecutorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-workflow-executor"
+      Handler: workflow_executor.handler
+      CodeUri: src/handlers/workers/
+      Description: Executes individual workflow steps
+      Timeout: 120
+      MemorySize: 512
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt AIProcessingQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource:
+                - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+  # ============================================
+  # Lambda Functions - Webhooks
+  # ============================================
+  TwilioInboundFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-twilio-inbound"
+      Handler: twilio_inbound.handler
+      CodeUri: src/handlers/webhooks/
+      Description: Handles inbound Twilio SMS/Voice
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WorkflowQueue.QueueName
+      Events:
+        Sms:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /webhooks/twilio/sms
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        Voice:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /webhooks/twilio/voice
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+  # ============================================
+  # Step Functions - Workflow Executor
+  # ============================================
+  WorkflowExecutorStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "complens-${Stage}-workflow-executor"
+      DefinitionUri: step-functions/workflow-executor.asl.json
+      DefinitionSubstitutions:
+        WorkflowExecutorFunctionArn: !GetAtt WorkflowExecutorFunction.Arn
+        TableName: !Ref MainTable
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref WorkflowExecutorFunction
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Tracing:
+        Enabled: true
+      Type: STANDARD
+      Tags:
+        Service: complens
+        Stage: !Ref Stage
+
+  # ============================================
+  # CloudWatch Log Groups
+  # ============================================
+  JwtAuthorizerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-jwt-authorizer"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  WorkspacesLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workspaces"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  ContactsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-contacts"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  ConversationsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-conversations"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  MessagesLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-messages"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  WorkflowsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflows"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  AIProcessorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-ai-processor"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  WorkflowExecutorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflow-executor"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+Conditions:
+  IsProd: !Equals [!Ref Stage, "prod"]
+
+Outputs:
+  RestApiUrl:
+    Description: REST API URL
+    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+    Export:
+      Name: !Sub "${AWS::StackName}-RestApiUrl"
+
+  WebSocketUrl:
+    Description: WebSocket API URL
+    Value: !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+    Export:
+      Name: !Sub "${AWS::StackName}-WebSocketUrl"
+
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolId"
+
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolClientId"
+
+  TableName:
+    Description: DynamoDB Table Name
+    Value: !Ref MainTable
+    Export:
+      Name: !Sub "${AWS::StackName}-TableName"
+
+  AIQueueUrl:
+    Description: AI Processing Queue URL
+    Value: !Ref AIProcessingQueue
+    Export:
+      Name: !Sub "${AWS::StackName}-AIQueueUrl"
+
+  WorkflowQueueUrl:
+    Description: Workflow Queue URL
+    Value: !Ref WorkflowQueue
+    Export:
+      Name: !Sub "${AWS::StackName}-WorkflowQueueUrl"

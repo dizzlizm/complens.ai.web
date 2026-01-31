@@ -2,280 +2,226 @@
 
 ## Project Overview
 
-Complens.ai is a multi-tenant AI Security Platform (SaaS) that provides security analysis, compliance monitoring, and AI-powered chat capabilities.
+Complens.ai is an AI-native marketing automation platform (GoHighLevel competitor) with a visual drag-and-drop workflow builder at its core. Think Tines/n8n meets Figma - everything visible on one canvas, connections are explicit lines between nodes, and AI can generate workflows from natural language.
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | React 18, React Router v6, hosted on S3 + CloudFront |
-| Backend | AWS Lambda (Node.js 20.x), API Gateway HTTP API v2 |
-| Database | Amazon RDS PostgreSQL 15.7 |
-| Auth | AWS Cognito (JWT validation at API Gateway) |
-| AI | Amazon Bedrock (Nova Lite for chat, Claude 3.5 Sonnet for security analysis) |
-| IaC | AWS CloudFormation |
-| CI/CD | GitHub Actions |
+| IaC | AWS SAM (Serverless Application Model) |
+| Runtime | Python 3.12 with uv package manager |
+| Database | DynamoDB (single-table design) |
+| Compute | AWS Lambda |
+| API | API Gateway REST + WebSocket API |
+| Auth | Amazon Cognito |
+| AI | Amazon Bedrock (Claude) |
+| Workflow Engine | AWS Step Functions |
+| Validation | Pydantic v2 |
+| Testing | pytest with moto |
 
 ## Project Structure
 
 ```
-complens.ai/
-├── frontend/                    # React SPA
-│   └── src/
-│       ├── components/          # React components
-│       ├── pages/               # Route pages
-│       └── services/            # API client
-├── backend/
-│   ├── lambda/api/
-│   │   ├── index.js             # Main Lambda handler (1,773 lines)
-│   │   └── services/            # Service modules
-│   │       ├── database.js      # PostgreSQL connection pool
-│   │       ├── tenant-context.js # Multi-tenant isolation
-│   │       ├── bedrock.js       # AI model integration
-│   │       ├── security-intel.js # CVE/NIST lookups
-│   │       └── google-workspace.js # GWS integration
-│   └── database/
-│       └── migrations/          # SQL migration files
-├── infrastructure/
-│   └── cloudformation/          # AWS CloudFormation templates
-└── .github/workflows/           # CI/CD pipelines
+complens/
+├── template.yaml              # Main SAM template
+├── samconfig.toml            # SAM config for dev/staging/prod
+├── Makefile                  # Build, test, deploy commands
+├── pyproject.toml            # uv/Python dependencies
+├── .python-version           # 3.12
+│
+├── src/
+│   ├── layers/
+│   │   └── shared/           # Lambda layer
+│   │       └── python/
+│   │           └── complens/
+│   │               ├── models/       # Pydantic models
+│   │               ├── repositories/ # DynamoDB repositories
+│   │               ├── services/     # Business logic
+│   │               ├── nodes/        # Workflow node implementations
+│   │               └── utils/        # Helpers
+│   │
+│   └── handlers/
+│       ├── api/              # REST API handlers
+│       ├── webhooks/         # External webhook handlers
+│       ├── workers/          # Background workers
+│       ├── websocket/        # WebSocket handlers
+│       └── authorizer/       # JWT authorizer
+│
+├── step-functions/           # Step Functions definitions
+├── tests/                    # pytest tests
+└── scripts/                  # Utility scripts
 ```
 
 ## Key Files
 
-- `backend/lambda/api/index.js` - Main API handler, all 25+ endpoints
-- `backend/lambda/api/services/database.js` - DB connection pool config
-- `backend/lambda/api/services/tenant-context.js` - Multi-tenant context and RLS helpers
-- `infrastructure/cloudformation/main.yaml` - Primary CloudFormation template
+- `template.yaml` - Main SAM template with all AWS resources
+- `src/layers/shared/python/complens/models/` - Pydantic models
+- `src/layers/shared/python/complens/nodes/` - Workflow node implementations
+- `src/layers/shared/python/complens/services/workflow_engine.py` - Workflow execution engine
 
 ## Development Commands
 
 ```bash
-# Frontend (local dev)
-cd frontend && npm install && npm start     # Dev server on localhost:3000
-cd frontend && npm run build                # Production build
+# Install dependencies
+make install
 
-# Backend (local testing)
-cd backend/lambda/api && npm install
-cd backend/lambda/api && npm test           # Run tests
+# Build SAM application
+make build
 
-# Database migrations (via bastion)
-./run-migrations.sh                         # On bastion host
+# Run tests
+make test
+make test-cov  # With coverage
+
+# Run locally
+make local
+
+# Lint and format
+make lint
+make format
+
+# Deploy
+make deploy STAGE=dev
+make deploy-dev
+make deploy-staging
+make deploy-prod
 ```
 
-## Deployment Commands
+## DynamoDB Single-Table Design
 
-### PowerShell (Windows - from laptop)
-```powershell
-# Deploy everything to dev
-.\scripts\Deploy-Complens.ps1 -Environment dev
+**Primary Table: `complens-{stage}`**
+- PK: Partition Key (String)
+- SK: Sort Key (String)
+- GSI1PK, GSI1SK: Global Secondary Index 1
+- GSI2PK, GSI2SK: Global Secondary Index 2
 
-# Quick Lambda-only deploy (fastest)
-.\scripts\Deploy-Lambda.ps1 -Environment dev
+**Entity Key Patterns:**
 
-# Deploy specific component
-.\scripts\Deploy-Complens.ps1 -Environment prod -Component backend
-.\scripts\Deploy-Complens.ps1 -Component infra      # Infrastructure only
-.\scripts\Deploy-Complens.ps1 -Component frontend   # Frontend only
-```
+| Entity | PK | SK | GSI1PK | GSI1SK |
+|--------|----|----|--------|--------|
+| Workspace | `AGENCY#{agency_id}` | `WS#{ws_id}` | `WS#{ws_id}` | `META` |
+| Contact | `WS#{ws_id}` | `CONTACT#{contact_id}` | `WS#{ws_id}#EMAIL` | `{email}` |
+| Conversation | `WS#{ws_id}` | `CONV#{conv_id}` | `CONTACT#{contact_id}` | `CONV#{created_at}` |
+| Message | `CONV#{conv_id}` | `MSG#{timestamp}#{id}` | - | - |
+| Workflow | `WS#{ws_id}` | `WF#{wf_id}` | `WS#{ws_id}#WF_STATUS` | `{status}#{wf_id}` |
+| WorkflowRun | `WF#{wf_id}` | `RUN#{run_id}` | `CONTACT#{contact_id}` | `RUN#{created_at}` |
+| WorkflowStep | `RUN#{run_id}` | `STEP#{sequence}#{id}` | - | - |
 
-### Bash (Linux/Mac/WSL)
-```bash
-# Infrastructure
-cd infrastructure/cloudformation && ./deploy.sh dev
+## Workflow Node Types
 
-# Lambda only (fast)
-./scripts/deploy-lambda.sh
+**Triggers (start the flow):**
+- `trigger_form_submitted` - Form submission
+- `trigger_appointment_booked` - Calendar booking
+- `trigger_tag_added` - Contact tagged
+- `trigger_sms_received` - Inbound SMS
+- `trigger_email_received` - Inbound email
+- `trigger_webhook` - External webhook
+- `trigger_schedule` - Cron-based trigger
 
-# Frontend
-./scripts/deploy-frontend-with-cognito.sh
-```
+**Actions (do something):**
+- `action_send_sms` - Send text message
+- `action_send_email` - Send email
+- `action_ai_respond` - AI generates and sends response
+- `action_update_contact` - Update contact fields/tags
+- `action_wait` - Delay for duration
+- `action_webhook` - Call external API
+- `action_create_task` - Create internal task
 
-### GitHub Actions (automatic)
-- Push to `claude/**` branch → auto-deploys to dev
-- Manual trigger → choose dev or prod
+**Logic (control flow):**
+- `logic_branch` - If/else based on conditions
+- `logic_ab_split` - Random percentage split
+- `logic_filter` - Continue only if conditions met
+- `logic_goal` - End flow when condition achieved
 
-## Architecture Notes
+**AI (intelligence):**
+- `ai_decision` - AI chooses next path
+- `ai_generate` - AI creates content
+- `ai_analyze` - Sentiment, intent analysis
+- `ai_conversation` - Multi-turn chat handler
 
-### Authentication Flow
-```
-User → Cognito Login → JWT Token → API Gateway validates JWT
-  → Lambda extracts claims (sub, email) → TenantContextService resolves org
-  → Auto-provision org if first-time user → Inject tenantContext into request
-```
-
-### Multi-Tenancy
-- All data isolated by `org_id` column
-- Row-Level Security (RLS) policies enabled with helper methods
-- Users can belong to multiple orgs (user_organizations table)
-
-### Database Tables (27 total)
-Key tables: `organizations`, `user_organizations`, `conversations`, `messages`, `findings`, `audit_logs`, `security_intel`
-
----
-
-# HOW TO USE THIS FILE
-
-This file is automatically loaded at the start of every Claude Code session. You can:
-- Say "work on item #4" to tackle a specific backlog item
-- Say "fix the critical issues" to address security priorities
-- Say "what's the status?" to get an overview
-
----
-
-# TECHNICAL DEBT BACKLOG
-
-## Critical Priority (Security)
-
-### 1. ~~SSL Certificate Validation Disabled~~ ✅ FIXED
-**File:** `backend/lambda/api/services/database.js:21`
-**Status:** Fixed - now uses `rejectUnauthorized: true`
-
-### 2. ~~Row-Level Security Not Enforced~~ ✅ FIXED
-**File:** `backend/lambda/api/services/database.js`
-**Status:** Fixed - added `queryWithRLS()` and `getClientWithRLS()` helper methods
-**Usage:**
-```javascript
-// For simple queries with RLS:
-const result = await db.queryWithRLS(orgId, 'SELECT * FROM conversations', []);
-
-// For transactions with RLS:
-const client = await db.getClientWithRLS(orgId);
-try {
-  // RLS policies automatically filter by org_id
-  await client.query('BEGIN');
-  // ... your queries
-  await client.query('COMMIT');
-} finally {
-  client.release();
-}
-```
-
-### 3. ~~No API Rate Limiting~~ ✅ FIXED
-**File:** `infrastructure/cloudformation/main.yaml`
-**Status:** Fixed - added throttling to API Gateway Stage
-- Default: 50 burst / 25 rps (dev), 200 burst / 100 rps (prod)
-- /chat endpoint: 10 burst / 5 rps (dev), 50 burst / 20 rps (prod)
-
-## High Priority (Performance)
-
-### 4. Lambda Connection Pool Bottleneck
-**File:** `backend/lambda/api/services/database.js:17`
-**Issue:** `max: 2` connections per Lambda = bottleneck under load
-**Fix:** Implement RDS Proxy
-**Steps:**
-1. Add RDS Proxy to CloudFormation template
-2. Update Lambda to connect via proxy endpoint
-3. Increase pool size (proxy handles actual pooling)
-4. Test under load
-
-### 5. N+1 Query in User Listing
-**File:** `backend/lambda/api/index.js` - /admin/users endpoint
-**Issue:** Fetches Cognito users then separately queries user_organizations
-**Fix:** Optimize with JOIN or batch query
-
-## Medium Priority (Operational)
-
-### 6. Audit Log Silent Failures
-**File:** `backend/lambda/api/services/audit-log.js`
-**Issue:** Failures caught and logged but not alerted
-**Fix:** Add CloudWatch metric/alarm for audit failures
-
-### 7. No Distributed Tracing
-**Issue:** X-Ray not configured, hard to debug cross-service issues
-**Fix:** Enable X-Ray in Lambda and API Gateway
-
-### 8. ~~CORS Origins Hardcoded~~ ✅ FIXED
-**File:** `backend/lambda/api/index.js`, `infrastructure/cloudformation/main.yaml`
-**Status:** Fixed - now reads from `CORS_ALLOWED_ORIGINS` environment variable
-
-### 9. Manual Database Migrations
-**Issue:** No automated migration tracking
-**Fix:** Implement migration versioning (schema_migrations table exists)
-
-## Low Priority (Tech Debt)
-
-### 10. No OpenAPI Specification
-**Fix:** Generate OpenAPI spec from existing endpoints
-
-### 11. API Key Rotation
-**Issue:** Service account API keys never expire
-**Fix:** Add expiration field and rotation mechanism
-
-### 12. Bedrock Response Streaming
-**Issue:** Full responses only, no streaming for long analyses
-**Fix:** Implement streaming for /chat endpoint
-
----
-
-# SERVERLESS MIGRATION NOTES
-
-## Current State
-- Already serverless on compute (Lambda + API Gateway)
-- Database is RDS PostgreSQL (not serverless)
-
-## Recommended Path (NOT full rewrite)
-
-### Option A: Keep PostgreSQL, Add RDS Proxy
-- **Effort:** 1-2 days
-- **Cost:** +$20/month
-- **Benefit:** Fixes connection pooling, minimal code changes
-
-### Option B: Migrate to Aurora Serverless v2
-- **Effort:** 1 week
-- **Cost:** Variable (~$43/mo minimum, scales with load)
-- **Benefit:** True serverless database, same PostgreSQL compatibility
-
-### NOT Recommended: DynamoDB Migration
-- **Effort:** 2-3 months
-- **Risk:** Data model is relational, would require complete redesign
-- **Issue:** Conversations → Messages, Users → Organizations are relational patterns
-
----
-
-# COST REFERENCE
-
-| Environment | Current Cost | With RDS Proxy |
-|-------------|--------------|----------------|
-| Dev | ~$25/month | ~$45/month |
-| Prod | ~$200-250/month | ~$220-270/month |
-
-Major cost drivers:
-- RDS instance: $15 (dev) / $120 (prod)
-- VPC Endpoints: $21/month
-- Bedrock: Pay-per-token (~$5-50/month depending on usage)
-
----
-
-# ENVIRONMENT VARIABLES
+## Environment Variables
 
 Required in Lambda:
-- `DB_SECRET_ARN` - Secrets Manager ARN for database credentials
+- `TABLE_NAME` - DynamoDB table name
+- `STAGE` - dev/staging/prod
+- `SERVICE_NAME` - "complens"
 - `COGNITO_USER_POOL_ID` - Cognito user pool
-- `BEDROCK_REGION` - Region for Bedrock API calls
-- `ENVIRONMENT` - dev/prod
+- `AI_QUEUE_URL` - SQS queue for AI processing
+- `WORKFLOW_QUEUE_URL` - SQS queue for workflow triggers
+
+## API Endpoints
+
+### Workspaces
+- `GET /workspaces` - List workspaces
+- `POST /workspaces` - Create workspace
+- `GET /workspaces/{id}` - Get workspace
+- `PUT /workspaces/{id}` - Update workspace
+- `DELETE /workspaces/{id}` - Delete workspace
+
+### Contacts
+- `GET /workspaces/{ws_id}/contacts` - List contacts
+- `POST /workspaces/{ws_id}/contacts` - Create contact
+- `GET /workspaces/{ws_id}/contacts/{id}` - Get contact
+- `PUT /workspaces/{ws_id}/contacts/{id}` - Update contact
+- `DELETE /workspaces/{ws_id}/contacts/{id}` - Delete contact
+
+### Workflows
+- `GET /workspaces/{ws_id}/workflows` - List workflows
+- `POST /workspaces/{ws_id}/workflows` - Create workflow
+- `GET /workspaces/{ws_id}/workflows/{id}` - Get workflow
+- `PUT /workspaces/{ws_id}/workflows/{id}` - Update workflow
+- `DELETE /workspaces/{ws_id}/workflows/{id}` - Delete workflow
+- `POST /workspaces/{ws_id}/workflows/{id}/execute` - Execute workflow
+- `GET /workspaces/{ws_id}/workflows/{id}/runs` - List runs
+
+### Conversations & Messages
+- `GET /workspaces/{ws_id}/conversations` - List conversations
+- `POST /workspaces/{ws_id}/contacts/{c_id}/conversations` - Create conversation
+- `GET /conversations/{id}/messages` - List messages
+- `POST /conversations/{id}/messages` - Send message
+
+## Coding Standards
+
+- Type hints everywhere
+- Docstrings for public methods (Google style)
+- Use `structlog` for structured logging
+- No print statements
+- Constants in SCREAMING_SNAKE_CASE
+- Use Pydantic models, not raw dicts
+- f-strings for string formatting
 
 ---
 
-# TESTING
+## Phase 1 Complete ✅
 
-```bash
-# Health check
-curl https://api.dev.complens.ai/health
+The core infrastructure is set up:
+- SAM template with DynamoDB, Cognito, API Gateway, Lambda, SQS, Step Functions
+- Pydantic models for all entities
+- DynamoDB repository pattern
+- Complete workflow node system (triggers, actions, logic, AI)
+- Workflow execution engine with Step Functions integration
+- REST API handlers for CRUD operations
+- WebSocket handlers for real-time updates
+- JWT authorizer for Cognito
+- Test fixtures with moto
 
-# Debug endpoint (requires auth)
-curl -H "Authorization: Bearer $TOKEN" https://api.dev.complens.ai/debug/me
-```
+## Next Steps
 
----
+### Phase 2: Integrations
+- [ ] Twilio integration for SMS sending
+- [ ] SES/SendGrid integration for email
+- [ ] Complete webhook handlers
 
-# SECURITY CHECKLIST
+### Phase 3: AI Features
+- [ ] Full Bedrock integration for AI nodes
+- [ ] AI workflow generation from natural language
+- [ ] Knowledge base integration
 
-- [x] SSL certificate validation enabled (rejectUnauthorized: true)
-- [x] RLS policies actively enforced (via queryWithRLS/getClientWithRLS)
-- [x] API rate limiting configured (50 burst/25 rps dev, 200/100 prod)
-- [ ] Audit logs monitored for failures
-- [ ] Secrets rotated regularly
-- [x] VPC endpoints in use (no public internet for AWS services)
-- [x] Database in private subnet
-- [x] CloudFront HTTPS-only
+### Phase 4: Frontend
+- [ ] React application with workflow canvas
+- [ ] React Flow integration
+- [ ] Real-time WebSocket updates
+
+### Phase 5: Polish
+- [ ] Stripe billing integration
+- [ ] Workflow templates library
+- [ ] Analytics dashboard

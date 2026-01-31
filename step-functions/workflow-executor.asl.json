@@ -1,0 +1,138 @@
+{
+  "Comment": "Complens.ai Workflow Executor - Executes marketing automation workflows",
+  "StartAt": "Initialize",
+  "States": {
+    "Initialize": {
+      "Type": "Task",
+      "Resource": "${WorkflowExecutorFunctionArn}",
+      "Parameters": {
+        "action": "initialize",
+        "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_id.$": "$.workflow_id",
+        "trigger_data.$": "$.trigger_data",
+        "contact_id.$": "$.contact_id",
+        "workspace_id.$": "$.workspace_id"
+      },
+      "ResultPath": "$.execution_context",
+      "Next": "ExecuteNode",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "ExecuteNode": {
+      "Type": "Task",
+      "Resource": "${WorkflowExecutorFunctionArn}",
+      "Parameters": {
+        "action": "execute_node",
+        "workflow_run_id.$": "$.workflow_run_id",
+        "current_node_id.$": "$.execution_context.current_node_id",
+        "variables.$": "$.execution_context.variables"
+      },
+      "ResultPath": "$.node_result",
+      "Next": "CheckNodeResult",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "CheckNodeResult": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.node_result.status",
+          "StringEquals": "completed",
+          "Next": "CheckNextNode"
+        },
+        {
+          "Variable": "$.node_result.status",
+          "StringEquals": "waiting",
+          "Next": "WaitForDuration"
+        },
+        {
+          "Variable": "$.node_result.status",
+          "StringEquals": "error",
+          "Next": "HandleError"
+        }
+      ],
+      "Default": "CheckNextNode"
+    },
+    "WaitForDuration": {
+      "Type": "Wait",
+      "SecondsPath": "$.node_result.wait_seconds",
+      "Next": "ResumeAfterWait"
+    },
+    "ResumeAfterWait": {
+      "Type": "Task",
+      "Resource": "${WorkflowExecutorFunctionArn}",
+      "Parameters": {
+        "action": "resume_after_wait",
+        "workflow_run_id.$": "$.workflow_run_id",
+        "current_node_id.$": "$.node_result.next_node_id",
+        "variables.$": "$.node_result.variables"
+      },
+      "ResultPath": "$.node_result",
+      "Next": "CheckNodeResult",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "CheckNextNode": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.node_result.next_node_id",
+          "IsPresent": true,
+          "Next": "PrepareNextNode"
+        }
+      ],
+      "Default": "CompleteWorkflow"
+    },
+    "PrepareNextNode": {
+      "Type": "Pass",
+      "Parameters": {
+        "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_id.$": "$.workflow_id",
+        "workspace_id.$": "$.workspace_id",
+        "contact_id.$": "$.contact_id",
+        "execution_context": {
+          "current_node_id.$": "$.node_result.next_node_id",
+          "variables.$": "$.node_result.variables"
+        }
+      },
+      "Next": "ExecuteNode"
+    },
+    "CompleteWorkflow": {
+      "Type": "Task",
+      "Resource": "${WorkflowExecutorFunctionArn}",
+      "Parameters": {
+        "action": "complete",
+        "workflow_run_id.$": "$.workflow_run_id",
+        "status": "completed",
+        "variables.$": "$.node_result.variables"
+      },
+      "End": true
+    },
+    "HandleError": {
+      "Type": "Task",
+      "Resource": "${WorkflowExecutorFunctionArn}",
+      "Parameters": {
+        "action": "complete",
+        "workflow_run_id.$": "$.workflow_run_id",
+        "status": "failed",
+        "error.$": "$.error"
+      },
+      "End": true
+    }
+  }
+}

@@ -1,0 +1,56 @@
+# SAM CLI configuration file
+# Run `sam deploy --guided` to update
+
+version = 0.1
+
+[default.global.parameters]
+stack_name = "complens"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+confirm_changeset = true
+resolve_s3 = true
+
+[default.local_start_api.parameters]
+warm_containers = "EAGER"
+
+# Development environment
+[dev]
+[dev.deploy.parameters]
+stack_name = "complens-dev"
+s3_prefix = "complens-dev"
+region = "us-east-1"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Stage=dev"
+
+[dev.local_start_api.parameters]
+port = 3001
+env_vars = "env.json"
+
+# Staging environment
+[staging]
+[staging.deploy.parameters]
+stack_name = "complens-staging"
+s3_prefix = "complens-staging"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Stage=staging"
+
+# Production environment
+[prod]
+[prod.deploy.parameters]
+stack_name = "complens-prod"
+s3_prefix = "complens-prod"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Stage=prod"
