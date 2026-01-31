@@ -1,4 +1,4 @@
-.PHONY: install build test deploy clean local lint format
+.PHONY: install build test deploy clean local lint format web-install web-dev web-build web-deploy web-env deploy-full
 
 # Default stage
 STAGE ?= dev
@@ -99,6 +99,51 @@ seed:
 env-json:
 	@echo '{\n  "Parameters": {\n    "TABLE_NAME": "complens-$(STAGE)",\n    "STAGE": "$(STAGE)",\n    "SERVICE_NAME": "complens",\n    "COGNITO_USER_POOL_ID": "us-east-1_XXXXX",\n    "AI_QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/123456789/complens-$(STAGE)-ai-queue"\n  }\n}' > env.json
 
+# ============================================
+# Frontend Commands
+# ============================================
+web-install:
+	cd web && npm install
+
+web-dev:
+	cd web && npm run dev
+
+web-build:
+	cd web && npm run build
+
+web-deploy: web-build
+	@BUCKET=$$(aws cloudformation describe-stacks --stack-name complens-$(STAGE) --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue" --output text 2>/dev/null); \
+	DIST_ID=$$(aws cloudformation describe-stacks --stack-name complens-$(STAGE) --query "Stacks[0].Outputs[?OutputKey=='FrontendDistributionId'].OutputValue" --output text 2>/dev/null); \
+	if [ -z "$$BUCKET" ] || [ "$$BUCKET" = "None" ]; then \
+		echo "Error: Frontend bucket not found. Make sure to deploy with EnableCustomDomain=true"; \
+		exit 1; \
+	fi; \
+	echo "Deploying frontend to s3://$$BUCKET..."; \
+	aws s3 sync web/dist/ s3://$$BUCKET/ --delete; \
+	echo "Invalidating CloudFront cache..."; \
+	aws cloudfront create-invalidation --distribution-id $$DIST_ID --paths "/*"; \
+	echo "Frontend deployed successfully!"
+
+web-env:
+	@USER_POOL_ID=$$(aws cloudformation describe-stacks --stack-name complens-$(STAGE) --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text 2>/dev/null); \
+	CLIENT_ID=$$(aws cloudformation describe-stacks --stack-name complens-$(STAGE) --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text 2>/dev/null); \
+	API_URL=$$(aws cloudformation describe-stacks --stack-name complens-$(STAGE) --query "Stacks[0].Outputs[?OutputKey=='RestApiCustomUrl'].OutputValue" --output text 2>/dev/null); \
+	if [ -z "$$API_URL" ] || [ "$$API_URL" = "None" ]; then \
+		API_URL=$$(aws cloudformation describe-stacks --stack-name complens-$(STAGE) --query "Stacks[0].Outputs[?OutputKey=='RestApiUrl'].OutputValue" --output text 2>/dev/null); \
+	fi; \
+	echo "VITE_COGNITO_USER_POOL_ID=$$USER_POOL_ID" > web/.env.local; \
+	echo "VITE_COGNITO_CLIENT_ID=$$CLIENT_ID" >> web/.env.local; \
+	echo "VITE_API_URL=$$API_URL" >> web/.env.local; \
+	echo "Created web/.env.local with:"; \
+	cat web/.env.local
+
+# Full deploy (backend + frontend)
+deploy-full: deploy web-env web-deploy
+	@echo "Full deployment complete!"
+
+deploy-full-dev:
+	$(MAKE) deploy-full STAGE=dev
+
 # Help
 help:
 	@echo "Complens.ai - Marketing Automation Platform"
@@ -115,11 +160,19 @@ help:
 	@echo "  local          Start local API Gateway"
 	@echo "  clean          Remove build artifacts"
 	@echo ""
+	@echo "Frontend:"
+	@echo "  web-install    Install frontend dependencies"
+	@echo "  web-dev        Start frontend dev server"
+	@echo "  web-build      Build frontend for production"
+	@echo "  web-deploy     Deploy frontend to S3/CloudFront"
+	@echo "  web-env        Generate web/.env.local from deployed stack"
+	@echo ""
 	@echo "Deployment:"
-	@echo "  deploy         Deploy to specified STAGE"
-	@echo "  deploy-dev     Deploy to dev environment"
-	@echo "  deploy-staging Deploy to staging environment"
-	@echo "  deploy-prod    Deploy to production"
+	@echo "  deploy         Deploy backend to specified STAGE"
+	@echo "  deploy-dev     Deploy backend to dev environment"
+	@echo "  deploy-staging Deploy backend to staging environment"
+	@echo "  deploy-prod    Deploy backend to production"
+	@echo "  deploy-full    Deploy backend + frontend"
 	@echo "  delete         Delete stack for STAGE"
 	@echo ""
 	@echo "Utilities:"

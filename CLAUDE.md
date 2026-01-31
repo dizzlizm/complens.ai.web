@@ -232,17 +232,108 @@ The core infrastructure is set up:
 
 ## Next Steps
 
-### Phase 2: Integrations
-- [ ] Twilio integration for SMS sending
-- [ ] SES/SendGrid integration for email
-- [ ] Complete webhook handlers
+### Phase 2: Integrations ✅
+
+- [x] **Twilio integration for SMS sending**
+  - `TwilioService` in `src/layers/shared/python/complens/services/twilio_service.py`
+  - `SendSmsAction` node updated with real Twilio integration
+  - Twilio inbound webhook handler with workspace lookup by phone (GSI2)
+  - Signature validation support
+- [x] **SES integration for email**
+  - `EmailService` in `src/layers/shared/python/complens/services/email_service.py`
+  - `SendEmailAction` node updated with real SES integration
+  - Template email support via `send_templated_email()`
+- [x] **Webhook handlers improved**
+  - `_find_workspace_by_phone()` uses GSI2 lookup
+  - Proper Twilio signature validation
+- [x] **API testing script**: `scripts/test_api.py`
+- [x] **Segment integration for customer data**
+  - Webhook handler at `POST /webhooks/segment/{workspace_id}`
+  - `identify` calls create/update contacts
+  - `track` calls trigger workflows via `trigger_segment_event`
+  - `group` calls associate contacts with companies
+  - HMAC-SHA1 signature verification
+
+**Integration Configuration (template.yaml parameters):**
+
+| Parameter | Description |
+|-----------|-------------|
+| `TwilioAccountSid` | Twilio Account SID |
+| `TwilioAuthToken` | Twilio Auth Token (NoEcho) |
+| `TwilioPhoneNumber` | Default Twilio phone number |
+| `SesFromEmail` | Default SES sender email |
+| `SegmentSharedSecret` | Segment webhook shared secret (NoEcho) |
+
+**Deploy with integrations:**
+```bash
+sam deploy --config-env dev --parameter-overrides \
+  "Stage=dev \
+   TwilioAccountSid=ACxxxxxxx \
+   TwilioAuthToken=xxxxxxxx \
+   TwilioPhoneNumber=+15551234567 \
+   SesFromEmail=noreply@complens.ai \
+   SegmentSharedSecret=your-segment-secret"
+```
+
+**Setting up Segment as a source:**
+
+1. In Segment, go to **Connections > Destinations > Add Destination**
+2. Search for "Webhooks" and select it
+3. Configure the webhook URL:
+   ```
+   https://api.{your-domain}/webhooks/segment/{workspace_id}
+   ```
+4. Set the shared secret (same as `SegmentSharedSecret` parameter)
+5. Enable the events you want to send (identify, track, etc.)
+
+**Segment events supported:**
+- `identify` → Creates/updates contacts with traits
+- `track` → Triggers workflows matching the event name
+- `page`/`screen` → Acknowledged (for analytics)
+- `group` → Associates contact with company
+- `alias` → Links user identities
+
+---
+
+## Notes & Blockers
+
+### Twilio Verification (Blocked)
+- **Issue**: Twilio requires business verification to get a trial phone number
+- **Requirement**: Need a working website/product demo to show Twilio
+- **Action**: Build frontend first, then return to complete Twilio setup
+- **Status**: Code is ready (`TwilioService`, `action_send_sms`, inbound webhook) - just needs credentials
+
+### Segment Setup (Pending Deployment)
+- Code complete but requires:
+  1. Deploy to AWS to get webhook URL
+  2. Configure Segment destination with the URL
+  3. Set `SegmentSharedSecret` parameter
+
+### SES Email (Pending Verification)
+- SES starts in sandbox mode (can only send to verified emails)
+- Need to request production access after demo is ready
+- Code is ready (`EmailService`, `action_send_email`)
+
+### Technical Debt
+- [ ] Pydantic deprecation warnings (json_encoders, class-based config)
+- [ ] External ID lookup for Segment contacts uses scan (needs GSI for scale)
+- [ ] No integration tests for handlers yet
+- [ ] Step Functions state machine tests missing
+
+### Priority Order
+1. **Phase 4: Frontend** ← Current priority (unblocks Twilio verification)
+2. **Phase 3: AI Features** (can run in parallel with frontend)
+3. Complete Twilio/Segment setup after frontend deployed
+4. Phase 5: Polish
+
+---
 
 ### Phase 3: AI Features
 - [ ] Full Bedrock integration for AI nodes
 - [ ] AI workflow generation from natural language
 - [ ] Knowledge base integration
 
-### Phase 4: Frontend
+### Phase 4: Frontend (Current Priority)
 - [ ] React application with workflow canvas
 - [ ] React Flow integration
 - [ ] Real-time WebSocket updates
