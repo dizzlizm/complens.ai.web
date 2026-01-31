@@ -121,14 +121,42 @@ get_stack_outputs() {
 generate_frontend_env() {
     log_step "Generating frontend environment file..."
 
+    # Validate required values
+    if [ -z "$USER_POOL_ID" ] || [ "$USER_POOL_ID" = "None" ]; then
+        log_error "USER_POOL_ID is empty! Stack outputs may not be ready."
+        log_info "Trying to fetch again..."
+        USER_POOL_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" \
+            --output text)
+    fi
+
+    if [ -z "$CLIENT_ID" ] || [ "$CLIENT_ID" = "None" ]; then
+        log_error "CLIENT_ID is empty! Stack outputs may not be ready."
+        log_info "Trying to fetch again..."
+        CLIENT_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" \
+            --output text)
+    fi
+
+    # Final validation
+    if [ -z "$USER_POOL_ID" ] || [ "$USER_POOL_ID" = "None" ] || [ -z "$CLIENT_ID" ] || [ "$CLIENT_ID" = "None" ]; then
+        log_error "Failed to get Cognito configuration from stack outputs!"
+        log_error "USER_POOL_ID: ${USER_POOL_ID:-EMPTY}"
+        log_error "CLIENT_ID: ${CLIENT_ID:-EMPTY}"
+        exit 1
+    fi
+
     cat > web/.env.local << EOF
 VITE_COGNITO_USER_POOL_ID=${USER_POOL_ID}
 VITE_COGNITO_CLIENT_ID=${CLIENT_ID}
 VITE_API_URL=${API_URL}
 EOF
 
-    log_info "Created web/.env.local"
+    log_info "Created web/.env.local with:"
     cat web/.env.local
+    echo ""
 }
 
 # Install frontend dependencies
