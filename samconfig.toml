@@ -30,7 +30,7 @@ region = "us-east-1"
 confirm_changeset = false
 resolve_s3 = true
 capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
-parameter_overrides = "Stage=dev DomainName=dev.complens.ai HostedZoneId=Z02373573N3XBHSZBERY6"
+parameter_overrides = "Stage=dev DomainName=dev.complens.ai HostedZoneId=Z02373573N3XBHSZBERY6 EnableCustomDomain=false"
 
 [dev.local_start_api.parameters]
 port = 3001

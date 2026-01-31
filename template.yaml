@@ -22,6 +22,14 @@ Parameters:
     Default: "Z02373573N3XBHSZBERY6"
     Description: Route 53 hosted zone ID for the domain
 
+  EnableCustomDomain:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Enable custom domain configuration (requires valid hosted zone)
+
 Globals:
   Function:
     Runtime: python3.12
@@ -1077,6 +1085,7 @@ Resources:
   # ============================================
   ApiCertificate:
     Type: AWS::CertificateManager::Certificate
+    Condition: CustomDomainEnabled
     Properties:
       DomainName: !Sub "*.${DomainName}"
       SubjectAlternativeNames:
@@ -1098,6 +1107,7 @@ Resources:
   # ============================================
   RestApiDomainName:
     Type: AWS::ApiGateway::DomainName
+    Condition: CustomDomainEnabled
     DependsOn: ApiCertificate
     Properties:
       DomainName: !Sub "api.${DomainName}"
@@ -1114,6 +1124,7 @@ Resources:
 
   RestApiBasePathMapping:
     Type: AWS::ApiGateway::BasePathMapping
+    Condition: CustomDomainEnabled
     DependsOn: RestApiDomainName
     Properties:
       DomainName: !Ref RestApiDomainName
@@ -1125,6 +1136,7 @@ Resources:
   # ============================================
   WebSocketApiDomainName:
     Type: AWS::ApiGatewayV2::DomainName
+    Condition: CustomDomainEnabled
     DependsOn: ApiCertificate
     Properties:
       DomainName: !Sub "ws.${DomainName}"
@@ -1138,6 +1150,7 @@ Resources:
 
   WebSocketApiMapping:
     Type: AWS::ApiGatewayV2::ApiMapping
+    Condition: CustomDomainEnabled
     DependsOn:
       - WebSocketApiDomainName
       - WebSocketStage
@@ -1151,6 +1164,7 @@ Resources:
   # ============================================
   RestApiDnsRecord:
     Type: AWS::Route53::RecordSet
+    Condition: CustomDomainEnabled
     Properties:
       HostedZoneId: !Ref HostedZoneId
       Name: !Sub "api.${DomainName}"
@@ -1162,6 +1176,7 @@ Resources:
 
   WebSocketApiDnsRecord:
     Type: AWS::Route53::RecordSet
+    Condition: CustomDomainEnabled
     Properties:
       HostedZoneId: !Ref HostedZoneId
       Name: !Sub "ws.${DomainName}"
@@ -1173,6 +1188,7 @@ Resources:
 
 Conditions:
   IsProd: !Equals [!Ref Stage, "prod"]
+  CustomDomainEnabled: !Equals [!Ref EnableCustomDomain, "true"]
 
 Outputs:
   RestApiUrl:
@@ -1182,6 +1198,7 @@ Outputs:
       Name: !Sub "${AWS::StackName}-RestApiUrl"
 
   RestApiCustomUrl:
+    Condition: CustomDomainEnabled
     Description: REST API Custom Domain URL
     Value: !Sub "https://api.${DomainName}"
     Export:
@@ -1194,6 +1211,7 @@ Outputs:
       Name: !Sub "${AWS::StackName}-WebSocketUrl"
 
   WebSocketCustomUrl:
+    Condition: CustomDomainEnabled
     Description: WebSocket API Custom Domain URL
     Value: !Sub "wss://ws.${DomainName}"
     Export:
