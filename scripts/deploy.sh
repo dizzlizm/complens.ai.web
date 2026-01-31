@@ -148,15 +148,29 @@ generate_frontend_env() {
         exit 1
     fi
 
-    cat > web/.env.local << EOF
-VITE_COGNITO_USER_POOL_ID=${USER_POOL_ID}
-VITE_COGNITO_CLIENT_ID=${CLIENT_ID}
-VITE_API_URL=${API_URL}
-EOF
+    # Write the env file
+    echo "VITE_COGNITO_USER_POOL_ID=${USER_POOL_ID}" > web/.env.local
+    echo "VITE_COGNITO_CLIENT_ID=${CLIENT_ID}" >> web/.env.local
+    echo "VITE_API_URL=${API_URL}" >> web/.env.local
 
-    log_info "Created web/.env.local with:"
+    # Verify file was created
+    if [ ! -f "web/.env.local" ]; then
+        log_error "FAILED TO CREATE web/.env.local!"
+        exit 1
+    fi
+
+    log_info "Created web/.env.local:"
+    echo "----------------------------------------"
     cat web/.env.local
-    echo ""
+    echo "----------------------------------------"
+
+    # Double check the values are in the file
+    if ! grep -q "VITE_COGNITO_USER_POOL_ID=us-east" web/.env.local; then
+        log_error "web/.env.local does not contain valid USER_POOL_ID!"
+        exit 1
+    fi
+
+    log_info "Environment file verified!"
 }
 
 # Install frontend dependencies
