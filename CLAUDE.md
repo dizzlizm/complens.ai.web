@@ -333,10 +333,57 @@ sam deploy --config-env dev --parameter-overrides \
 - [ ] AI workflow generation from natural language
 - [ ] Knowledge base integration
 
-### Phase 4: Frontend (Current Priority)
-- [ ] React application with workflow canvas
-- [ ] React Flow integration
+### Phase 4: Frontend ✅ Core Features Complete
+
+**Infrastructure:**
+- [x] React + Vite + TypeScript scaffolding
+- [x] Tailwind CSS with custom theme
+- [x] AWS Amplify v6 Cognito integration
+- [x] Auth pages (Login, Register, Forgot Password)
+- [x] Protected routes with auth guards
+- [x] App layout with responsive sidebar
+- [x] S3 + CloudFront hosting infrastructure
+- [x] Route 53 DNS for dev.complens.ai
+- [x] Deploy script (`scripts/deploy.sh`)
+
+**API Integration:**
+- [x] Axios client with Cognito auth interceptor (`web/src/lib/api.ts`)
+- [x] React Query hooks for data fetching (`web/src/lib/hooks/`)
+- [x] CORS configured in API Gateway (wildcard origin)
+- [x] Dashboard connected to API (real stats from workflows/contacts)
+- [x] Workflows page connected to API (list, loading, error, empty states)
+- [x] Contacts page connected to API (search, tag filter, loading states)
+
+**Visual Workflow Builder:**
+- [x] React Flow canvas with drag-and-drop (`web/src/components/workflow/WorkflowCanvas.tsx`)
+- [x] Custom node components (Trigger, Action, Logic, AI)
+- [x] Node toolbar with draggable node palette
+- [x] Edge connections between nodes
+- [x] Snap-to-grid and minimap
+- [x] Delete nodes/edges (select + Delete/Backspace key)
+- [x] Save workflow to backend API
+- [x] Load existing workflow from API
+
+**Frontend URLs:**
+- Frontend: `https://dev.complens.ai`
+- API: `https://api.dev.complens.ai`
+- WebSocket: `wss://ws.dev.complens.ai`
+
+**Deploy command:**
+```bash
+./scripts/deploy.sh dev
+```
+
+**Key Files:**
+- `web/src/lib/api.ts` - Axios client with auth
+- `web/src/lib/hooks/` - React Query hooks (useWorkflows, useContacts, useWorkspaces)
+- `web/src/components/workflow/` - Workflow canvas and node components
+- `web/src/pages/WorkflowEditor.tsx` - Full workflow editor with save/load
+
+**Still TODO:**
 - [ ] Real-time WebSocket updates
+- [ ] Node configuration panel (edit node settings)
+- [ ] Workflow execution/testing from UI
 
 ### Phase 5: Polish
 - [ ] Stripe billing integration

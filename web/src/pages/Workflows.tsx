@@ -1,46 +1,52 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, GitBranch, MoreVertical, Play, Pause } from 'lucide-react';
+import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2 } from 'lucide-react';
+import { useWorkflows, useCurrentWorkspace } from '../lib/hooks';
 
-const workflows = [
-  {
-    id: '1',
-    name: 'Welcome Sequence',
-    description: 'Onboard new subscribers with a 5-email welcome series',
-    status: 'active',
-    trigger: 'Form Submitted',
-    runs: 1256,
-    lastRun: '2 minutes ago',
-  },
-  {
-    id: '2',
-    name: 'Abandoned Cart Recovery',
-    description: 'Re-engage users who left items in their cart',
-    status: 'active',
-    trigger: 'Tag Added',
-    runs: 892,
-    lastRun: '15 minutes ago',
-  },
-  {
-    id: '3',
-    name: 'Re-engagement Campaign',
-    description: 'Win back inactive subscribers',
-    status: 'paused',
-    trigger: 'Segment Event',
-    runs: 234,
-    lastRun: '2 days ago',
-  },
-  {
-    id: '4',
-    name: 'Birthday Wishes',
-    description: 'Send personalized birthday messages',
-    status: 'active',
-    trigger: 'Schedule',
-    runs: 567,
-    lastRun: '1 hour ago',
-  },
-];
+// Format trigger type for display
+function formatTriggerType(triggerType: string): string {
+  const mapping: Record<string, string> = {
+    trigger_form_submitted: 'Form Submitted',
+    trigger_tag_added: 'Tag Added',
+    trigger_webhook: 'Webhook',
+    trigger_schedule: 'Schedule',
+    trigger_sms_received: 'SMS Received',
+    trigger_email_received: 'Email Received',
+    trigger_segment_event: 'Segment Event',
+  };
+  return mapping[triggerType] || triggerType;
+}
+
+// Format relative time
+function formatRelativeTime(dateString?: string): string {
+  if (!dateString) return 'Never';
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins} minutes ago`;
+  if (diffHours < 24) return `${diffHours} hours ago`;
+  return `${diffDays} days ago`;
+}
 
 export default function Workflows() {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
+  const { data: workflows, isLoading, error } = useWorkflows(workspaceId || '');
+
+  // Filter workflows
+  const filteredWorkflows = workflows?.filter((wf) => {
+    const matchesSearch = wf.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      wf.description?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || wf.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  }) || [];
+
   return (
     <div className="space-y-6">
       {/* Page header */}
@@ -63,100 +69,137 @@ export default function Workflows() {
             type="text"
             placeholder="Search workflows..."
             className="input pl-10"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        <select className="input w-full sm:w-40">
-          <option>All Status</option>
-          <option>Active</option>
-          <option>Paused</option>
-          <option>Draft</option>
+        <select
+          className="input w-full sm:w-40"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="all">All Status</option>
+          <option value="active">Active</option>
+          <option value="paused">Paused</option>
+          <option value="draft">Draft</option>
         </select>
       </div>
 
+      {/* Loading state */}
+      {(isLoading || isLoadingWorkspace) && (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 text-primary-600 animate-spin" />
+        </div>
+      )}
+
+      {/* Error state */}
+      {error && (
+        <div className="card bg-red-50 border-red-200 text-red-800 p-4">
+          Failed to load workflows. Please try again.
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!isLoading && !error && filteredWorkflows.length === 0 && (
+        <div className="card text-center py-12">
+          <GitBranch className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No workflows yet</h3>
+          <p className="text-gray-500 mb-4">Create your first workflow to start automating.</p>
+          <Link to="/workflows/new" className="btn btn-primary inline-flex items-center gap-2">
+            <Plus className="w-5 h-5" />
+            Create Workflow
+          </Link>
+        </div>
+      )}
+
       {/* Workflows list */}
-      <div className="card p-0 overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Workflow
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Trigger
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Runs
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Last Run
-              </th>
-              <th className="relative px-6 py-3">
-                <span className="sr-only">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {workflows.map((workflow) => (
-              <tr key={workflow.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center">
-                      <GitBranch className="w-5 h-5 text-primary-600" />
-                    </div>
-                    <div>
-                      <Link
-                        to={`/workflows/${workflow.id}`}
-                        className="font-medium text-gray-900 hover:text-primary-600"
-                      >
-                        {workflow.name}
-                      </Link>
-                      <p className="text-sm text-gray-500">{workflow.description}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 text-sm text-gray-500">
-                  {workflow.trigger}
-                </td>
-                <td className="px-6 py-4">
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    workflow.status === 'active'
-                      ? 'bg-green-100 text-green-800'
-                      : 'bg-gray-100 text-gray-800'
-                  }`}>
-                    {workflow.status}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-sm text-gray-500">
-                  {workflow.runs.toLocaleString()}
-                </td>
-                <td className="px-6 py-4 text-sm text-gray-500">
-                  {workflow.lastRun}
-                </td>
-                <td className="px-6 py-4 text-right text-sm font-medium">
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      className="p-1 text-gray-400 hover:text-gray-600"
-                      title={workflow.status === 'active' ? 'Pause' : 'Start'}
-                    >
-                      {workflow.status === 'active' ? (
-                        <Pause className="w-5 h-5" />
-                      ) : (
-                        <Play className="w-5 h-5" />
-                      )}
-                    </button>
-                    <button className="p-1 text-gray-400 hover:text-gray-600">
-                      <MoreVertical className="w-5 h-5" />
-                    </button>
-                  </div>
-                </td>
+      {!isLoading && !error && filteredWorkflows.length > 0 && (
+        <div className="card p-0 overflow-hidden">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Workflow
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Trigger
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Runs
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Last Run
+                </th>
+                <th className="relative px-6 py-3">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {filteredWorkflows.map((workflow) => (
+                <tr key={workflow.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center">
+                        <GitBranch className="w-5 h-5 text-primary-600" />
+                      </div>
+                      <div>
+                        <Link
+                          to={`/workflows/${workflow.id}`}
+                          className="font-medium text-gray-900 hover:text-primary-600"
+                        >
+                          {workflow.name}
+                        </Link>
+                        <p className="text-sm text-gray-500">{workflow.description}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-500">
+                    {formatTriggerType(workflow.trigger_type)}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                      workflow.status === 'active'
+                        ? 'bg-green-100 text-green-800'
+                        : workflow.status === 'paused'
+                        ? 'bg-yellow-100 text-yellow-800'
+                        : 'bg-gray-100 text-gray-800'
+                    }`}>
+                      {workflow.status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-500">
+                    {(workflow.runs_count || 0).toLocaleString()}
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-500">
+                    {formatRelativeTime(workflow.last_run_at)}
+                  </td>
+                  <td className="px-6 py-4 text-right text-sm font-medium">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        className="p-1 text-gray-400 hover:text-gray-600"
+                        title={workflow.status === 'active' ? 'Pause' : 'Start'}
+                      >
+                        {workflow.status === 'active' ? (
+                          <Pause className="w-5 h-5" />
+                        ) : (
+                          <Play className="w-5 h-5" />
+                        )}
+                      </button>
+                      <button className="p-1 text-gray-400 hover:text-gray-600">
+                        <MoreVertical className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -69,7 +69,20 @@ build_backend() {
 # Deploy SAM application
 deploy_backend() {
     log_step "Deploying backend to AWS (${STAGE})..."
-    sam deploy --config-env "${STAGE}" --no-confirm-changeset
+    # Allow "no changes" to not fail the script
+    set +e
+    sam deploy --config-env "${STAGE}" --no-confirm-changeset 2>&1 | tee /tmp/sam-deploy.log
+    DEPLOY_EXIT=${PIPESTATUS[0]}
+    set -e
+
+    if [ $DEPLOY_EXIT -ne 0 ]; then
+        if grep -q "No changes to deploy" /tmp/sam-deploy.log; then
+            log_info "No backend changes to deploy (this is OK)"
+        else
+            log_error "SAM deploy failed!"
+            exit 1
+        fi
+    fi
     log_info "Backend deployment complete!"
 }
 
