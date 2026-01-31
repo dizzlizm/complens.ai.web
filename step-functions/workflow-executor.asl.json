@@ -1,5 +1,5 @@
 {
-  "Comment": "Complens.ai Workflow Executor - Executes marketing automation workflows",
+  "Comment": "Complens.ai Workflow Executor - Executes marketing automation workflows with fair multi-tenant scheduling",
   "StartAt": "Initialize",
   "States": {
     "Initialize": {
@@ -29,6 +29,9 @@
       "Parameters": {
         "action": "execute_node",
         "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_id.$": "$.workflow_id",
+        "workspace_id.$": "$.workspace_id",
+        "contact_id.$": "$.contact_id",
         "current_node_id.$": "$.execution_context.current_node_id",
         "variables.$": "$.execution_context.variables"
       },
@@ -53,7 +56,7 @@
         {
           "Variable": "$.node_result.status",
           "StringEquals": "waiting",
-          "Next": "WaitForDuration"
+          "Next": "DetermineWaitStrategy"
         },
         {
           "Variable": "$.node_result.status",
@@ -63,10 +66,45 @@
       ],
       "Default": "CheckNextNode"
     },
+    "DetermineWaitStrategy": {
+      "Type": "Choice",
+      "Comment": "Choose wait strategy based on duration - inline for short waits, reschedule for long waits",
+      "Choices": [
+        {
+          "Variable": "$.node_result.wait_seconds",
+          "NumericGreaterThan": 300,
+          "Next": "RescheduleForLongWait"
+        }
+      ],
+      "Default": "WaitForDuration"
+    },
     "WaitForDuration": {
       "Type": "Wait",
       "SecondsPath": "$.node_result.wait_seconds",
       "Next": "ResumeAfterWait"
+    },
+    "RescheduleForLongWait": {
+      "Type": "Task",
+      "Resource": "${WorkflowExecutorFunctionArn}",
+      "Parameters": {
+        "action": "schedule_resume",
+        "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_id.$": "$.workflow_id",
+        "workspace_id.$": "$.workspace_id",
+        "contact_id.$": "$.contact_id",
+        "next_node_id.$": "$.node_result.next_node_id",
+        "wait_seconds.$": "$.node_result.wait_seconds",
+        "variables.$": "$.node_result.variables"
+      },
+      "Comment": "For long waits, schedule via EventBridge Scheduler and exit to free resources",
+      "End": true,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ]
     },
     "ResumeAfterWait": {
       "Type": "Task",
@@ -74,6 +112,9 @@
       "Parameters": {
         "action": "resume_after_wait",
         "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_id.$": "$.workflow_id",
+        "workspace_id.$": "$.workspace_id",
+        "contact_id.$": "$.contact_id",
         "current_node_id.$": "$.node_result.next_node_id",
         "variables.$": "$.node_result.variables"
       },
@@ -93,6 +134,17 @@
         {
           "Variable": "$.node_result.next_node_id",
           "IsPresent": true,
+          "Next": "CheckNextNodeNotNull"
+        }
+      ],
+      "Default": "CompleteWorkflow"
+    },
+    "CheckNextNodeNotNull": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.node_result.next_node_id",
+          "IsNull": false,
           "Next": "PrepareNextNode"
         }
       ],
@@ -118,6 +170,8 @@
       "Parameters": {
         "action": "complete",
         "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_id.$": "$.workflow_id",
+        "workspace_id.$": "$.workspace_id",
         "status": "completed",
         "variables.$": "$.node_result.variables"
       },
@@ -129,6 +183,8 @@
       "Parameters": {
         "action": "complete",
         "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_id.$": "$.workflow_id",
+        "workspace_id.$": "$.workspace_id",
         "status": "failed",
         "error.$": "$.error"
       },

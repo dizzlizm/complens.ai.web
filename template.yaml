@@ -27,6 +27,8 @@ Globals:
         SERVICE_NAME: complens
         COGNITO_USER_POOL_ID: !Ref UserPool
         AI_QUEUE_URL: !Ref AIProcessingQueue
+        WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
+        EVENT_BUS_NAME: !Sub "complens-${Stage}-workflow-events"
         WEBSOCKET_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
     Layers:
       - !Ref SharedLayer
@@ -206,10 +208,15 @@ Resources:
         - Key: Stage
           Value: !Ref Stage
 
+  # FIFO Queue for fair multi-tenant workflow processing
   WorkflowQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-workflow-queue"
+      QueueName: !Sub "complens-${Stage}-workflow-queue.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: false
+      DeduplicationScope: messageGroup
+      FifoThroughputLimit: perMessageGroupId
       VisibilityTimeout: 300
       MessageRetentionPeriod: 1209600
       RedrivePolicy:
@@ -224,13 +231,105 @@ Resources:
   WorkflowDeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-workflow-dlq"
+      QueueName: !Sub "complens-${Stage}-workflow-dlq.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: false
       MessageRetentionPeriod: 1209600
       Tags:
         - Key: Service
           Value: complens
         - Key: Stage
           Value: !Ref Stage
+
+  # ============================================
+  # EventBridge - Event Routing
+  # ============================================
+  WorkflowEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub "complens-${Stage}-workflow-events"
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  # Rule for tag-based triggers
+  TagTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "complens-${Stage}-tag-trigger"
+      EventBusName: !Ref WorkflowEventBus
+      EventPattern:
+        source:
+          - "complens.contact"
+        detail-type:
+          - "contact.tag.added"
+          - "contact.tag.removed"
+      State: ENABLED
+      Targets:
+        - Id: WorkflowTriggerQueue
+          Arn: !GetAtt WorkflowQueue.Arn
+          SqsParameters:
+            MessageGroupId: "$.detail.workspace_id"
+
+  # Rule for form submission triggers
+  FormSubmitRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "complens-${Stage}-form-submit-trigger"
+      EventBusName: !Ref WorkflowEventBus
+      EventPattern:
+        source:
+          - "complens.form"
+        detail-type:
+          - "form.submitted"
+      State: ENABLED
+      Targets:
+        - Id: WorkflowTriggerQueue
+          Arn: !GetAtt WorkflowQueue.Arn
+          SqsParameters:
+            MessageGroupId: "$.detail.workspace_id"
+
+  # Rule for inbound message triggers
+  InboundMessageRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "complens-${Stage}-inbound-message-trigger"
+      EventBusName: !Ref WorkflowEventBus
+      EventPattern:
+        source:
+          - "complens.messaging"
+        detail-type:
+          - "sms.inbound"
+          - "email.inbound"
+      State: ENABLED
+      Targets:
+        - Id: WorkflowTriggerQueue
+          Arn: !GetAtt WorkflowQueue.Arn
+          SqsParameters:
+            MessageGroupId: "$.detail.workspace_id"
+
+  # Permission for EventBridge to send to SQS
+  WorkflowQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref WorkflowQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt WorkflowQueue.Arn
+            Condition:
+              ArnEquals:
+                "aws:SourceArn":
+                  - !GetAtt TagTriggerRule.Arn
+                  - !GetAtt FormSubmitRule.Arn
+                  - !GetAtt InboundMessageRule.Arn
 
   # ============================================
   # Lambda Layer
@@ -713,13 +812,20 @@ Resources:
       FunctionName: !Sub "complens-${Stage}-workflow-trigger"
       Handler: workflow_trigger.handler
       CodeUri: src/handlers/workers/
-      Description: Handles workflow trigger events
+      Description: Handles workflow trigger events from DynamoDB streams and publishes to EventBridge
       Timeout: 60
+      Environment:
+        Variables:
+          EVENT_BUS_NAME: !Ref WorkflowEventBus
+          WORKFLOW_STATE_MACHINE_ARN: !Ref WorkflowExecutorStateMachine
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
-        - StepFunctionsExecutionPolicy:
-            StateMachineName: !GetAtt WorkflowExecutorStateMachine.Name
+        - Statement:
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: !GetAtt WorkflowEventBus.Arn
       Events:
         DynamoDBStream:
           Type: DynamoDB
@@ -731,6 +837,32 @@ Resources:
               Filters:
                 - Pattern: '{"eventName": ["INSERT", "MODIFY"]}'
 
+  # Workflow Queue Processor - processes events from FIFO queue
+  WorkflowQueueProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-workflow-queue-processor"
+      Handler: workflow_queue_processor.handler
+      CodeUri: src/handlers/workers/
+      Description: Processes workflow trigger events from FIFO queue with fair multi-tenant ordering
+      Timeout: 60
+      Environment:
+        Variables:
+          WORKFLOW_STATE_MACHINE_ARN: !Ref WorkflowExecutorStateMachine
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt WorkflowExecutorStateMachine.Name
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt WorkflowQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
   WorkflowExecutorFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -740,6 +872,10 @@ Resources:
       Description: Executes individual workflow steps
       Timeout: 120
       MemorySize: 512
+      Environment:
+        Variables:
+          WORKFLOW_STATE_MACHINE_ARN: !Ref WorkflowExecutorStateMachine
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerRole.Arn
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
@@ -747,6 +883,8 @@ Resources:
             TableName: !Ref ConnectionsTable
         - SQSSendMessagePolicy:
             QueueName: !GetAtt AIProcessingQueue.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WorkflowQueue.QueueName
         - Statement:
             - Effect: Allow
               Action:
@@ -758,6 +896,48 @@ Resources:
                 - execute-api:ManageConnections
               Resource:
                 - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - scheduler:CreateSchedule
+                - scheduler:DeleteSchedule
+                - scheduler:GetSchedule
+              Resource:
+                - !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/wf-resume-*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - iam:PassRole
+              Resource:
+                - !GetAtt SchedulerRole.Arn
+
+  # IAM Role for EventBridge Scheduler to start Step Functions
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "complens-${Stage}-scheduler-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartStepFunctions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref WorkflowExecutorStateMachine
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
 
   # ============================================
   # Lambda Functions - Webhooks
@@ -866,6 +1046,18 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflow-executor"
       RetentionInDays: !If [IsProd, 90, 14]
 
+  WorkflowQueueProcessorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflow-queue-processor"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  WorkflowTriggerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflow-trigger"
+      RetentionInDays: !If [IsProd, 90, 14]
+
 Conditions:
   IsProd: !Equals [!Ref Stage, "prod"]
 
@@ -911,3 +1103,15 @@ Outputs:
     Value: !Ref WorkflowQueue
     Export:
       Name: !Sub "${AWS::StackName}-WorkflowQueueUrl"
+
+  EventBusArn:
+    Description: EventBridge Event Bus ARN
+    Value: !GetAtt WorkflowEventBus.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-EventBusArn"
+
+  WorkflowStateMachineArn:
+    Description: Workflow Executor State Machine ARN
+    Value: !Ref WorkflowExecutorStateMachine
+    Export:
+      Name: !Sub "${AWS::StackName}-WorkflowStateMachineArn"

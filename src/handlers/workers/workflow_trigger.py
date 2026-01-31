@@ -1,6 +1,6 @@
 """Workflow trigger worker.
 
-Handles DynamoDB stream events to trigger workflows.
+Handles DynamoDB stream events and publishes workflow triggers to EventBridge.
 """
 
 import json
@@ -16,6 +16,10 @@ logger = structlog.get_logger()
 def handler(event: dict[str, Any], context: Any) -> dict:
     """Process DynamoDB stream events to trigger workflows.
 
+    Events are published to EventBridge where rules route them to the
+    appropriate SQS FIFO queue with MessageGroupId for fair multi-tenant
+    processing.
+
     Args:
         event: DynamoDB stream event.
         context: Lambda context.
@@ -27,27 +31,37 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
     logger.info("Processing DynamoDB stream", record_count=len(records))
 
+    events_to_publish = []
+
     for record in records:
         try:
-            process_stream_record(record)
+            trigger_events = process_stream_record(record)
+            events_to_publish.extend(trigger_events)
         except Exception as e:
             logger.exception("Failed to process stream record", error=str(e))
+
+    # Batch publish events to EventBridge
+    if events_to_publish:
+        publish_to_eventbridge(events_to_publish)
 
     return {"statusCode": 200}
 
 
-def process_stream_record(record: dict) -> None:
+def process_stream_record(record: dict) -> list[dict]:
     """Process a single DynamoDB stream record.
 
     Args:
         record: Stream record.
+
+    Returns:
+        List of EventBridge events to publish.
     """
     event_name = record.get("eventName")
     new_image = record.get("dynamodb", {}).get("NewImage", {})
     old_image = record.get("dynamodb", {}).get("OldImage", {})
 
     if not new_image:
-        return
+        return []
 
     # Deserialize DynamoDB image
     new_data = _deserialize_image(new_image)
@@ -56,12 +70,14 @@ def process_stream_record(record: dict) -> None:
     pk = new_data.get("PK", "")
     sk = new_data.get("SK", "")
 
+    events = []
+
     # Check for contact tag changes
     if pk.startswith("WS#") and sk.startswith("CONTACT#"):
-        _check_tag_triggers(event_name, new_data, old_data)
+        tag_events = _create_tag_events(event_name, new_data, old_data)
+        events.extend(tag_events)
 
-    # Check for form submissions (would need a form submission entity)
-    # Check for appointment bookings (would need an appointment entity)
+    return events
 
 
 def _deserialize_image(image: dict) -> dict:
@@ -79,16 +95,19 @@ def _deserialize_image(image: dict) -> dict:
     return {k: deserializer.deserialize(v) for k, v in image.items()}
 
 
-def _check_tag_triggers(event_name: str, new_data: dict, old_data: dict) -> None:
-    """Check for tag-based workflow triggers.
+def _create_tag_events(event_name: str, new_data: dict, old_data: dict) -> list[dict]:
+    """Create EventBridge events for tag changes.
 
     Args:
         event_name: INSERT, MODIFY, REMOVE.
         new_data: New contact data.
         old_data: Old contact data.
+
+    Returns:
+        List of EventBridge events.
     """
     if event_name not in ("INSERT", "MODIFY"):
-        return
+        return []
 
     new_tags = set(new_data.get("tags", []))
     old_tags = set(old_data.get("tags", []))
@@ -100,148 +119,161 @@ def _check_tag_triggers(event_name: str, new_data: dict, old_data: dict) -> None
     contact_id = new_data.get("id")
 
     if not workspace_id or not contact_id:
-        return
+        return []
 
-    # Trigger workflows for added tags
+    events = []
+
+    # Create events for added tags
     for tag in added_tags:
-        _trigger_workflow(
-            workspace_id=workspace_id,
-            contact_id=contact_id,
-            trigger_type="trigger_tag_added",
-            trigger_data={
+        events.append({
+            "Source": "complens.contact",
+            "DetailType": "contact.tag.added",
+            "Detail": json.dumps({
+                "workspace_id": workspace_id,
+                "contact_id": contact_id,
                 "tag": tag,
                 "operation": "added",
                 "previous_tags": list(old_tags),
                 "current_tags": list(new_tags),
-            },
-        )
+                "trigger_type": "trigger_tag_added",
+            }),
+            "EventBusName": os.environ.get("EVENT_BUS_NAME"),
+        })
 
-    # Trigger workflows for removed tags
-    for tag in removed_tags:
-        _trigger_workflow(
+        logger.info(
+            "Creating tag added event",
             workspace_id=workspace_id,
             contact_id=contact_id,
-            trigger_type="trigger_tag_added",  # Same trigger, different operation
-            trigger_data={
+            tag=tag,
+        )
+
+    # Create events for removed tags
+    for tag in removed_tags:
+        events.append({
+            "Source": "complens.contact",
+            "DetailType": "contact.tag.removed",
+            "Detail": json.dumps({
+                "workspace_id": workspace_id,
+                "contact_id": contact_id,
                 "tag": tag,
                 "operation": "removed",
                 "previous_tags": list(old_tags),
                 "current_tags": list(new_tags),
-            },
-        )
+                "trigger_type": "trigger_tag_added",
+            }),
+            "EventBusName": os.environ.get("EVENT_BUS_NAME"),
+        })
 
-
-def _trigger_workflow(
-    workspace_id: str,
-    contact_id: str,
-    trigger_type: str,
-    trigger_data: dict,
-) -> None:
-    """Find and trigger matching workflows.
-
-    Args:
-        workspace_id: Workspace ID.
-        contact_id: Contact ID.
-        trigger_type: Type of trigger.
-        trigger_data: Trigger event data.
-    """
-    from complens.repositories.workflow import WorkflowRepository
-
-    repo = WorkflowRepository()
-
-    # Get active workflows for workspace
-    workflows = repo.list_active(workspace_id)
-
-    for workflow in workflows:
-        # Check if workflow has matching trigger
-        trigger_node = workflow.get_trigger_node()
-        if not trigger_node or trigger_node.node_type != trigger_type:
-            continue
-
-        # Check trigger configuration matches
-        config = trigger_node.get_config()
-
-        if trigger_type == "trigger_tag_added":
-            # Check if tag matches
-            configured_tag = config.get("tag_name")
-            configured_operation = config.get("tag_operation", "added")
-
-            if configured_tag and configured_tag != trigger_data.get("tag"):
-                continue
-            if configured_operation != "any" and configured_operation != trigger_data.get(
-                "operation"
-            ):
-                continue
-
-        # Trigger matches - start workflow
         logger.info(
-            "Triggering workflow",
-            workflow_id=workflow.id,
-            workflow_name=workflow.name,
-            trigger_type=trigger_type,
-            contact_id=contact_id,
-        )
-
-        _start_workflow_execution(
-            workflow_id=workflow.id,
+            "Creating tag removed event",
             workspace_id=workspace_id,
             contact_id=contact_id,
-            trigger_type=trigger_type,
-            trigger_data=trigger_data,
+            tag=tag,
         )
 
+    return events
 
-def _start_workflow_execution(
-    workflow_id: str,
-    workspace_id: str,
-    contact_id: str,
-    trigger_type: str,
-    trigger_data: dict,
-) -> None:
-    """Start workflow execution via Step Functions.
+
+def publish_to_eventbridge(events: list[dict]) -> None:
+    """Publish events to EventBridge.
 
     Args:
-        workflow_id: Workflow ID.
-        workspace_id: Workspace ID.
-        contact_id: Contact ID.
-        trigger_type: Trigger type.
-        trigger_data: Trigger data.
+        events: List of EventBridge events.
     """
-    state_machine_arn = os.environ.get("WORKFLOW_STATE_MACHINE_ARN")
+    if not events:
+        return
 
-    if state_machine_arn:
-        sfn = boto3.client("stepfunctions")
+    eventbridge = boto3.client("events")
 
-        execution_input = {
-            "workflow_id": workflow_id,
-            "workspace_id": workspace_id,
-            "contact_id": contact_id,
-            "trigger_type": trigger_type,
-            "trigger_data": trigger_data,
-        }
+    # EventBridge allows max 10 events per batch
+    batch_size = 10
+    for i in range(0, len(events), batch_size):
+        batch = events[i : i + batch_size]
 
-        sfn.start_execution(
-            stateMachineArn=state_machine_arn,
-            input=json.dumps(execution_input),
-        )
+        response = eventbridge.put_events(Entries=batch)
+
+        failed_count = response.get("FailedEntryCount", 0)
+        if failed_count > 0:
+            logger.warning(
+                "Some events failed to publish",
+                failed_count=failed_count,
+                entries=response.get("Entries", []),
+            )
 
         logger.info(
-            "Step Functions execution started",
-            workflow_id=workflow_id,
-            contact_id=contact_id,
+            "Published events to EventBridge",
+            batch_size=len(batch),
+            failed_count=failed_count,
         )
-    else:
-        # Queue for later processing
-        queue_url = os.environ.get("WORKFLOW_QUEUE_URL")
-        if queue_url:
-            sqs = boto3.client("sqs")
-            sqs.send_message(
-                QueueUrl=queue_url,
-                MessageBody=json.dumps({
-                    "workflow_id": workflow_id,
-                    "workspace_id": workspace_id,
-                    "contact_id": contact_id,
-                    "trigger_type": trigger_type,
-                    "trigger_data": trigger_data,
-                }),
-            )
+
+
+def create_form_submitted_event(
+    workspace_id: str,
+    contact_id: str,
+    form_id: str,
+    form_name: str,
+    submission_data: dict,
+) -> dict:
+    """Create an EventBridge event for form submission.
+
+    This is a helper function for other handlers to use.
+
+    Args:
+        workspace_id: Workspace ID.
+        contact_id: Contact ID.
+        form_id: Form ID.
+        form_name: Form name.
+        submission_data: Form submission data.
+
+    Returns:
+        EventBridge event dict.
+    """
+    return {
+        "Source": "complens.form",
+        "DetailType": "form.submitted",
+        "Detail": json.dumps({
+            "workspace_id": workspace_id,
+            "contact_id": contact_id,
+            "form_id": form_id,
+            "form_name": form_name,
+            "submission_data": submission_data,
+            "trigger_type": "trigger_form_submitted",
+        }),
+        "EventBusName": os.environ.get("EVENT_BUS_NAME"),
+    }
+
+
+def create_inbound_message_event(
+    workspace_id: str,
+    contact_id: str,
+    channel: str,
+    message_body: str,
+    message_metadata: dict,
+) -> dict:
+    """Create an EventBridge event for inbound message.
+
+    This is a helper function for other handlers to use.
+
+    Args:
+        workspace_id: Workspace ID.
+        contact_id: Contact ID.
+        channel: Channel (sms, email, etc.).
+        message_body: Message body.
+        message_metadata: Additional message metadata.
+
+    Returns:
+        EventBridge event dict.
+    """
+    return {
+        "Source": "complens.messaging",
+        "DetailType": f"{channel}.inbound",
+        "Detail": json.dumps({
+            "workspace_id": workspace_id,
+            "contact_id": contact_id,
+            "channel": channel,
+            "message_body": message_body,
+            "message_metadata": message_metadata,
+            "trigger_type": f"trigger_{channel}_inbound",
+        }),
+        "EventBusName": os.environ.get("EVENT_BUS_NAME"),
+    }
