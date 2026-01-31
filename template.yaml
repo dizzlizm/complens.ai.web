@@ -30,6 +30,11 @@ Parameters:
       - "false"
     Description: Enable custom domain configuration (requires valid hosted zone)
 
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: Optional existing ACM certificate ARN. If empty, a new certificate will be created.
+
 Globals:
   Function:
     Runtime: python3.12
@@ -1085,7 +1090,7 @@ Resources:
   # ============================================
   ApiCertificate:
     Type: AWS::CertificateManager::Certificate
-    Condition: CustomDomainEnabled
+    Condition: CreateCertificate
     Properties:
       DomainName: !Sub "*.${DomainName}"
       SubjectAlternativeNames:
@@ -1108,10 +1113,9 @@ Resources:
   RestApiDomainName:
     Type: AWS::ApiGateway::DomainName
     Condition: CustomDomainEnabled
-    DependsOn: ApiCertificate
     Properties:
       DomainName: !Sub "api.${DomainName}"
-      RegionalCertificateArn: !Ref ApiCertificate
+      RegionalCertificateArn: !If [UseCertificateArn, !Ref CertificateArn, !Ref ApiCertificate]
       EndpointConfiguration:
         Types:
           - REGIONAL
@@ -1137,11 +1141,10 @@ Resources:
   WebSocketApiDomainName:
     Type: AWS::ApiGatewayV2::DomainName
     Condition: CustomDomainEnabled
-    DependsOn: ApiCertificate
     Properties:
       DomainName: !Sub "ws.${DomainName}"
       DomainNameConfigurations:
-        - CertificateArn: !Ref ApiCertificate
+        - CertificateArn: !If [UseCertificateArn, !Ref CertificateArn, !Ref ApiCertificate]
           EndpointType: REGIONAL
           SecurityPolicy: TLS_1_2
       Tags:
@@ -1189,6 +1192,12 @@ Resources:
 Conditions:
   IsProd: !Equals [!Ref Stage, "prod"]
   CustomDomainEnabled: !Equals [!Ref EnableCustomDomain, "true"]
+  CreateCertificate: !And
+    - !Equals [!Ref EnableCustomDomain, "true"]
+    - !Equals [!Ref CertificateArn, ""]
+  UseCertificateArn: !And
+    - !Equals [!Ref EnableCustomDomain, "true"]
+    - !Not [!Equals [!Ref CertificateArn, ""]]
 
 Outputs:
   RestApiUrl:
