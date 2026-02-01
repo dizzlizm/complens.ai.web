@@ -17,6 +17,7 @@ export interface FormField {
 export interface Form {
   id: string;
   workspace_id: string;
+  page_id: string; // Forms now always belong to a page
   name: string;
   description: string | null;
   fields: FormField[];
@@ -165,6 +166,89 @@ export function useDeleteForm(workspaceId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['forms', workspaceId] });
+    },
+  });
+}
+
+// =============================================================================
+// Page-scoped form hooks (Forms belong to Pages)
+// =============================================================================
+
+// Fetch forms for a specific page
+export function usePageForms(workspaceId: string | undefined, pageId: string | undefined) {
+  return useQuery({
+    queryKey: ['page-forms', workspaceId, pageId],
+    queryFn: async () => {
+      const { data } = await api.get<{ items: Form[] }>(
+        `/workspaces/${workspaceId}/pages/${pageId}/forms`
+      );
+      return data.items;
+    },
+    enabled: !!workspaceId && !!pageId,
+  });
+}
+
+// Fetch a single form from a page
+export function usePageForm(workspaceId: string | undefined, pageId: string | undefined, formId: string | undefined) {
+  return useQuery({
+    queryKey: ['page-form', workspaceId, pageId, formId],
+    queryFn: async () => {
+      const { data } = await api.get<Form>(
+        `/workspaces/${workspaceId}/pages/${pageId}/forms/${formId}`
+      );
+      return data;
+    },
+    enabled: !!workspaceId && !!pageId && !!formId,
+  });
+}
+
+// Create a form for a page
+export function useCreatePageForm(workspaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: CreateFormInput) => {
+      const { data } = await api.post<Form>(
+        `/workspaces/${workspaceId}/pages/${pageId}/forms`,
+        input
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['page-forms', workspaceId, pageId] });
+    },
+  });
+}
+
+// Update a form on a page
+export function useUpdatePageForm(workspaceId: string, pageId: string, formId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: UpdateFormInput) => {
+      const { data } = await api.put<Form>(
+        `/workspaces/${workspaceId}/pages/${pageId}/forms/${formId}`,
+        input
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['page-forms', workspaceId, pageId] });
+      queryClient.invalidateQueries({ queryKey: ['page-form', workspaceId, pageId, formId] });
+    },
+  });
+}
+
+// Delete a form from a page
+export function useDeletePageForm(workspaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (formId: string) => {
+      await api.delete(`/workspaces/${workspaceId}/pages/${pageId}/forms/${formId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['page-forms', workspaceId, pageId] });
     },
   });
 }

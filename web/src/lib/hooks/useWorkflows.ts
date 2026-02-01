@@ -23,6 +23,7 @@ export interface WorkflowEdge {
 export interface Workflow {
   id: string;
   workspace_id: string;
+  page_id?: string | null; // Page-specific workflows have page_id, workspace-level don't
   name: string;
   description?: string;
   status: 'draft' | 'active' | 'paused' | 'archived';
@@ -148,6 +149,89 @@ export function useExecuteWorkflow(workspaceId: string, workflowId: string) {
         { contact_id: contactId }
       );
       return data;
+    },
+  });
+}
+
+// =============================================================================
+// Page-scoped workflow hooks (Page-specific workflows)
+// =============================================================================
+
+// Fetch workflows for a specific page
+export function usePageWorkflows(workspaceId: string | undefined, pageId: string | undefined) {
+  return useQuery({
+    queryKey: ['page-workflows', workspaceId, pageId],
+    queryFn: async () => {
+      const { data } = await api.get<{ items: Workflow[] }>(
+        `/workspaces/${workspaceId}/pages/${pageId}/workflows`
+      );
+      return data.items;
+    },
+    enabled: !!workspaceId && !!pageId,
+  });
+}
+
+// Fetch a single workflow from a page
+export function usePageWorkflow(workspaceId: string | undefined, pageId: string | undefined, workflowId: string | undefined) {
+  return useQuery({
+    queryKey: ['page-workflow', workspaceId, pageId, workflowId],
+    queryFn: async () => {
+      const { data } = await api.get<Workflow>(
+        `/workspaces/${workspaceId}/pages/${pageId}/workflows/${workflowId}`
+      );
+      return data;
+    },
+    enabled: !!workspaceId && !!pageId && !!workflowId,
+  });
+}
+
+// Create a workflow for a page
+export function useCreatePageWorkflow(workspaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: CreateWorkflowInput) => {
+      const { data } = await api.post<Workflow>(
+        `/workspaces/${workspaceId}/pages/${pageId}/workflows`,
+        input
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['page-workflows', workspaceId, pageId] });
+    },
+  });
+}
+
+// Update a workflow on a page
+export function useUpdatePageWorkflow(workspaceId: string, pageId: string, workflowId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: UpdateWorkflowInput) => {
+      const { data } = await api.put<Workflow>(
+        `/workspaces/${workspaceId}/pages/${pageId}/workflows/${workflowId}`,
+        input
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['page-workflows', workspaceId, pageId] });
+      queryClient.invalidateQueries({ queryKey: ['page-workflow', workspaceId, pageId, workflowId] });
+    },
+  });
+}
+
+// Delete a workflow from a page
+export function useDeletePageWorkflow(workspaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (workflowId: string) => {
+      await api.delete(`/workspaces/${workspaceId}/pages/${pageId}/workflows/${workflowId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['page-workflows', workspaceId, pageId] });
     },
   });
 }

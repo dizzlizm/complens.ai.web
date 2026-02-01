@@ -5,7 +5,6 @@ import {
   GitBranch,
   Users,
   FileText,
-  ClipboardList,
   Settings,
   User,
   LogOut,
@@ -14,12 +13,12 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 
+// Navigation items - Forms removed (now managed inside Page Editor)
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Workflows', href: '/workflows', icon: GitBranch },
   { name: 'Contacts', href: '/contacts', icon: Users },
   { name: 'Pages', href: '/pages', icon: FileText },
-  { name: 'Forms', href: '/forms', icon: ClipboardList },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 

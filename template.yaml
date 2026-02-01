@@ -884,6 +884,68 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/pages/{page_id}
             Method: DELETE
+        # Nested Forms endpoints (forms belong to pages)
+        PageFormsList:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/forms
+            Method: GET
+        PageFormsCreate:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/forms
+            Method: POST
+        PageFormsGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/forms/{form_id}
+            Method: GET
+        PageFormsUpdate:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/forms/{form_id}
+            Method: PUT
+        PageFormsDelete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/forms/{form_id}
+            Method: DELETE
+        # Nested Workflows endpoints (page-specific workflows)
+        PageWorkflowsList:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/workflows
+            Method: GET
+        PageWorkflowsCreate:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/workflows
+            Method: POST
+        PageWorkflowsGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/workflows/{workflow_id}
+            Method: GET
+        PageWorkflowsUpdate:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/workflows/{workflow_id}
+            Method: PUT
+        PageWorkflowsDelete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/workflows/{workflow_id}
+            Method: DELETE
 
   FormsFunction:
     Type: AWS::Serverless::Function

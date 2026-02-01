@@ -105,12 +105,20 @@ export default function Workflows() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Workflows</h1>
-          <p className="mt-1 text-gray-500">Create and manage your automation workflows</p>
+          <p className="mt-1 text-gray-500">Workspace-level automation workflows</p>
         </div>
         <Link to="/workflows/new" className="btn btn-primary inline-flex items-center gap-2">
           <Plus className="w-5 h-5" />
           Create Workflow
         </Link>
+      </div>
+
+      {/* Info banner about page-specific workflows */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <p className="text-sm text-blue-800">
+          <strong>Note:</strong> Page-specific workflows are now managed in each page's editor.
+          This page shows workspace-level workflows only.
+        </p>
       </div>
 
       {/* Search and filters */}

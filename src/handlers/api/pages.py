@@ -1,4 +1,7 @@
-"""Pages API handler (admin, authenticated)."""
+"""Pages API handler (admin, authenticated).
+
+Handles both page CRUD and nested forms/workflows under pages.
+"""
 
 import json
 import re
@@ -8,6 +11,12 @@ import boto3
 import structlog
 from pydantic import BaseModel as PydanticBaseModel, Field, ValidationError as PydanticValidationError
 
+from complens.models.form import (
+    CreateFormRequest,
+    Form,
+    FormField,
+    UpdateFormRequest,
+)
 from complens.models.page import (
     ChatConfig,
     CreatePageRequest,
@@ -16,7 +25,17 @@ from complens.models.page import (
     RESERVED_SUBDOMAINS,
     UpdatePageRequest,
 )
+from complens.models.workflow import (
+    CreateWorkflowRequest,
+    UpdateWorkflowRequest,
+    Workflow,
+    WorkflowEdge,
+    WorkflowStatus,
+)
+from complens.models.workflow_node import WorkflowNode
+from complens.repositories.form import FormRepository
 from complens.repositories.page import PageRepository
+from complens.repositories.workflow import WorkflowRepository
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
@@ -49,6 +68,20 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         GET    /workspaces/{workspace_id}/pages/{page_id}
         PUT    /workspaces/{workspace_id}/pages/{page_id}
         DELETE /workspaces/{workspace_id}/pages/{page_id}
+
+        # Nested forms endpoints
+        GET    /workspaces/{workspace_id}/pages/{page_id}/forms
+        POST   /workspaces/{workspace_id}/pages/{page_id}/forms
+        GET    /workspaces/{workspace_id}/pages/{page_id}/forms/{form_id}
+        PUT    /workspaces/{workspace_id}/pages/{page_id}/forms/{form_id}
+        DELETE /workspaces/{workspace_id}/pages/{page_id}/forms/{form_id}
+
+        # Nested workflows endpoints
+        GET    /workspaces/{workspace_id}/pages/{page_id}/workflows
+        POST   /workspaces/{workspace_id}/pages/{page_id}/workflows
+        GET    /workspaces/{workspace_id}/pages/{page_id}/workflows/{workflow_id}
+        PUT    /workspaces/{workspace_id}/pages/{page_id}/workflows/{workflow_id}
+        DELETE /workspaces/{workspace_id}/pages/{page_id}/workflows/{workflow_id}
     """
     try:
         http_method = event.get("httpMethod", "").upper()
@@ -56,6 +89,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         path_params = event.get("pathParameters", {}) or {}
         workspace_id = path_params.get("workspace_id")
         page_id = path_params.get("page_id")
+        form_id = path_params.get("form_id")
+        workflow_id = path_params.get("workflow_id")
 
         # Get auth context and verify access
         auth = get_auth_context(event)
@@ -65,7 +100,15 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         repo = PageRepository()
 
         # Route to appropriate handler
-        # Check for /generate endpoint first (before page_id check)
+        # Check for nested forms endpoints first
+        if "/forms" in path and page_id:
+            return handle_page_forms(event, http_method, workspace_id, page_id, form_id)
+
+        # Check for nested workflows endpoints
+        if "/workflows" in path and page_id:
+            return handle_page_workflows(event, http_method, workspace_id, page_id, workflow_id)
+
+        # Check for /generate endpoint (before page_id check)
         if http_method == "POST" and path.endswith("/pages/generate"):
             return generate_page_content(event)
         elif http_method == "GET" and path.endswith("/pages/check-subdomain"):
@@ -475,35 +518,21 @@ Return only JSON."""
         if not re.match(r'^#[0-9A-Fa-f]{6}$', result["primary_color"]):
             result["primary_color"] = "#6366f1"
 
-        # Create form if requested
+        # If form creation was requested, include a form template in the result
+        # The actual form will be created when the page is saved (forms now require page_id)
         if request.create_form:
-            try:
-                from complens.models.form import Form, FormField, FormFieldType
-                from complens.repositories.form import FormRepository
-
-                form_repo = FormRepository()
-                form = Form(
-                    workspace_id=workspace_id,
-                    name=f"Contact - {result['name']}",
-                    description=f"Contact form for {result['name']}",
-                    fields=[
-                        FormField(id=str(uuid.uuid4())[:8], name="email", label="Email", type=FormFieldType.EMAIL, required=True, map_to_contact_field="email"),
-                        FormField(id=str(uuid.uuid4())[:8], name="first_name", label="Name", type=FormFieldType.TEXT, required=True, map_to_contact_field="first_name"),
-                        FormField(id=str(uuid.uuid4())[:8], name="message", label="Message", type=FormFieldType.TEXTAREA, required=False),
-                    ],
-                    submit_button_text=content.get("cta_text", "Get Started"),
-                    success_message="Thanks! We'll be in touch soon.",
-                    create_contact=True,
-                    trigger_workflow=True,
-                    honeypot_enabled=True,
-                )
-                form = form_repo.create_form(form)
-                result["form_id"] = form.id
-                result["form_ids"] = [form.id]
-                result["form"] = {"id": form.id, "name": form.name}
-                logger.info("Form created", form_id=form.id)
-            except Exception as form_err:
-                logger.warning("Form creation failed", error=str(form_err))
+            result["create_form_on_save"] = True
+            result["form_template"] = {
+                "name": f"Contact - {result['name']}",
+                "description": f"Contact form for {result['name']}",
+                "fields": [
+                    {"id": str(uuid.uuid4())[:8], "name": "email", "label": "Email", "type": "email", "required": True, "map_to_contact_field": "email"},
+                    {"id": str(uuid.uuid4())[:8], "name": "first_name", "label": "Name", "type": "text", "required": True, "map_to_contact_field": "first_name"},
+                    {"id": str(uuid.uuid4())[:8], "name": "message", "label": "Message", "type": "textarea", "required": False},
+                ],
+                "submit_button_text": content.get("cta_text", "Get Started"),
+                "success_message": "Thanks! We'll be in touch soon.",
+            }
 
         logger.info("Page generated with template", name=result["name"], template=request.template)
         return success({"generated": result, "templates": list_templates()})
@@ -514,3 +543,458 @@ Return only JSON."""
     except Exception as e:
         logger.exception("Generation failed", error=str(e))
         return error("Failed to generate page content", 500)
+
+
+# =============================================================================
+# Nested Forms Handlers (Forms belong to Pages)
+# =============================================================================
+
+def handle_page_forms(
+    event: dict,
+    http_method: str,
+    workspace_id: str,
+    page_id: str,
+    form_id: str | None,
+) -> dict:
+    """Handle nested form endpoints under pages."""
+    form_repo = FormRepository()
+    page_repo = PageRepository()
+
+    # Verify page exists
+    page = page_repo.get_by_id(workspace_id, page_id)
+    if not page:
+        return not_found("Page", page_id)
+
+    if http_method == "GET" and form_id:
+        return get_page_form(form_repo, workspace_id, page_id, form_id)
+    elif http_method == "GET":
+        return list_page_forms(form_repo, page_id, event)
+    elif http_method == "POST":
+        return create_page_form(form_repo, workspace_id, page_id, event)
+    elif http_method == "PUT" and form_id:
+        return update_page_form(form_repo, workspace_id, page_id, form_id, event)
+    elif http_method == "DELETE" and form_id:
+        return delete_page_form(form_repo, workspace_id, page_id, form_id)
+    else:
+        return error("Method not allowed", 405)
+
+
+def list_page_forms(
+    repo: FormRepository,
+    page_id: str,
+    event: dict,
+) -> dict:
+    """List forms for a specific page."""
+    query_params = event.get("queryStringParameters", {}) or {}
+    limit = min(int(query_params.get("limit", 50)), 100)
+
+    forms, next_key = repo.list_by_page(page_id, limit=limit)
+
+    return success({
+        "items": [f.model_dump(mode="json") for f in forms],
+        "pagination": {"limit": limit},
+    })
+
+
+def get_page_form(
+    repo: FormRepository,
+    workspace_id: str,
+    page_id: str,
+    form_id: str,
+) -> dict:
+    """Get a single form by ID, verifying it belongs to the page."""
+    form = repo.get_by_id(workspace_id, form_id)
+    if not form:
+        return not_found("Form", form_id)
+    if form.page_id != page_id:
+        return error("Form does not belong to this page", 404)
+
+    return success(form.model_dump(mode="json"))
+
+
+def create_page_form(
+    repo: FormRepository,
+    workspace_id: str,
+    page_id: str,
+    event: dict,
+) -> dict:
+    """Create a new form for a page."""
+    try:
+        body = json.loads(event.get("body", "{}"))
+        logger.info("Create form request", workspace_id=workspace_id, page_id=page_id, body=body)
+        request = CreateFormRequest.model_validate(body)
+    except PydanticValidationError as e:
+        logger.warning("Form request validation failed", errors=e.errors())
+        return validation_error([
+            {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
+            for err in e.errors()
+        ])
+    except json.JSONDecodeError as e:
+        logger.warning("Invalid JSON body", error=str(e))
+        return error("Invalid JSON body", 400)
+
+    # Create form with page_id
+    form = Form(
+        workspace_id=workspace_id,
+        page_id=page_id,
+        name=request.name,
+        description=request.description,
+        fields=request.fields,
+        submit_button_text=request.submit_button_text,
+        success_message=request.success_message,
+        redirect_url=request.redirect_url,
+        create_contact=request.create_contact,
+        add_tags=request.add_tags,
+        trigger_workflow=request.trigger_workflow,
+        honeypot_enabled=request.honeypot_enabled,
+    )
+
+    form = repo.create_form(form)
+
+    logger.info("Form created", form_id=form.id, workspace_id=workspace_id, page_id=page_id)
+
+    return created(form.model_dump(mode="json"))
+
+
+def update_page_form(
+    repo: FormRepository,
+    workspace_id: str,
+    page_id: str,
+    form_id: str,
+    event: dict,
+) -> dict:
+    """Update an existing form, verifying it belongs to the page."""
+    form = repo.get_by_id(workspace_id, form_id)
+    if not form:
+        return not_found("Form", form_id)
+    if form.page_id != page_id:
+        return error("Form does not belong to this page", 404)
+
+    try:
+        body = json.loads(event.get("body", "{}"))
+        logger.info("Update form request", form_id=form_id, body=body)
+        request = UpdateFormRequest.model_validate(body)
+    except PydanticValidationError as e:
+        logger.warning("Update request validation failed", errors=e.errors())
+        return validation_error([
+            {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
+            for err in e.errors()
+        ])
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    # Apply updates
+    if request.name is not None:
+        form.name = request.name
+    if request.description is not None:
+        form.description = request.description
+    if request.fields is not None:
+        form.fields = request.fields
+    if request.submit_button_text is not None:
+        form.submit_button_text = request.submit_button_text
+    if request.success_message is not None:
+        form.success_message = request.success_message
+    if request.redirect_url is not None:
+        form.redirect_url = request.redirect_url
+    if request.create_contact is not None:
+        form.create_contact = request.create_contact
+    if request.add_tags is not None:
+        form.add_tags = request.add_tags
+    if request.trigger_workflow is not None:
+        form.trigger_workflow = request.trigger_workflow
+    if request.honeypot_enabled is not None:
+        form.honeypot_enabled = request.honeypot_enabled
+    if request.recaptcha_enabled is not None:
+        form.recaptcha_enabled = request.recaptcha_enabled
+
+    form = repo.update_form(form)
+
+    logger.info("Form updated", form_id=form_id, workspace_id=workspace_id, page_id=page_id)
+
+    return success(form.model_dump(mode="json"))
+
+
+def delete_page_form(
+    repo: FormRepository,
+    workspace_id: str,
+    page_id: str,
+    form_id: str,
+) -> dict:
+    """Delete a form, verifying it belongs to the page."""
+    form = repo.get_by_id(workspace_id, form_id)
+    if not form:
+        return not_found("Form", form_id)
+    if form.page_id != page_id:
+        return error("Form does not belong to this page", 404)
+
+    deleted = repo.delete_form(workspace_id, form_id)
+
+    if not deleted:
+        return not_found("Form", form_id)
+
+    logger.info("Form deleted", form_id=form_id, workspace_id=workspace_id, page_id=page_id)
+
+    return success({"deleted": True, "id": form_id})
+
+
+# =============================================================================
+# Nested Workflows Handlers (Page-specific workflows)
+# =============================================================================
+
+def handle_page_workflows(
+    event: dict,
+    http_method: str,
+    workspace_id: str,
+    page_id: str,
+    workflow_id: str | None,
+) -> dict:
+    """Handle nested workflow endpoints under pages."""
+    workflow_repo = WorkflowRepository()
+    page_repo = PageRepository()
+
+    # Verify page exists
+    page = page_repo.get_by_id(workspace_id, page_id)
+    if not page:
+        return not_found("Page", page_id)
+
+    if http_method == "GET" and workflow_id:
+        return get_page_workflow(workflow_repo, workspace_id, page_id, workflow_id)
+    elif http_method == "GET":
+        return list_page_workflows(workflow_repo, page_id, event)
+    elif http_method == "POST":
+        return create_page_workflow(workflow_repo, workspace_id, page_id, event)
+    elif http_method == "PUT" and workflow_id:
+        return update_page_workflow(workflow_repo, workspace_id, page_id, workflow_id, event)
+    elif http_method == "DELETE" and workflow_id:
+        return delete_page_workflow(workflow_repo, workspace_id, page_id, workflow_id)
+    else:
+        return error("Method not allowed", 405)
+
+
+def list_page_workflows(
+    repo: WorkflowRepository,
+    page_id: str,
+    event: dict,
+) -> dict:
+    """List workflows for a specific page."""
+    query_params = event.get("queryStringParameters", {}) or {}
+    limit = min(int(query_params.get("limit", 50)), 100)
+    status_filter = query_params.get("status")
+
+    status = None
+    if status_filter:
+        try:
+            status = WorkflowStatus(status_filter)
+        except ValueError:
+            return error(f"Invalid status: {status_filter}", 400)
+
+    workflows, next_key = repo.list_by_page(page_id, status=status, limit=limit)
+
+    return success({
+        "items": [w.model_dump(mode="json", by_alias=True) for w in workflows],
+        "pagination": {"limit": limit},
+    })
+
+
+def get_page_workflow(
+    repo: WorkflowRepository,
+    workspace_id: str,
+    page_id: str,
+    workflow_id: str,
+) -> dict:
+    """Get a single workflow by ID, verifying it belongs to the page."""
+    workflow = repo.get_by_id(workspace_id, workflow_id)
+    if not workflow:
+        return not_found("Workflow", workflow_id)
+    if workflow.page_id != page_id:
+        return error("Workflow does not belong to this page", 404)
+
+    return success(workflow.model_dump(mode="json", by_alias=True))
+
+
+def create_page_workflow(
+    repo: WorkflowRepository,
+    workspace_id: str,
+    page_id: str,
+    event: dict,
+) -> dict:
+    """Create a new workflow for a page."""
+    try:
+        body = json.loads(event.get("body", "{}"))
+        logger.info("Create page workflow request", workspace_id=workspace_id, page_id=page_id, body=body)
+        request = CreateWorkflowRequest.model_validate(body)
+    except PydanticValidationError as e:
+        logger.warning("Workflow request validation failed", errors=e.errors())
+        return validation_error([
+            {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
+            for err in e.errors()
+        ])
+    except json.JSONDecodeError as e:
+        logger.warning("Invalid JSON body", error=str(e))
+        return error("Invalid JSON body", 400)
+
+    # Parse nodes with validation
+    nodes = []
+    for i, n in enumerate(request.nodes):
+        try:
+            node = WorkflowNode.model_validate(n)
+            nodes.append(node)
+        except PydanticValidationError as e:
+            logger.warning("Node validation failed", index=i, node=n, errors=e.errors())
+            return validation_error([
+                {"field": f"nodes[{i}].{'.'.join(str(x) for x in err['loc'])}", "message": err["msg"]}
+                for err in e.errors()
+            ])
+
+    # Parse edges with validation
+    edges = []
+    for i, e_data in enumerate(request.edges):
+        try:
+            edge = WorkflowEdge.model_validate(e_data)
+            edges.append(edge)
+        except PydanticValidationError as e:
+            logger.warning("Edge validation failed", index=i, edge=e_data, errors=e.errors())
+            return validation_error([
+                {"field": f"edges[{i}].{'.'.join(str(x) for x in err['loc'])}", "message": err["msg"]}
+                for err in e.errors()
+            ])
+
+    # Build settings
+    default_settings = {
+        "max_concurrent_runs": 100,
+        "timeout_minutes": 60,
+        "retry_on_failure": True,
+        "max_retries": 3,
+    }
+    settings = {**default_settings, **request.settings} if request.settings else default_settings
+
+    # Create workflow with page_id
+    workflow = Workflow(
+        workspace_id=workspace_id,
+        page_id=page_id,
+        name=request.name,
+        description=request.description,
+        nodes=nodes,
+        edges=edges,
+        viewport=request.viewport,
+        settings=settings,
+    )
+
+    # Validate workflow graph
+    validation_errors = workflow.validate_graph()
+    if validation_errors:
+        logger.warning("Workflow graph validation failed", errors=validation_errors)
+        return validation_error([{"field": "graph", "message": err} for err in validation_errors])
+
+    workflow = repo.create_workflow(workflow)
+
+    logger.info("Page workflow created", workflow_id=workflow.id, workspace_id=workspace_id, page_id=page_id)
+
+    return created(workflow.model_dump(mode="json", by_alias=True))
+
+
+def update_page_workflow(
+    repo: WorkflowRepository,
+    workspace_id: str,
+    page_id: str,
+    workflow_id: str,
+    event: dict,
+) -> dict:
+    """Update an existing workflow, verifying it belongs to the page."""
+    workflow = repo.get_by_id(workspace_id, workflow_id)
+    if not workflow:
+        return not_found("Workflow", workflow_id)
+    if workflow.page_id != page_id:
+        return error("Workflow does not belong to this page", 404)
+
+    try:
+        body = json.loads(event.get("body", "{}"))
+        logger.info("Update page workflow request", workflow_id=workflow_id, body=body)
+        request = UpdateWorkflowRequest.model_validate(body)
+    except PydanticValidationError as e:
+        logger.warning("Update request validation failed", errors=e.errors())
+        return validation_error([
+            {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
+            for err in e.errors()
+        ])
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    # Apply updates
+    if request.name is not None:
+        workflow.name = request.name
+    if request.description is not None:
+        workflow.description = request.description
+    if request.status is not None:
+        workflow.status = request.status
+
+    # Parse nodes with validation
+    if request.nodes is not None:
+        nodes = []
+        for i, n in enumerate(request.nodes):
+            try:
+                node = WorkflowNode.model_validate(n)
+                nodes.append(node)
+            except PydanticValidationError as e:
+                logger.warning("Node validation failed in update", index=i, node=n, errors=e.errors())
+                return validation_error([
+                    {"field": f"nodes[{i}].{'.'.join(str(x) for x in err['loc'])}", "message": err["msg"]}
+                    for err in e.errors()
+                ])
+        workflow.nodes = nodes
+
+    # Parse edges with validation
+    if request.edges is not None:
+        edges = []
+        for i, e_data in enumerate(request.edges):
+            try:
+                edge = WorkflowEdge.model_validate(e_data)
+                edges.append(edge)
+            except PydanticValidationError as e:
+                logger.warning("Edge validation failed in update", index=i, edge=e_data, errors=e.errors())
+                return validation_error([
+                    {"field": f"edges[{i}].{'.'.join(str(x) for x in err['loc'])}", "message": err["msg"]}
+                    for err in e.errors()
+                ])
+        workflow.edges = edges
+
+    if request.viewport is not None:
+        workflow.viewport = request.viewport
+    if request.settings is not None:
+        workflow.settings = {**workflow.settings, **request.settings}
+
+    # Validate if nodes/edges were updated
+    if request.nodes is not None or request.edges is not None:
+        validation_errors = workflow.validate_graph()
+        if validation_errors:
+            logger.warning("Graph validation failed in update", errors=validation_errors)
+            return validation_error([{"field": "graph", "message": err} for err in validation_errors])
+
+    workflow = repo.update_workflow(workflow)
+
+    logger.info("Page workflow updated", workflow_id=workflow_id, workspace_id=workspace_id, page_id=page_id)
+
+    return success(workflow.model_dump(mode="json", by_alias=True))
+
+
+def delete_page_workflow(
+    repo: WorkflowRepository,
+    workspace_id: str,
+    page_id: str,
+    workflow_id: str,
+) -> dict:
+    """Delete a workflow, verifying it belongs to the page."""
+    workflow = repo.get_by_id(workspace_id, workflow_id)
+    if not workflow:
+        return not_found("Workflow", workflow_id)
+    if workflow.page_id != page_id:
+        return error("Workflow does not belong to this page", 404)
+
+    deleted = repo.delete_workflow(workspace_id, workflow_id)
+
+    if not deleted:
+        return not_found("Workflow", workflow_id)
+
+    logger.info("Page workflow deleted", workflow_id=workflow_id, workspace_id=workspace_id, page_id=page_id)
+
+    return success({"deleted": True, "id": workflow_id})

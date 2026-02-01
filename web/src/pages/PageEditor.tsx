@@ -1,16 +1,19 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { usePage, useUpdatePage, useGeneratePage, checkSubdomainAvailability, type UpdatePageInput, type ChatConfig, type GeneratePageInput } from '../lib/hooks/usePages';
-import { useForms } from '../lib/hooks/useForms';
+import { usePageForms, useCreatePageForm, useDeletePageForm, type Form, type FormField } from '../lib/hooks/useForms';
+import { usePageWorkflows, useDeletePageWorkflow } from '../lib/hooks/useWorkflows';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import { useDomains, useCreateDomain, useDeleteDomain, getDomainStatusInfo } from '../lib/hooks/useDomains';
 import { useToast } from '../components/Toast';
+import FormBuilder from '../components/FormBuilder';
+import { Plus, Trash2, GitBranch, ExternalLink } from 'lucide-react';
 
 // Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.dev.complens.ai';
 const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '');
 
-type Tab = 'content' | 'forms' | 'chat' | 'design' | 'seo' | 'domain';
+type Tab = 'content' | 'forms' | 'workflows' | 'chat' | 'design' | 'seo' | 'domain';
 
 export default function PageEditor() {
   const { id: pageId } = useParams<{ id: string }>();
@@ -19,8 +22,12 @@ export default function PageEditor() {
   const toast = useToast();
 
   const { data: page, isLoading } = usePage(workspaceId, pageId);
-  const { data: forms } = useForms(workspaceId);
+  const { data: pageForms } = usePageForms(workspaceId, pageId);
+  const { data: pageWorkflows } = usePageWorkflows(workspaceId, pageId);
   const updatePage = useUpdatePage(workspaceId || '', pageId || '');
+  const createForm = useCreatePageForm(workspaceId || '', pageId || '');
+  const deleteForm = useDeletePageForm(workspaceId || '', pageId || '');
+  const deleteWorkflow = useDeletePageWorkflow(workspaceId || '', pageId || '');
 
   const [activeTab, setActiveTab] = useState<Tab>('content');
   const [formData, setFormData] = useState<UpdatePageInput>({});
@@ -142,12 +149,65 @@ export default function PageEditor() {
     }
   };
 
-  const toggleFormId = (formId: string) => {
-    const currentIds = formData.form_ids || [];
-    const newIds = currentIds.includes(formId)
-      ? currentIds.filter((id) => id !== formId)
-      : [...currentIds, formId];
-    handleChange('form_ids', newIds);
+  // Form builder state
+  const [editingForm, setEditingForm] = useState<Form | null>(null);
+  const [showFormBuilder, setShowFormBuilder] = useState(false);
+  const [formBuilderData, setFormBuilderData] = useState<{
+    name: string;
+    fields: FormField[];
+    submitButtonText: string;
+    successMessage: string;
+  }>({
+    name: 'New Form',
+    fields: [],
+    submitButtonText: 'Submit',
+    successMessage: 'Thank you for your submission!',
+  });
+
+  const handleCreateForm = async () => {
+    try {
+      await createForm.mutateAsync({
+        name: formBuilderData.name,
+        fields: formBuilderData.fields,
+        submit_button_text: formBuilderData.submitButtonText,
+        success_message: formBuilderData.successMessage,
+        create_contact: true,
+        trigger_workflow: true,
+      });
+      setShowFormBuilder(false);
+      setFormBuilderData({
+        name: 'New Form',
+        fields: [],
+        submitButtonText: 'Submit',
+        successMessage: 'Thank you for your submission!',
+      });
+      toast.success('Form created successfully');
+    } catch (err) {
+      console.error('Failed to create form:', err);
+      toast.error('Failed to create form');
+    }
+  };
+
+  const handleDeleteForm = async (formId: string) => {
+    if (!confirm('Are you sure you want to delete this form?')) return;
+    try {
+      await deleteForm.mutateAsync(formId);
+      toast.success('Form deleted');
+    } catch (err) {
+      console.error('Failed to delete form:', err);
+      toast.error('Failed to delete form');
+    }
+  };
+
+  const handleDeleteWorkflow = async (workflowId: string) => {
+    if (!confirm('Are you sure you want to delete this workflow?')) return;
+    try {
+      await deleteWorkflow.mutateAsync(workflowId);
+      toast.success('Workflow deleted');
+    } catch (err) {
+      console.error('Failed to delete workflow:', err);
+      toast.error('Failed to delete workflow');
+    }
   };
 
   if (isLoading) {
@@ -172,7 +232,8 @@ export default function PageEditor() {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'content', label: 'Content' },
-    { id: 'forms', label: 'Forms' },
+    { id: 'forms', label: `Forms${pageForms?.length ? ` (${pageForms.length})` : ''}` },
+    { id: 'workflows', label: `Workflows${pageWorkflows?.length ? ` (${pageWorkflows.length})` : ''}` },
     { id: 'chat', label: 'Chat' },
     { id: 'design', label: 'Design' },
     { id: 'seo', label: 'SEO' },
@@ -347,45 +408,192 @@ export default function PageEditor() {
         )}
 
         {activeTab === 'forms' && (
-          <div className="space-y-4">
-            <p className="text-gray-600 mb-4">
-              Select forms to display on this page. Forms capture visitor information and can trigger workflows.
-            </p>
-
-            {forms && forms.length > 0 ? (
-              <div className="space-y-3">
-                {forms.map((form) => (
-                  <label
-                    key={form.id}
-                    className={`flex items-center gap-4 p-4 border rounded-lg cursor-pointer transition-colors ${
-                      formData.form_ids?.includes(form.id)
-                        ? 'border-indigo-500 bg-indigo-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
+          <div className="space-y-6">
+            {/* Form Builder Modal */}
+            {showFormBuilder ? (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-gray-900">
+                    {editingForm ? 'Edit Form' : 'Create New Form'}
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowFormBuilder(false);
+                      setEditingForm(null);
+                    }}
+                    className="text-gray-500 hover:text-gray-700"
                   >
-                    <input
-                      type="checkbox"
-                      checked={formData.form_ids?.includes(form.id) || false}
-                      onChange={() => toggleFormId(form.id)}
-                      className="w-4 h-4 text-indigo-600"
-                    />
+                    Cancel
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Form Name
+                  </label>
+                  <input
+                    type="text"
+                    value={formBuilderData.name}
+                    onChange={(e) => setFormBuilderData(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <FormBuilder
+                  fields={formBuilderData.fields}
+                  onChange={(fields) => setFormBuilderData(prev => ({ ...prev, fields }))}
+                  submitButtonText={formBuilderData.submitButtonText}
+                  onSubmitButtonTextChange={(text) => setFormBuilderData(prev => ({ ...prev, submitButtonText: text }))}
+                  successMessage={formBuilderData.successMessage}
+                  onSuccessMessageChange={(msg) => setFormBuilderData(prev => ({ ...prev, successMessage: msg }))}
+                />
+
+                <div className="flex justify-end gap-3 pt-4 border-t">
+                  <button
+                    onClick={() => {
+                      setShowFormBuilder(false);
+                      setEditingForm(null);
+                    }}
+                    className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleCreateForm}
+                    disabled={createForm.isPending || !formBuilderData.name.trim()}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {createForm.isPending ? 'Creating...' : 'Create Form'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <p className="text-gray-600">
+                    Forms capture visitor information and can trigger workflows.
+                  </p>
+                  <button
+                    onClick={() => setShowFormBuilder(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Form
+                  </button>
+                </div>
+
+                {pageForms && pageForms.length > 0 ? (
+                  <div className="space-y-3">
+                    {pageForms.map((form) => (
+                      <div
+                        key={form.id}
+                        className="flex items-center gap-4 p-4 border border-gray-200 rounded-lg hover:border-gray-300"
+                      >
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900">{form.name}</p>
+                          <p className="text-sm text-gray-500">
+                            {form.fields.length} fields • {form.submission_count} submissions
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleDeleteForm(form.id)}
+                            className="p-2 text-gray-400 hover:text-red-500"
+                            title="Delete form"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
+                    <p className="text-gray-500 mb-2">No forms on this page yet</p>
+                    <button
+                      onClick={() => setShowFormBuilder(true)}
+                      className="text-indigo-600 hover:text-indigo-700 font-medium"
+                    >
+                      Create your first form
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'workflows' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <p className="text-gray-600">
+                Page-specific workflows that trigger from this page's forms or events.
+              </p>
+              <Link
+                to={`/workflows/new?pageId=${pageId}`}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              >
+                <Plus className="w-4 h-4" />
+                Add Workflow
+              </Link>
+            </div>
+
+            {pageWorkflows && pageWorkflows.length > 0 ? (
+              <div className="space-y-3">
+                {pageWorkflows.map((workflow) => (
+                  <div
+                    key={workflow.id}
+                    className="flex items-center gap-4 p-4 border border-gray-200 rounded-lg hover:border-gray-300"
+                  >
+                    <div className="p-2 bg-purple-100 rounded-lg">
+                      <GitBranch className="w-5 h-5 text-purple-600" />
+                    </div>
                     <div className="flex-1">
-                      <p className="font-medium text-gray-900">{form.name}</p>
+                      <p className="font-medium text-gray-900">{workflow.name}</p>
                       <p className="text-sm text-gray-500">
-                        {form.fields.length} fields • {form.submission_count} submissions
+                        Status: {workflow.status} • {workflow.nodes?.length || 0} nodes
                       </p>
                     </div>
-                  </label>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        to={`/workflows/${workflow.id}`}
+                        className="p-2 text-gray-400 hover:text-indigo-600"
+                        title="Edit workflow"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </Link>
+                      <button
+                        onClick={() => handleDeleteWorkflow(workflow.id)}
+                        className="p-2 text-gray-400 hover:text-red-500"
+                        title="Delete workflow"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8 text-gray-500">
-                <p>No forms created yet.</p>
-                <Link to="/forms" className="text-indigo-600 hover:underline">
-                  Create a form
+              <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
+                <p className="text-gray-500 mb-2">No workflows for this page yet</p>
+                <Link
+                  to={`/workflows/new?pageId=${pageId}`}
+                  className="text-indigo-600 hover:text-indigo-700 font-medium"
+                >
+                  Create your first workflow
                 </Link>
               </div>
             )}
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p className="text-sm text-blue-800">
+                <strong>Tip:</strong> Workspace-level workflows (not attached to a page) can be managed from the{' '}
+                <Link to="/workflows" className="underline hover:text-blue-900">
+                  Workflows page
+                </Link>
+                .
+              </p>
+            </div>
           </div>
         )}
 

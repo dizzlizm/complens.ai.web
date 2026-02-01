@@ -75,6 +75,59 @@ class WorkflowRepository(BaseRepository[Workflow]):
         )
         return workflows
 
+    def list_workspace_level(
+        self,
+        workspace_id: str,
+        status: WorkflowStatus | None = None,
+        limit: int = 50,
+        last_key: dict | None = None,
+    ) -> tuple[list[Workflow], dict | None]:
+        """List only workspace-level workflows (no page_id).
+
+        Args:
+            workspace_id: The workspace ID.
+            status: Optional status filter.
+            limit: Maximum workflows to return.
+            last_key: Pagination cursor.
+
+        Returns:
+            Tuple of (workflows, next_page_key).
+        """
+        # Get all workflows and filter out page-specific ones
+        workflows, next_key = self.list_by_workspace(
+            workspace_id, status=status, limit=limit * 2, last_key=last_key
+        )
+        # Filter to only workspace-level (no page_id)
+        workspace_level = [w for w in workflows if not w.page_id]
+        return workspace_level[:limit], next_key
+
+    def list_by_page(
+        self,
+        page_id: str,
+        status: WorkflowStatus | None = None,
+        limit: int = 50,
+        last_key: dict | None = None,
+    ) -> tuple[list[Workflow], dict | None]:
+        """List workflows for a specific page using GSI2.
+
+        Args:
+            page_id: The page ID.
+            status: Optional status filter.
+            limit: Maximum workflows to return.
+            last_key: Pagination cursor.
+
+        Returns:
+            Tuple of (workflows, next_page_key).
+        """
+        sk_prefix = f"{status.value}#" if status else ""
+        return self.query(
+            pk=f"PAGE#{page_id}#WORKFLOWS",
+            sk_begins_with=sk_prefix,
+            index_name="GSI2",
+            limit=limit,
+            last_key=last_key,
+        )
+
     def create_workflow(self, workflow: Workflow) -> Workflow:
         """Create a new workflow.
 
@@ -84,7 +137,11 @@ class WorkflowRepository(BaseRepository[Workflow]):
         Returns:
             The created workflow.
         """
-        return self.create(workflow, gsi_keys=workflow.get_gsi1_keys())
+        gsi_keys = workflow.get_gsi1_keys()
+        gsi2_keys = workflow.get_gsi2_keys()
+        if gsi2_keys:
+            gsi_keys.update(gsi2_keys)
+        return self.create(workflow, gsi_keys=gsi_keys)
 
     def update_workflow(self, workflow: Workflow) -> Workflow:
         """Update an existing workflow.
@@ -95,7 +152,11 @@ class WorkflowRepository(BaseRepository[Workflow]):
         Returns:
             The updated workflow.
         """
-        return self.update(workflow, gsi_keys=workflow.get_gsi1_keys())
+        gsi_keys = workflow.get_gsi1_keys()
+        gsi2_keys = workflow.get_gsi2_keys()
+        if gsi2_keys:
+            gsi_keys.update(gsi2_keys)
+        return self.update(workflow, gsi_keys=gsi_keys)
 
     def delete_workflow(self, workspace_id: str, workflow_id: str) -> bool:
         """Delete a workflow.
