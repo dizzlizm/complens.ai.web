@@ -59,7 +59,7 @@ class Form(BaseModel):
     _sk_prefix: ClassVar[str] = "FORM#"
 
     workspace_id: str = Field(..., description="Parent workspace ID")
-    page_id: str = Field(..., description="Parent page ID (required)")
+    page_id: str | None = Field(None, description="Parent page ID (None for legacy forms)")
 
     # Form metadata
     name: str = Field(..., min_length=1, max_length=255, description="Form name")
@@ -108,9 +108,15 @@ class Form(BaseModel):
         return f"FORM#{self.id}"
 
     def get_gsi1_keys(self) -> dict[str, str]:
-        """Get GSI1 keys for listing forms by page."""
+        """Get GSI1 keys for listing forms by page (or workspace for legacy forms)."""
+        if self.page_id:
+            return {
+                "GSI1PK": f"PAGE#{self.page_id}#FORMS",
+                "GSI1SK": self.name,
+            }
+        # Legacy forms without page_id use workspace-based key
         return {
-            "GSI1PK": f"PAGE#{self.page_id}#FORMS",
+            "GSI1PK": f"WS#{self.workspace_id}#FORMS",
             "GSI1SK": self.name,
         }
 

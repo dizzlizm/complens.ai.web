@@ -17,7 +17,7 @@ export interface FormField {
 export interface Form {
   id: string;
   workspace_id: string;
-  page_id: string; // Forms now always belong to a page
+  page_id: string | null; // Page ID (null for legacy forms)
   name: string;
   description: string | null;
   fields: FormField[];
