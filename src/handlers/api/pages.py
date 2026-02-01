@@ -209,12 +209,17 @@ def create_page(
     blocks = []
     if request.blocks:
         for block_data in request.blocks:
-            blocks.append(PageBlock(
-                id=block_data.id or None,  # Will use default factory if None
-                type=block_data.type,
-                config=block_data.config,
-                order=block_data.order,
-            ))
+            # Build block dict, only include id if provided
+            block_dict = {
+                "type": block_data.type,
+                "config": block_data.config,
+                "order": block_data.order,
+            }
+            if block_data.id:
+                block_dict["id"] = block_data.id
+            if hasattr(block_data, 'width'):
+                block_dict["width"] = block_data.width
+            blocks.append(PageBlock.model_validate(block_dict))
 
     # Create page
     page = Page(
@@ -318,22 +323,34 @@ def update_page(
     if request.blocks is not None:
         # Convert blocks from request format
         blocks = []
-        for block_data in request.blocks:
-            blocks.append(PageBlock(
-                id=block_data.id or None,  # Will use default factory if None
-                type=block_data.type,
-                config=block_data.config,
-                order=block_data.order,
-                width=block_data.width,
-            ))
+        for i, block_data in enumerate(request.blocks):
+            # Build block dict, only include id if provided
+            block_dict = {
+                "type": block_data.type,
+                "config": block_data.config,
+                "order": block_data.order,
+                "width": block_data.width,
+            }
+            if block_data.id:
+                block_dict["id"] = block_data.id
+            blocks.append(PageBlock.model_validate(block_dict))
         page.blocks = blocks
+        logger.info("Saving blocks", page_id=page_id, block_count=len(blocks), blocks=[b.model_dump() for b in blocks])
 
     # Save
     page = repo.update_page(page)
 
-    logger.info("Page updated", page_id=page_id, workspace_id=workspace_id)
+    # Serialize for response
+    response_data = page.model_dump(mode="json")
+    logger.info(
+        "Page updated",
+        page_id=page_id,
+        workspace_id=workspace_id,
+        block_count=len(page.blocks),
+        response_has_blocks="blocks" in response_data,
+    )
 
-    return success(page.model_dump(mode="json"))
+    return success(response_data)
 
 
 def delete_page(

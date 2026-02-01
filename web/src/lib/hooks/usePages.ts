@@ -132,15 +132,27 @@ export function useUpdatePage(workspaceId: string, pageId: string) {
 
   return useMutation({
     mutationFn: async (input: UpdatePageInput) => {
+      console.log('[useUpdatePage] Sending update:', {
+        workspaceId,
+        pageId,
+        blockCount: input.blocks?.length ?? 0,
+      });
       const { data } = await api.put<Page>(
         `/workspaces/${workspaceId}/pages/${pageId}`,
         input
       );
+      console.log('[useUpdatePage] Response:', {
+        id: data.id,
+        blockCount: data.blocks?.length ?? 0,
+        blocks: data.blocks,
+      });
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (updatedPage) => {
+      console.log('[useUpdatePage] onSuccess - invalidating queries, updatedPage has', updatedPage.blocks?.length ?? 0, 'blocks');
+      // Set the updated data directly in the cache before invalidating
+      queryClient.setQueryData(['page', workspaceId, pageId], updatedPage);
       queryClient.invalidateQueries({ queryKey: ['pages', workspaceId] });
-      queryClient.invalidateQueries({ queryKey: ['page', workspaceId, pageId] });
     },
   });
 }

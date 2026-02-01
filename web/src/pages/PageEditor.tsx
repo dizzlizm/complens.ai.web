@@ -51,6 +51,12 @@ export default function PageEditor() {
   // Initialize form data when page loads
   useEffect(() => {
     if (page) {
+      console.log('[PageEditor] Page data received:', {
+        id: page.id,
+        name: page.name,
+        blocks: page.blocks,
+        blockCount: page.blocks?.length ?? 0,
+      });
       setFormData({
         name: page.name,
         slug: page.slug,
@@ -68,8 +74,10 @@ export default function PageEditor() {
         subdomain: page.subdomain || '',
         custom_domain: page.custom_domain || '',
       });
-      // Initialize blocks from page data
-      setBlocks((page as any).blocks || []);
+      // Initialize blocks from page data - cast to PageBlock[] to match component types
+      const pageBlocks = (page.blocks || []) as PageBlock[];
+      console.log('[PageEditor] Setting blocks:', pageBlocks);
+      setBlocks(pageBlocks);
     }
   }, [page]);
 
@@ -94,10 +102,17 @@ export default function PageEditor() {
 
   const handleSave = async () => {
     try {
-      await updatePage.mutateAsync({
+      const payload = {
         ...formData,
-        blocks: blocks as any,
+        blocks: blocks,
+      };
+      console.log('[PageEditor] Saving page with payload:', {
+        ...payload,
+        blockCount: blocks.length,
+        blocks: blocks.map(b => ({ id: b.id, type: b.type, order: b.order, width: b.width })),
       });
+      const result = await updatePage.mutateAsync(payload);
+      console.log('[PageEditor] Save result:', result);
       setHasChanges(false);
       toast.success('Page saved successfully');
     } catch (err: any) {

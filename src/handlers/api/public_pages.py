@@ -204,6 +204,18 @@ def get_page_by_subdomain(subdomain: str) -> dict:
 
     # Render full HTML page with forms
     page_data = page.model_dump(mode="json")
+
+    logger.info(
+        "Page data for rendering",
+        subdomain=subdomain,
+        page_id=page.id,
+        has_blocks=len(page.blocks) > 0,
+        block_count=len(page.blocks),
+        has_body_content=bool(page.body_content),
+        blocks_in_data="blocks" in page_data,
+        blocks_count_in_data=len(page_data.get("blocks", [])),
+    )
+
     html = render_full_page(page_data, ws_url, api_url, forms=forms)
 
     logger.info(
