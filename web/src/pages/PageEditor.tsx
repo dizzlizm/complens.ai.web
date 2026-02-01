@@ -7,6 +7,7 @@ import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import { useDomains, useCreateDomain, useDeleteDomain, getDomainStatusInfo } from '../lib/hooks/useDomains';
 import { useToast } from '../components/Toast';
 import FormBuilder from '../components/FormBuilder';
+import { PageBuilderCanvas, PageBlock } from '../components/page-builder';
 import { Plus, Trash2, GitBranch, ExternalLink } from 'lucide-react';
 
 // Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
@@ -44,6 +45,9 @@ export default function PageEditor() {
   });
   const generatePage = useGeneratePage(workspaceId || '');
 
+  // Blocks state for the visual builder
+  const [blocks, setBlocks] = useState<PageBlock[]>([]);
+
   // Initialize form data when page loads
   useEffect(() => {
     if (page) {
@@ -64,6 +68,8 @@ export default function PageEditor() {
         subdomain: page.subdomain || '',
         custom_domain: page.custom_domain || '',
       });
+      // Initialize blocks from page data
+      setBlocks((page as any).blocks || []);
     }
   }, [page]);
 
@@ -88,26 +94,44 @@ export default function PageEditor() {
 
   const handleSave = async () => {
     try {
-      await updatePage.mutateAsync(formData);
+      await updatePage.mutateAsync({
+        ...formData,
+        blocks: blocks as any,
+      });
       setHasChanges(false);
       toast.success('Page saved successfully');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to save page:', err);
-      toast.error('Failed to save page. Please try again.');
+      // Extract detailed error message from API response
+      const errorMessage = err?.response?.data?.message
+        || err?.response?.data?.errors?.map((e: any) => `${e.field}: ${e.message}`).join(', ')
+        || err?.message
+        || 'Failed to save page. Please try again.';
+      toast.error(errorMessage);
     }
+  };
+
+  const handleBlocksChange = (newBlocks: PageBlock[]) => {
+    setBlocks(newBlocks);
+    setHasChanges(true);
   };
 
   const handlePublish = async () => {
     try {
       await updatePage.mutateAsync({
         ...formData,
+        blocks: blocks as any,
         status: 'published' as const,
       });
       setHasChanges(false);
       toast.success('Page published successfully');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to publish page:', err);
-      toast.error('Failed to publish page. Please try again.');
+      const errorMessage = err?.response?.data?.message
+        || err?.response?.data?.errors?.map((e: any) => `${e.field}: ${e.message}`).join(', ')
+        || err?.message
+        || 'Failed to publish page. Please try again.';
+      toast.error(errorMessage);
     }
   };
 
@@ -318,93 +342,77 @@ export default function PageEditor() {
       </div>
 
       {/* Tab Content */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className={activeTab === 'content' ? '' : 'bg-white rounded-lg shadow p-6'}>
         {activeTab === 'content' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Page Name
-                </label>
-                <input
-                  type="text"
-                  value={formData.name || ''}
-                  onChange={(e) => handleChange('name', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  URL Slug
-                </label>
-                <div className="flex items-center">
-                  <span className="text-gray-500 text-sm mr-1">/p/</span>
+          <div className="space-y-4">
+            {/* Page metadata bar */}
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Page Name
+                  </label>
                   <input
                     type="text"
-                    value={formData.slug || ''}
-                    onChange={(e) =>
-                      handleChange('slug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))
-                    }
-                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={formData.name || ''}
+                    onChange={(e) => handleChange('name', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    URL Slug
+                  </label>
+                  <div className="flex items-center">
+                    <span className="text-gray-500 text-sm mr-1">/p/</span>
+                    <input
+                      type="text"
+                      value={formData.slug || ''}
+                      onChange={(e) =>
+                        handleChange('slug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))
+                      }
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Primary Color
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={formData.primary_color || '#6366f1'}
+                      onChange={(e) => handleChange('primary_color', e.target.value)}
+                      className="w-10 h-9 rounded cursor-pointer border-0"
+                    />
+                    <input
+                      type="text"
+                      value={formData.primary_color || '#6366f1'}
+                      onChange={(e) => handleChange('primary_color', e.target.value)}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Headline
-              </label>
-              <input
-                type="text"
-                value={formData.headline || ''}
-                onChange={(e) => handleChange('headline', e.target.value)}
-                placeholder="Your compelling headline"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
+            {/* Visual Page Builder */}
+            <PageBuilderCanvas
+              blocks={blocks}
+              onChange={handleBlocksChange}
+              forms={pageForms?.map((f: Form) => ({ id: f.id, name: f.name })) || []}
+            />
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Subheadline
-              </label>
-              <input
-                type="text"
-                value={formData.subheadline || ''}
-                onChange={(e) => handleChange('subheadline', e.target.value)}
-                placeholder="A supporting message"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Hero Image URL
-              </label>
-              <input
-                type="url"
-                value={formData.hero_image_url || ''}
-                onChange={(e) => handleChange('hero_image_url', e.target.value)}
-                placeholder="https://example.com/image.jpg"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Body Content (HTML)
-              </label>
-              <textarea
-                value={formData.body_content || ''}
-                onChange={(e) => handleChange('body_content', e.target.value)}
-                placeholder="<div class='container'>Your page content...</div>"
-                rows={12}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                You can use HTML to structure your page content. The AI Generate feature can create this for you.
-              </p>
-            </div>
+            {/* Legacy content info */}
+            {formData.body_content && blocks.length === 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <p className="text-sm text-amber-800">
+                  <strong>Note:</strong> This page has legacy HTML content. Add blocks above to use the visual builder.
+                  Legacy content will still be rendered on the public page until you switch to blocks.
+                </p>
+              </div>
+            )}
           </div>
         )}
 

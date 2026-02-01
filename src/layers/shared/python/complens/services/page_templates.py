@@ -216,6 +216,420 @@ CONTENT_SCHEMA = {
 }
 
 
+def render_block_html(block: dict, primary_color: str = "#6366f1") -> str:
+    """Render a single block to HTML.
+
+    Args:
+        block: Block data (id, type, config, order).
+        primary_color: Primary color for styling.
+
+    Returns:
+        HTML string for the block.
+    """
+    block_type = block.get("type", "")
+    config = block.get("config", {})
+
+    if block_type == "hero":
+        return _render_hero_block(config, primary_color)
+    elif block_type == "features":
+        return _render_features_block(config)
+    elif block_type == "cta":
+        return _render_cta_block(config, primary_color)
+    elif block_type == "testimonials":
+        return _render_testimonials_block(config)
+    elif block_type == "faq":
+        return _render_faq_block(config)
+    elif block_type == "text":
+        return _render_text_block(config)
+    elif block_type == "image":
+        return _render_image_block(config)
+    elif block_type == "video":
+        return _render_video_block(config)
+    elif block_type == "stats":
+        return _render_stats_block(config, primary_color)
+    elif block_type == "divider":
+        return _render_divider_block(config)
+    elif block_type == "pricing":
+        return _render_pricing_block(config, primary_color)
+    else:
+        return f'<!-- Unknown block type: {block_type} -->'
+
+
+def _render_hero_block(config: dict, primary_color: str) -> str:
+    """Render hero block."""
+    headline = config.get("headline", "Welcome")
+    subheadline = config.get("subheadline", "")
+    button_text = config.get("buttonText", "Get Started")
+    button_link = config.get("buttonLink", "#")
+    bg_type = config.get("backgroundType", "gradient")
+    bg_color = config.get("backgroundColor", primary_color)
+    gradient_from = config.get("gradientFrom", primary_color)
+    gradient_to = config.get("gradientTo", "#8b5cf6")
+    bg_image = config.get("backgroundImage", "")
+    text_align = config.get("textAlign", "center")
+    show_button = config.get("showButton", True)
+
+    # Background style
+    if bg_type == "image" and bg_image:
+        bg_style = f'background-image: url({bg_image}); background-size: cover; background-position: center;'
+        overlay = '<div class="absolute inset-0 bg-black/40"></div>'
+    elif bg_type == "gradient":
+        bg_style = f'background: linear-gradient(135deg, {gradient_from} 0%, {gradient_to} 100%);'
+        overlay = ''
+    else:
+        bg_style = f'background-color: {bg_color};'
+        overlay = ''
+
+    align_class = {
+        "left": "text-left items-start",
+        "center": "text-center items-center mx-auto",
+        "right": "text-right items-end ml-auto",
+    }.get(text_align, "text-center items-center mx-auto")
+
+    button_html = ""
+    if show_button:
+        button_html = f'''
+        <a href="{button_link}" class="inline-flex items-center px-8 py-4 bg-white text-gray-900 font-semibold rounded-lg hover:bg-gray-100 transition-colors mt-8 shadow-lg">
+            {button_text}
+        </a>'''
+
+    return f'''
+    <section class="relative min-h-[500px] flex items-center px-6 py-20" style="{bg_style}">
+        {overlay}
+        <div class="relative z-10 max-w-4xl {align_class}">
+            <h1 class="text-5xl md:text-6xl font-bold text-white mb-6">{headline}</h1>
+            <p class="text-xl text-white/90 max-w-2xl">{subheadline}</p>
+            {button_html}
+        </div>
+    </section>'''
+
+
+def _render_features_block(config: dict) -> str:
+    """Render features block."""
+    title = config.get("title", "Features")
+    subtitle = config.get("subtitle", "")
+    items = config.get("items", [])
+    columns = config.get("columns", 3)
+
+    grid_class = {2: "md:grid-cols-2", 3: "md:grid-cols-3", 4: "md:grid-cols-2 lg:grid-cols-4"}.get(columns, "md:grid-cols-3")
+
+    items_html = ""
+    for item in items:
+        icon = item.get("icon", "zap")
+        item_title = item.get("title", "")
+        description = item.get("description", "")
+        items_html += f'''
+        <div class="text-center p-6 bg-gray-50 rounded-xl hover:shadow-lg transition-shadow">
+            <div class="inline-flex items-center justify-center w-12 h-12 bg-indigo-100 rounded-lg mb-4">
+                <span class="text-2xl">⚡</span>
+            </div>
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">{item_title}</h3>
+            <p class="text-gray-600">{description}</p>
+        </div>'''
+
+    return f'''
+    <section class="py-16 px-6 bg-white">
+        <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-bold text-gray-900 mb-4">{title}</h2>
+                <p class="text-lg text-gray-600">{subtitle}</p>
+            </div>
+            <div class="grid grid-cols-1 {grid_class} gap-8">
+                {items_html}
+            </div>
+        </div>
+    </section>'''
+
+
+def _render_cta_block(config: dict, primary_color: str) -> str:
+    """Render CTA block."""
+    headline = config.get("headline", "Ready to get started?")
+    description = config.get("description", "")
+    button_text = config.get("buttonText", "Get Started")
+    button_link = config.get("buttonLink", "#")
+    bg_color = config.get("backgroundColor", primary_color)
+    text_color = config.get("textColor", "light")
+
+    text_class = "text-white" if text_color == "light" else "text-gray-900"
+    desc_class = "text-white/80" if text_color == "light" else "text-gray-600"
+    btn_class = "bg-white text-gray-900 hover:bg-gray-100" if text_color == "light" else "bg-gray-900 text-white hover:bg-gray-800"
+
+    return f'''
+    <section class="py-16 px-6" style="background-color: {bg_color};">
+        <div class="max-w-3xl mx-auto text-center">
+            <h2 class="text-3xl font-bold mb-4 {text_class}">{headline}</h2>
+            <p class="text-lg mb-8 {desc_class}">{description}</p>
+            <a href="{button_link}" class="inline-flex items-center px-8 py-4 font-semibold rounded-lg transition-colors {btn_class}">
+                {button_text}
+            </a>
+        </div>
+    </section>'''
+
+
+def _render_testimonials_block(config: dict) -> str:
+    """Render testimonials block."""
+    title = config.get("title", "What Our Customers Say")
+    items = config.get("items", [])
+
+    items_html = ""
+    for item in items:
+        quote = item.get("quote", "")
+        author = item.get("author", "")
+        company = item.get("company", "")
+        avatar = item.get("avatar", "")
+
+        avatar_html = f'<img src="{avatar}" alt="{author}" class="w-10 h-10 rounded-full object-cover">' if avatar else '<div class="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center text-gray-400">👤</div>'
+
+        items_html += f'''
+        <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+            <p class="text-gray-700 mb-6 italic">"{quote}"</p>
+            <div class="flex items-center gap-3">
+                {avatar_html}
+                <div>
+                    <p class="font-medium text-gray-900 text-sm">{author}</p>
+                    <p class="text-gray-500 text-sm">{company}</p>
+                </div>
+            </div>
+        </div>'''
+
+    return f'''
+    <section class="py-16 px-6 bg-gray-50">
+        <div class="max-w-6xl mx-auto">
+            <h2 class="text-3xl font-bold text-gray-900 text-center mb-12">{title}</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {items_html}
+            </div>
+        </div>
+    </section>'''
+
+
+def _render_faq_block(config: dict) -> str:
+    """Render FAQ block."""
+    title = config.get("title", "Frequently Asked Questions")
+    items = config.get("items", [])
+
+    items_html = ""
+    for i, item in enumerate(items):
+        question = item.get("question", "")
+        answer = item.get("answer", "")
+        items_html += f'''
+        <details class="group border border-gray-200 rounded-lg overflow-hidden" {"open" if i == 0 else ""}>
+            <summary class="flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 cursor-pointer font-medium text-gray-900">
+                {question}
+                <span class="transform group-open:rotate-180 transition-transform">▼</span>
+            </summary>
+            <div class="p-4 bg-white text-gray-600">{answer}</div>
+        </details>'''
+
+    return f'''
+    <section class="py-16 px-6 bg-white">
+        <div class="max-w-3xl mx-auto">
+            <h2 class="text-3xl font-bold text-gray-900 text-center mb-12">{title}</h2>
+            <div class="space-y-4">{items_html}</div>
+        </div>
+    </section>'''
+
+
+def _render_text_block(config: dict) -> str:
+    """Render text block."""
+    content = config.get("content", "")
+    alignment = config.get("alignment", "left")
+    align_class = {"left": "text-left", "center": "text-center", "right": "text-right"}.get(alignment, "text-left")
+
+    # Convert newlines to <br>
+    content_html = content.replace("\n", "<br>")
+
+    return f'''
+    <section class="py-12 px-6 bg-white">
+        <div class="max-w-4xl mx-auto {align_class}">
+            <div class="text-gray-700 leading-relaxed prose prose-indigo max-w-none">{content_html}</div>
+        </div>
+    </section>'''
+
+
+def _render_image_block(config: dict) -> str:
+    """Render image block."""
+    url = config.get("url", "")
+    alt = config.get("alt", "")
+    caption = config.get("caption", "")
+    width = config.get("width", "large")
+
+    if not url:
+        return '<!-- Image block with no URL -->'
+
+    width_class = {"small": "max-w-md", "medium": "max-w-2xl", "large": "max-w-4xl", "full": "max-w-none"}.get(width, "max-w-4xl")
+
+    caption_html = f'<figcaption class="mt-3 text-center text-sm text-gray-500">{caption}</figcaption>' if caption else ""
+
+    return f'''
+    <section class="py-8 px-6 bg-white">
+        <figure class="{width_class} mx-auto">
+            <img src="{url}" alt="{alt}" class="w-full rounded-lg shadow-sm">
+            {caption_html}
+        </figure>
+    </section>'''
+
+
+def _render_video_block(config: dict) -> str:
+    """Render video block."""
+    url = config.get("url", "")
+    title = config.get("title", "")
+    autoplay = config.get("autoplay", False)
+
+    if not url:
+        return '<!-- Video block with no URL -->'
+
+    # Parse YouTube/Vimeo URL
+    embed_url = None
+    import re
+    youtube_match = re.search(r'(?:youtube\.com/(?:watch\?v=|embed/)|youtu\.be/)([a-zA-Z0-9_-]{11})', url)
+    vimeo_match = re.search(r'vimeo\.com/(\d+)', url)
+
+    if youtube_match:
+        video_id = youtube_match.group(1)
+        embed_url = f"https://www.youtube.com/embed/{video_id}"
+    elif vimeo_match:
+        video_id = vimeo_match.group(1)
+        embed_url = f"https://player.vimeo.com/video/{video_id}"
+
+    if not embed_url:
+        return f'<!-- Video block with unsupported URL: {url} -->'
+
+    if autoplay:
+        embed_url += "?autoplay=1&mute=1"
+
+    title_html = f'<h2 class="text-2xl font-bold text-gray-900 text-center mb-6">{title}</h2>' if title else ""
+
+    return f'''
+    <section class="py-12 px-6 bg-white">
+        <div class="max-w-4xl mx-auto">
+            {title_html}
+            <div class="relative aspect-video rounded-xl overflow-hidden shadow-lg">
+                <iframe src="{embed_url}" title="{title or 'Video'}" class="absolute inset-0 w-full h-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+            </div>
+        </div>
+    </section>'''
+
+
+def _render_stats_block(config: dict, primary_color: str) -> str:
+    """Render stats block."""
+    title = config.get("title", "")
+    items = config.get("items", [])
+
+    cols = min(len(items), 4)
+    grid_class = f"grid-cols-2 md:grid-cols-{cols}"
+
+    items_html = ""
+    for item in items:
+        value = item.get("value", "")
+        label = item.get("label", "")
+        items_html += f'''
+        <div class="text-center">
+            <p class="text-4xl md:text-5xl font-bold text-white mb-2">{value}</p>
+            <p class="text-indigo-200">{label}</p>
+        </div>'''
+
+    title_html = f'<h2 class="text-2xl font-bold text-white text-center mb-12">{title}</h2>' if title else ""
+
+    return f'''
+    <section class="py-16 px-6" style="background-color: {primary_color};">
+        <div class="max-w-6xl mx-auto">
+            {title_html}
+            <div class="grid {grid_class} gap-8">{items_html}</div>
+        </div>
+    </section>'''
+
+
+def _render_divider_block(config: dict) -> str:
+    """Render divider block."""
+    style = config.get("style", "line")
+    height = config.get("height", "medium")
+
+    height_class = {"small": "py-4", "medium": "py-8", "large": "py-12"}.get(height, "py-8")
+
+    if style == "dots":
+        content = '<div class="flex justify-center gap-2"><span class="w-2 h-2 bg-gray-300 rounded-full"></span><span class="w-2 h-2 bg-gray-300 rounded-full"></span><span class="w-2 h-2 bg-gray-300 rounded-full"></span></div>'
+    elif style == "space":
+        content = '<div class="h-4"></div>'
+    else:
+        content = '<hr class="border-gray-200">'
+
+    return f'<div class="{height_class} px-6 bg-white"><div class="max-w-4xl mx-auto">{content}</div></div>'
+
+
+def _render_pricing_block(config: dict, primary_color: str) -> str:
+    """Render pricing block."""
+    title = config.get("title", "Pricing")
+    subtitle = config.get("subtitle", "")
+    items = config.get("items", [])
+
+    cols = min(len(items), 3)
+    grid_class = f"grid-cols-1 md:grid-cols-{cols}"
+
+    items_html = ""
+    for item in items:
+        name = item.get("name", "")
+        price = item.get("price", "")
+        period = item.get("period", "")
+        features = item.get("features", [])
+        highlighted = item.get("highlighted", False)
+        button_text = item.get("buttonText", "Get Started")
+        button_link = item.get("buttonLink", "#")
+
+        features_html = "".join(f'<li class="flex items-center gap-2"><span class="text-green-500">✓</span> {f}</li>' for f in features)
+
+        card_class = "ring-2 ring-indigo-500 shadow-xl scale-105" if highlighted else "border border-gray-200 shadow-sm"
+        btn_class = f"bg-indigo-600 text-white hover:bg-indigo-700" if highlighted else "bg-gray-100 text-gray-900 hover:bg-gray-200"
+
+        popular_badge = '<div class="absolute -top-4 left-1/2 -translate-x-1/2 bg-indigo-500 text-white text-sm font-medium px-4 py-1 rounded-full">Most Popular</div>' if highlighted else ""
+
+        items_html += f'''
+        <div class="relative bg-white rounded-2xl p-8 {card_class}">
+            {popular_badge}
+            <h3 class="text-xl font-semibold text-gray-900 text-center mb-4">{name}</h3>
+            <div class="text-center mb-6">
+                <span class="text-4xl font-bold text-gray-900">{price}</span>
+                <span class="text-gray-500">{period}</span>
+            </div>
+            <ul class="space-y-3 mb-8">{features_html}</ul>
+            <a href="{button_link}" class="block w-full py-3 text-center rounded-lg font-semibold transition-colors {btn_class}">{button_text}</a>
+        </div>'''
+
+    return f'''
+    <section class="py-16 px-6 bg-gray-50">
+        <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-bold text-gray-900 mb-4">{title}</h2>
+                <p class="text-lg text-gray-600">{subtitle}</p>
+            </div>
+            <div class="grid {grid_class} gap-8">{items_html}</div>
+        </div>
+    </section>'''
+
+
+def render_blocks_html(blocks: list[dict], primary_color: str = "#6366f1") -> str:
+    """Render a list of blocks to HTML.
+
+    Args:
+        blocks: List of block data dicts.
+        primary_color: Primary color for styling.
+
+    Returns:
+        Combined HTML string for all blocks.
+    """
+    if not blocks:
+        return ""
+
+    # Sort blocks by order
+    sorted_blocks = sorted(blocks, key=lambda b: b.get("order", 0))
+
+    html_parts = []
+    for block in sorted_blocks:
+        html_parts.append(render_block_html(block, primary_color))
+
+    return "\n".join(html_parts)
+
+
 def render_form_html(form: dict, workspace_id: str, primary_color: str = "#6366f1") -> str:
     """Render a form to HTML.
 
@@ -336,6 +750,7 @@ def render_full_page(
         Complete HTML document string.
     """
     # Get page content
+    blocks = page.get("blocks", [])
     body_content = page.get("body_content", "")
     headline = page.get("headline", "")
     meta_title = page.get("meta_title") or page.get("name", "")
@@ -349,6 +764,10 @@ def render_full_page(
     chat_initial_message = chat_config.get("initial_message", "") if chat_config else ""
     form_ids = page.get("form_ids", [])
     forms = forms or []
+
+    # Render blocks if present, otherwise use body_content
+    if blocks:
+        body_content = render_blocks_html(blocks, primary_color)
 
     # Build chat widget script
     chat_script = ""

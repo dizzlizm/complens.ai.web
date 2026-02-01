@@ -9,6 +9,14 @@ export interface ChatConfig {
   business_context: Record<string, unknown>;
 }
 
+export interface PageBlock {
+  id: string;
+  type: string;
+  config: Record<string, unknown>;
+  order: number;
+  width?: 1 | 2 | 3 | 4;
+}
+
 export interface Page {
   id: string;
   workspace_id: string;
@@ -19,6 +27,7 @@ export interface Page {
   subheadline: string | null;
   hero_image_url: string | null;
   body_content: string | null;
+  blocks: PageBlock[];
   form_ids: string[];
   chat_config: ChatConfig;
   primary_color: string;
@@ -43,6 +52,7 @@ export interface CreatePageInput {
   subheadline?: string;
   hero_image_url?: string;
   body_content?: string;
+  blocks?: PageBlock[];
   form_ids?: string[];
   chat_config?: Partial<ChatConfig>;
   primary_color?: string;
@@ -58,6 +68,7 @@ export interface UpdatePageInput {
   subheadline?: string;
   hero_image_url?: string;
   body_content?: string;
+  blocks?: PageBlock[];
   form_ids?: string[];
   chat_config?: Partial<ChatConfig>;
   primary_color?: string;
@@ -223,4 +234,33 @@ export async function checkSubdomainAvailability(
     `/workspaces/${workspaceId}/pages/check-subdomain?${params.toString()}`
   );
   return data;
+}
+
+// Generate blocks from AI description
+export interface GenerateBlocksInput {
+  description: string;
+  style?: 'professional' | 'bold' | 'minimal' | 'playful';
+  include_form?: boolean;
+  include_chat?: boolean;
+}
+
+export interface GeneratedBlocks {
+  blocks: PageBlock[];
+  suggested_name?: string;
+  suggested_colors?: {
+    primary: string;
+    accent: string;
+  };
+}
+
+export function useGenerateBlocks(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: GenerateBlocksInput): Promise<GeneratedBlocks> => {
+      const { data } = await api.post<{ generated: GeneratedBlocks }>(
+        `/workspaces/${workspaceId}/pages/generate-blocks`,
+        input
+      );
+      return data.generated;
+    },
+  });
 }

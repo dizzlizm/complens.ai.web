@@ -3,6 +3,7 @@
 import re
 from enum import Enum
 from typing import ClassVar
+from uuid import uuid4
 
 from pydantic import BaseModel as PydanticBaseModel, Field, field_validator
 
@@ -52,6 +53,32 @@ class ChatConfig(PydanticBaseModel):
     )
 
 
+class PageBlock(PydanticBaseModel):
+    """A content block on a page.
+
+    Block Types:
+    - hero: Full-screen header with headline, subheadline, CTA
+    - features: 3-column feature cards
+    - testimonials: Customer quote cards
+    - cta: Call-to-action section
+    - form: Embedded lead capture form
+    - faq: Accordion Q&A
+    - pricing: Pricing tier tables
+    - text: Rich text/markdown section
+    - image: Single image with caption
+    - video: YouTube/Vimeo embed
+    - stats: Number highlights
+    - divider: Visual separator
+    - chat: AI chat widget (inline or floating)
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    type: str = Field(..., description="Block type (hero, features, cta, chat, etc.)")
+    config: dict = Field(default_factory=dict, description="Block-specific settings")
+    order: int = Field(default=0, description="Position in page layout")
+    width: int = Field(default=4, ge=1, le=4, description="Grid width (1-4 columns)")
+
+
 class Page(BaseModel):
     """Page entity - represents a public-facing landing page.
 
@@ -84,7 +111,12 @@ class Page(BaseModel):
     hero_image_url: str | None = Field(None, description="Hero image URL")
     body_content: str | None = Field(None, description="Main body content (markdown)")
 
-    # Forms embedded on this page
+    # Content blocks (new visual builder format)
+    blocks: list[PageBlock] = Field(
+        default_factory=list, description="Content blocks for visual page builder"
+    )
+
+    # Forms embedded on this page (legacy, kept for backwards compatibility)
     form_ids: list[str] = Field(default_factory=list, description="Form IDs to display")
 
     # Chat configuration
@@ -193,6 +225,16 @@ class Page(BaseModel):
         return f"{base_url}/p/{self.slug}?ws={self.workspace_id}"
 
 
+class PageBlockRequest(PydanticBaseModel):
+    """Request model for a page block."""
+
+    id: str | None = None  # Optional, will be generated if not provided
+    type: str = Field(..., description="Block type")
+    config: dict = Field(default_factory=dict)
+    order: int = 0
+    width: int = Field(default=4, ge=1, le=4, description="Grid width (1-4 columns)")
+
+
 class CreatePageRequest(PydanticBaseModel):
     """Request model for creating a page."""
 
@@ -202,6 +244,7 @@ class CreatePageRequest(PydanticBaseModel):
     subheadline: str | None = Field(None, max_length=1000)
     hero_image_url: str | None = None
     body_content: str | None = None
+    blocks: list[PageBlockRequest] = Field(default_factory=list)
     form_ids: list[str] = Field(default_factory=list)
     chat_config: ChatConfig | None = None
     primary_color: str = "#6366f1"
@@ -219,6 +262,7 @@ class UpdatePageRequest(PydanticBaseModel):
     subheadline: str | None = Field(None, max_length=1000)
     hero_image_url: str | None = None
     body_content: str | None = None
+    blocks: list[PageBlockRequest] | None = None
     form_ids: list[str] | None = None
     chat_config: ChatConfig | None = None
     primary_color: str | None = None

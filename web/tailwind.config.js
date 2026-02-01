@@ -18,7 +18,8 @@ export default {
 
     // Flexbox & Grid
     'flex', 'flex-col', 'flex-wrap', 'items-center', 'justify-center', 'justify-between',
-    'grid', 'grid-cols-2', 'grid-cols-3', 'md:grid-cols-2', 'md:grid-cols-3', 'md:grid-cols-4',
+    'grid', 'grid-cols-2', 'grid-cols-3', 'grid-cols-4', 'md:grid-cols-2', 'md:grid-cols-3', 'md:grid-cols-4',
+    'col-span-1', 'col-span-2', 'col-span-3', 'col-span-4',
     'md:translate-y-8',
 
     // Sizing

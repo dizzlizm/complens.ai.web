@@ -711,6 +711,73 @@ RESERVED_SUBDOMAINS = {
 
 ---
 
+### Visual Block Page Builder ✅ Implemented
+
+Replaced the technical tab-based page editor with a user-friendly drag-and-drop block builder.
+
+**Features:**
+- [x] Drag-and-drop blocks from toolbar to canvas
+- [x] Click-to-add alternative for adding blocks
+- [x] 4-column grid layout (blocks can span 1-4 columns for side-by-side layouts)
+- [x] Reorder blocks by dragging
+- [x] Block config panel on selection
+- [x] AI page generation from description
+- [x] 13 block types (hero, features, cta, form, testimonials, faq, pricing, text, image, video, stats, divider, chat)
+
+**Block Types:**
+| Block | Purpose | Width Default |
+|-------|---------|---------------|
+| hero | Full-screen header with headline, CTA, background | 4 (full) |
+| features | 3-column feature cards with icons | 4 (full) |
+| cta | Call-to-action section | 4 (full) |
+| form | Embedded lead capture form (from workspace forms) | 2-4 |
+| chat | AI chat widget (inline or floating style) | 2-4 |
+| testimonials | Customer quote cards | 4 (full) |
+| faq | Accordion Q&A | 4 (full) |
+| pricing | Pricing tier comparison | 4 (full) |
+| text | Rich text content | 2-4 |
+| image | Single image with caption + AI generation | 2-4 |
+| video | YouTube/Vimeo embed | 2-4 |
+| stats | Number highlights | 4 (full) |
+| divider | Visual separator | 4 (full) |
+
+**AI Page Generation:**
+- "Build with AI" button on empty canvas
+- "AI Generate" button when blocks exist
+- Detects page type from description (SaaS, portfolio, coming soon, service, etc.)
+- Extracts product names, pricing tiers, features from description
+- Generates contextual headlines, subheadlines, FAQ, testimonials
+- Style options: Professional, Bold, Minimal, Playful
+- Options to include form and/or chat blocks
+
+**Data Model:**
+```python
+class PageBlock(PydanticBaseModel):
+    id: str
+    type: str  # hero, features, cta, form, chat, etc.
+    config: dict  # Block-specific settings
+    order: int  # Position in page
+    width: int  # 1-4 columns (default: 4)
+```
+
+**Key Files:**
+- `web/src/components/page-builder/PageBuilderCanvas.tsx` - Main drag-drop container with grid layout
+- `web/src/components/page-builder/BlockToolbar.tsx` - Sidebar with draggable block types
+- `web/src/components/page-builder/BlockWrapper.tsx` - Block container with controls
+- `web/src/components/page-builder/BlockConfigPanel.tsx` - Right panel for block settings + width selector
+- `web/src/components/page-builder/AIBlockGenerator.tsx` - AI generation modal
+- `web/src/components/page-builder/blocks/*.tsx` - Individual block components
+- `web/src/components/page-builder/types.ts` - TypeScript types and BLOCK_TYPES metadata
+- `src/layers/shared/python/complens/models/page.py` - PageBlock with width field
+- `src/layers/shared/python/complens/services/page_templates.py` - Block rendering for public pages
+
+**Dependencies:**
+- `@dnd-kit/core` - Drag and drop
+- `@dnd-kit/sortable` - Sortable lists
+- `@dnd-kit/utilities` - CSS transform utilities
+
+---
+
 ### Phase 5: Polish
 - [ ] Stripe billing integration
 - [ ] Workflow templates library

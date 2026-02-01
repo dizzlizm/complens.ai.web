@@ -21,6 +21,7 @@ from complens.models.page import (
     ChatConfig,
     CreatePageRequest,
     Page,
+    PageBlock,
     PageStatus,
     RESERVED_SUBDOMAINS,
     UpdatePageRequest,
@@ -204,6 +205,17 @@ def create_page(
     if repo.slug_exists(workspace_id, request.slug):
         return error(f"Slug '{request.slug}' is already in use", 400, error_code="SLUG_EXISTS")
 
+    # Convert blocks from request format
+    blocks = []
+    if request.blocks:
+        for block_data in request.blocks:
+            blocks.append(PageBlock(
+                id=block_data.id or None,  # Will use default factory if None
+                type=block_data.type,
+                config=block_data.config,
+                order=block_data.order,
+            ))
+
     # Create page
     page = Page(
         workspace_id=workspace_id,
@@ -213,6 +225,7 @@ def create_page(
         subheadline=request.subheadline,
         hero_image_url=request.hero_image_url,
         body_content=request.body_content,
+        blocks=blocks,
         chat_config=request.chat_config or ChatConfig(),
         form_ids=request.form_ids or [],
         primary_color=request.primary_color or "#6366f1",
@@ -302,6 +315,18 @@ def update_page(
         page.subdomain = request.subdomain.lower() if request.subdomain else None
     if request.custom_domain is not None:
         page.custom_domain = request.custom_domain
+    if request.blocks is not None:
+        # Convert blocks from request format
+        blocks = []
+        for block_data in request.blocks:
+            blocks.append(PageBlock(
+                id=block_data.id or None,  # Will use default factory if None
+                type=block_data.type,
+                config=block_data.config,
+                order=block_data.order,
+                width=block_data.width,
+            ))
+        page.blocks = blocks
 
     # Save
     page = repo.update_page(page)
@@ -568,7 +593,7 @@ def handle_page_forms(
     if http_method == "GET" and form_id:
         return get_page_form(form_repo, workspace_id, page_id, form_id)
     elif http_method == "GET":
-        return list_page_forms(form_repo, page_id, event)
+        return list_page_forms(form_repo, workspace_id, page, event)
     elif http_method == "POST":
         return create_page_form(form_repo, workspace_id, page_id, event)
     elif http_method == "PUT" and form_id:
@@ -581,17 +606,32 @@ def handle_page_forms(
 
 def list_page_forms(
     repo: FormRepository,
-    page_id: str,
+    workspace_id: str,
+    page: Page,
     event: dict,
 ) -> dict:
-    """List forms for a specific page."""
+    """List forms for a specific page.
+
+    Supports both new forms (with page_id set) and legacy forms (in page.form_ids).
+    """
     query_params = event.get("queryStringParameters", {}) or {}
     limit = min(int(query_params.get("limit", 50)), 100)
 
-    forms, next_key = repo.list_by_page(page_id, limit=limit)
+    # New way: forms with page_id set
+    forms, next_key = repo.list_by_page(page.id, limit=limit)
+    form_list = [f.model_dump(mode="json") for f in forms]
+
+    # Legacy way: forms referenced by form_ids (for backwards compatibility)
+    form_ids_set = set(f.get("id") for f in form_list)  # Avoid duplicates
+    if page.form_ids:
+        for form_id in page.form_ids:
+            if form_id not in form_ids_set:
+                form = repo.get_by_id(workspace_id, form_id)
+                if form:
+                    form_list.append(form.model_dump(mode="json"))
 
     return success({
-        "items": [f.model_dump(mode="json") for f in forms],
+        "items": form_list,
         "pagination": {"limit": limit},
     })
 
