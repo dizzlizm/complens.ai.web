@@ -27,6 +27,7 @@ export interface Page {
   meta_title: string | null;
   meta_description: string | null;
   og_image_url: string | null;
+  subdomain: string | null;
   custom_domain: string | null;
   view_count: number;
   form_submission_count: number;
@@ -64,6 +65,7 @@ export interface UpdatePageInput {
   custom_css?: string;
   meta_title?: string;
   meta_description?: string;
+  subdomain?: string;
   custom_domain?: string;
 }
 
@@ -197,4 +199,28 @@ export function useGeneratePage(workspaceId: string) {
       return data.generated;
     },
   });
+}
+
+// Check subdomain availability
+export interface SubdomainCheckResult {
+  subdomain: string;
+  available: boolean;
+  reason?: 'invalid_format' | 'reserved' | 'taken';
+  message?: string;
+  url?: string;
+}
+
+export async function checkSubdomainAvailability(
+  workspaceId: string,
+  subdomain: string,
+  excludePageId?: string
+): Promise<SubdomainCheckResult> {
+  const params = new URLSearchParams({ subdomain });
+  if (excludePageId) {
+    params.append('exclude_page_id', excludePageId);
+  }
+  const { data } = await api.get<SubdomainCheckResult>(
+    `/workspaces/${workspaceId}/pages/check-subdomain?${params.toString()}`
+  );
+  return data;
 }

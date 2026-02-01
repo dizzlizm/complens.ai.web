@@ -13,12 +13,17 @@ from complens.models.page import (
     CreatePageRequest,
     Page,
     PageStatus,
+    RESERVED_SUBDOMAINS,
     UpdatePageRequest,
 )
 from complens.repositories.page import PageRepository
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
+
+import os
+
+STAGE = os.environ.get("STAGE", "dev")
 
 logger = structlog.get_logger()
 
@@ -40,6 +45,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         GET    /workspaces/{workspace_id}/pages
         POST   /workspaces/{workspace_id}/pages
         POST   /workspaces/{workspace_id}/pages/generate  - AI generate page content
+        GET    /workspaces/{workspace_id}/pages/check-subdomain?subdomain=xxx
         GET    /workspaces/{workspace_id}/pages/{page_id}
         PUT    /workspaces/{workspace_id}/pages/{page_id}
         DELETE /workspaces/{workspace_id}/pages/{page_id}
@@ -62,6 +68,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         # Check for /generate endpoint first (before page_id check)
         if http_method == "POST" and path.endswith("/pages/generate"):
             return generate_page_content(event)
+        elif http_method == "GET" and path.endswith("/pages/check-subdomain"):
+            return check_subdomain_availability(repo, event)
         elif http_method == "GET" and page_id:
             return get_page(repo, workspace_id, page_id)
         elif http_method == "GET":
@@ -206,6 +214,17 @@ def update_page(
         if repo.slug_exists(workspace_id, request.slug, exclude_page_id=page_id):
             return error(f"Slug '{request.slug}' is already in use", 400, error_code="SLUG_EXISTS")
 
+    # Check subdomain uniqueness if changing (globally unique across all workspaces)
+    if request.subdomain is not None:
+        subdomain = request.subdomain.lower() if request.subdomain else None
+        if subdomain and subdomain != (page.subdomain or "").lower():
+            # Check reserved subdomains
+            if subdomain in RESERVED_SUBDOMAINS:
+                return error(f"Subdomain '{subdomain}' is reserved", 400, error_code="SUBDOMAIN_RESERVED")
+            # Check if already taken
+            if repo.subdomain_exists(subdomain, exclude_page_id=page_id):
+                return error(f"Subdomain '{subdomain}' is already taken", 400, error_code="SUBDOMAIN_EXISTS")
+
     # Apply updates
     if request.name is not None:
         page.name = request.name
@@ -235,6 +254,9 @@ def update_page(
         page.meta_title = request.meta_title
     if request.meta_description is not None:
         page.meta_description = request.meta_description
+    if request.subdomain is not None:
+        # Allow setting to empty string to clear subdomain
+        page.subdomain = request.subdomain.lower() if request.subdomain else None
     if request.custom_domain is not None:
         page.custom_domain = request.custom_domain
 
@@ -260,6 +282,61 @@ def delete_page(
     logger.info("Page deleted", page_id=page_id, workspace_id=workspace_id)
 
     return success({"deleted": True, "id": page_id})
+
+
+def check_subdomain_availability(repo: PageRepository, event: dict) -> dict:
+    """Check if a subdomain is available.
+
+    Query params:
+        subdomain: The subdomain to check
+        exclude_page_id: Optional page ID to exclude (for updates)
+    """
+    query_params = event.get("queryStringParameters", {}) or {}
+    subdomain = query_params.get("subdomain", "").lower().strip()
+    exclude_page_id = query_params.get("exclude_page_id")
+
+    if not subdomain:
+        return error("Subdomain parameter is required", 400)
+
+    # Check format
+    import re
+    if not re.match(r'^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$', subdomain):
+        return success({
+            "subdomain": subdomain,
+            "available": False,
+            "reason": "invalid_format",
+            "message": "Subdomain must be 3-63 characters, lowercase letters, numbers, and hyphens only",
+        })
+
+    # Check reserved
+    if subdomain in RESERVED_SUBDOMAINS:
+        return success({
+            "subdomain": subdomain,
+            "available": False,
+            "reason": "reserved",
+            "message": f"'{subdomain}' is a reserved subdomain",
+        })
+
+    # Check if taken
+    if repo.subdomain_exists(subdomain, exclude_page_id=exclude_page_id):
+        return success({
+            "subdomain": subdomain,
+            "available": False,
+            "reason": "taken",
+            "message": f"'{subdomain}' is already taken",
+        })
+
+    # Build the URL based on stage
+    if STAGE == "prod":
+        url = f"https://{subdomain}.complens.ai"
+    else:
+        url = f"https://{subdomain}.{STAGE}.complens.ai"
+
+    return success({
+        "subdomain": subdomain,
+        "available": True,
+        "url": url,
+    })
 
 
 def generate_page_content(event: dict) -> dict:

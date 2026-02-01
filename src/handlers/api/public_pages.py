@@ -50,6 +50,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         GET  /public/pages/{slug}?ws={workspace_id}  - Get page by slug
         GET  /public/forms/{form_id}?ws={workspace_id}  - Get form by ID
         GET  /public/domain/{domain}  - Get rendered page by custom domain
+        GET  /public/subdomain/{subdomain}  - Get rendered page by subdomain
         POST /public/submit/page/{page_id}  - Submit form from page
         POST /public/submit/form/{form_id}  - Submit form directly
     """
@@ -64,11 +65,14 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         form_id = path_params.get("form_id")
         page_id = path_params.get("page_id")
         domain = path_params.get("domain")
+        subdomain = path_params.get("subdomain")
         workspace_id = query_params.get("ws")
 
         # Route to appropriate handler
         if "/public/submit/page/" in path and http_method == "POST":
             return submit_page_form(page_id, event)
+        elif "/public/subdomain/" in path and http_method == "GET":
+            return get_page_by_subdomain(subdomain)
         elif "/public/domain/" in path and http_method == "GET":
             return get_page_by_domain(domain)
         elif "/public/pages/" in path and http_method == "GET":
@@ -120,6 +124,108 @@ def get_public_page(slug: str, workspace_id: str | None) -> dict:
         page_data.pop(field, None)
 
     return success(page_data)
+
+
+def get_page_by_subdomain(subdomain: str) -> dict:
+    """Get and render a page by subdomain (e.g., mypage.dev.complens.ai).
+
+    Returns full HTML for the page, suitable for serving directly.
+    """
+    if not subdomain:
+        return error("Subdomain is required", 400)
+
+    # Normalize subdomain
+    subdomain = subdomain.lower().strip()
+
+    # Look up page by subdomain using GSI3
+    repo = PageRepository()
+    page = repo.get_by_subdomain(subdomain)
+
+    if not page:
+        logger.info("Page not found for subdomain", subdomain=subdomain)
+        return {
+            "statusCode": 404,
+            "headers": {"Content-Type": "text/html"},
+            "body": """<!DOCTYPE html>
+<html><head><title>Page Not Found</title></head>
+<body style="font-family:system-ui;text-align:center;padding:100px;">
+<h1>Page Not Found</h1>
+<p>No page is configured for this subdomain.</p>
+</body></html>""",
+        }
+
+    # Only return published pages
+    status_value = page.status.value if hasattr(page.status, 'value') else page.status
+    if status_value != "published":
+        return {
+            "statusCode": 404,
+            "headers": {"Content-Type": "text/html"},
+            "body": """<!DOCTYPE html>
+<html><head><title>Page Not Found</title></head>
+<body style="font-family:system-ui;text-align:center;padding:100px;">
+<h1>Page Not Found</h1>
+<p>This page is not published.</p>
+</body></html>""",
+        }
+
+    # Increment view count
+    try:
+        repo.increment_view_count(page.workspace_id, page.id)
+    except Exception as e:
+        logger.warning("Failed to increment view count", page_id=page.id, error=str(e))
+
+    # Fetch forms associated with this page
+    forms = []
+    if page.form_ids:
+        form_repo = FormRepository()
+        for form_id in page.form_ids:
+            form = form_repo.get_by_id(page.workspace_id, form_id)
+            if form:
+                forms.append(form.model_dump(mode="json"))
+
+    # Get API URLs from environment
+    ws_url = os.environ.get("WEBSOCKET_ENDPOINT", "wss://ws.dev.complens.ai")
+    api_url = os.environ.get("API_URL", "https://api.dev.complens.ai")
+
+    # Render full HTML page with forms
+    page_data = page.model_dump(mode="json")
+    html = render_full_page(page_data, ws_url, api_url, forms=forms)
+
+    logger.info(
+        "Rendered page for subdomain",
+        subdomain=subdomain,
+        page_id=page.id,
+        workspace_id=page.workspace_id,
+        form_count=len(forms),
+    )
+
+    # Build CSP header
+    csp_directives = [
+        "default-src 'self'",
+        f"script-src 'self' 'unsafe-inline' cdn.tailwindcss.com",
+        f"style-src 'self' 'unsafe-inline' cdn.tailwindcss.com fonts.googleapis.com",
+        "font-src 'self' fonts.gstatic.com",
+        "img-src 'self' data: https: blob:",
+        f"connect-src 'self' {api_url} {ws_url}",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+    ]
+    csp_header = "; ".join(csp_directives)
+
+    return {
+        "statusCode": 200,
+        "headers": {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "public, max-age=300",
+            "Content-Security-Policy": csp_header,
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "X-XSS-Protection": "1; mode=block",
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+        },
+        "body": html,
+    }
 
 
 def get_page_by_domain(domain: str) -> dict:

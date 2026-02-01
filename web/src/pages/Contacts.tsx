@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Plus, Search, Upload, MoreVertical, Mail, Phone, Loader2, Users, Trash2, AlertTriangle } from 'lucide-react';
 import { useInfiniteContacts, useCurrentWorkspace, useCreateContact, useDeleteContact, type Contact, type CreateContactInput } from '../lib/hooks';
 import Modal, { ModalFooter } from '../components/ui/Modal';
 import { useToast } from '../components/Toast';
+import DropdownMenu, { DropdownItem } from '../components/ui/DropdownMenu';
 
 // Format relative time
 function formatRelativeTime(dateString?: string): string {
@@ -64,7 +65,6 @@ export default function Contacts() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [formData, setFormData] = useState<CreateContactInput>(emptyForm);
   const [tagInput, setTagInput] = useState('');
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
@@ -83,15 +83,6 @@ export default function Contacts() {
 
   // Flatten all pages of contacts
   const contacts = data?.pages.flatMap((page) => page.contacts) || [];
-
-  // Close menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = () => setMenuOpenId(null);
-    if (menuOpenId) {
-      document.addEventListener('click', handleClickOutside);
-      return () => document.removeEventListener('click', handleClickOutside);
-    }
-  }, [menuOpenId]);
 
   // Handle form field changes
   const handleFieldChange = (field: keyof CreateContactInput, value: string) => {
@@ -136,7 +127,6 @@ export default function Contacts() {
     if (!confirm('Are you sure you want to delete this contact?')) return;
 
     setDeletingId(contactId);
-    setMenuOpenId(null);
 
     try {
       await deleteContact.mutateAsync(contactId);
@@ -323,32 +313,28 @@ export default function Contacts() {
                       {formatRelativeTime(contact.created_at)}
                     </td>
                     <td className="px-6 py-4 text-right text-sm font-medium">
-                      <div className="relative">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMenuOpenId(menuOpenId === contact.id ? null : contact.id);
-                          }}
-                          className="p-1 text-gray-400 hover:text-gray-600"
+                      <DropdownMenu
+                        trigger={
+                          <button className="p-1 text-gray-400 hover:text-gray-600">
+                            {deletingId === contact.id ? (
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                            ) : (
+                              <MoreVertical className="w-5 h-5" />
+                            )}
+                          </button>
+                        }
+                      >
+                        <DropdownItem
+                          variant="danger"
+                          onClick={() => handleDelete(contact.id)}
+                          disabled={deletingId === contact.id}
                         >
-                          {deletingId === contact.id ? (
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                          ) : (
-                            <MoreVertical className="w-5 h-5" />
-                          )}
-                        </button>
-                        {menuOpenId === contact.id && (
-                          <div className="absolute right-0 mt-1 w-32 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-50">
-                            <button
-                              onClick={() => handleDelete(contact.id)}
-                              className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                              Delete
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                          <span className="flex items-center gap-2">
+                            <Trash2 className="w-4 h-4" />
+                            Delete
+                          </span>
+                        </DropdownItem>
+                      </DropdownMenu>
                     </td>
                   </tr>
                 ))}

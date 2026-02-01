@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { usePage, useUpdatePage, useGeneratePage, type UpdatePageInput, type ChatConfig, type GeneratePageInput } from '../lib/hooks/usePages';
+import { usePage, useUpdatePage, useGeneratePage, checkSubdomainAvailability, type UpdatePageInput, type ChatConfig, type GeneratePageInput } from '../lib/hooks/usePages';
 import { useForms } from '../lib/hooks/useForms';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import { useDomains, useCreateDomain, useDeleteDomain, getDomainStatusInfo } from '../lib/hooks/useDomains';
 import { useToast } from '../components/Toast';
-import ContentBlockEditor, { type ContentBlock, blocksToHtml, htmlToBlocks } from '../components/page-editor/ContentBlockEditor';
-import PagePreview from '../components/page-editor/PagePreview';
-import { Eye, EyeOff } from 'lucide-react';
+
+// Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
+const API_URL = import.meta.env.VITE_API_URL || 'https://api.dev.complens.ai';
+const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '');
 
 type Tab = 'content' | 'forms' | 'chat' | 'design' | 'seo' | 'domain';
 
@@ -24,8 +25,6 @@ export default function PageEditor() {
   const [activeTab, setActiveTab] = useState<Tab>('content');
   const [formData, setFormData] = useState<UpdatePageInput>({});
   const [hasChanges, setHasChanges] = useState(false);
-  const [contentBlocks, setContentBlocks] = useState<ContentBlock[]>([]);
-  const [showPreview, setShowPreview] = useState(true);
 
   // AI Generate modal state
   const [showAIModal, setShowAIModal] = useState(false);
@@ -57,10 +56,6 @@ export default function PageEditor() {
         meta_description: page.meta_description || '',
         custom_domain: page.custom_domain || '',
       });
-      // Parse existing body_content into blocks if possible
-      if (page.body_content) {
-        setContentBlocks(htmlToBlocks(page.body_content));
-      }
     }
   }, [page]);
 
@@ -83,22 +78,9 @@ export default function PageEditor() {
     setHasChanges(true);
   };
 
-  const handleBlocksChange = (blocks: ContentBlock[]) => {
-    setContentBlocks(blocks);
-    // Convert blocks to HTML and update formData
-    const html = blocksToHtml(blocks);
-    setFormData((prev) => ({ ...prev, body_content: html }));
-    setHasChanges(true);
-  };
-
   const handleSave = async () => {
     try {
-      // Make sure body_content is up to date with blocks
-      const dataToSave = {
-        ...formData,
-        body_content: blocksToHtml(contentBlocks),
-      };
-      await updatePage.mutateAsync(dataToSave);
+      await updatePage.mutateAsync(formData);
       setHasChanges(false);
       toast.success('Page saved successfully');
     } catch (err) {
@@ -109,12 +91,10 @@ export default function PageEditor() {
 
   const handlePublish = async () => {
     try {
-      const dataToPublish = {
+      await updatePage.mutateAsync({
         ...formData,
-        body_content: blocksToHtml(contentBlocks),
         status: 'published' as const,
-      };
-      await updatePage.mutateAsync(dataToPublish);
+      });
       setHasChanges(false);
       toast.success('Page published successfully');
     } catch (err) {
@@ -276,22 +256,9 @@ export default function PageEditor() {
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'content' ? (
-        /* Content Tab - Split layout with editor and preview */
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Editor Panel */}
-          <div className="bg-white rounded-lg shadow p-6 space-y-6">
-            <div className="flex items-center justify-between">
-              <h3 className="font-medium text-gray-900">Page Settings</h3>
-              <button
-                onClick={() => setShowPreview(!showPreview)}
-                className="lg:hidden flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-700"
-              >
-                {showPreview ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                {showPreview ? 'Hide Preview' : 'Show Preview'}
-              </button>
-            </div>
-
+      <div className="bg-white rounded-lg shadow p-6">
+        {activeTab === 'content' && (
+          <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -301,7 +268,7 @@ export default function PageEditor() {
                   type="text"
                   value={formData.name || ''}
                   onChange={(e) => handleChange('name', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
               <div>
@@ -316,7 +283,7 @@ export default function PageEditor() {
                     onChange={(e) =>
                       handleChange('slug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))
                     }
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
               </div>
@@ -331,7 +298,7 @@ export default function PageEditor() {
                 value={formData.headline || ''}
                 onChange={(e) => handleChange('headline', e.target.value)}
                 placeholder="Your compelling headline"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
 
@@ -344,7 +311,7 @@ export default function PageEditor() {
                 value={formData.subheadline || ''}
                 onChange={(e) => handleChange('subheadline', e.target.value)}
                 placeholder="A supporting message"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
 
@@ -357,37 +324,28 @@ export default function PageEditor() {
                 value={formData.hero_image_url || ''}
                 onChange={(e) => handleChange('hero_image_url', e.target.value)}
                 placeholder="https://example.com/image.jpg"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Content Sections
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Body Content (HTML)
               </label>
-              <ContentBlockEditor
-                blocks={contentBlocks}
-                onChange={handleBlocksChange}
+              <textarea
+                value={formData.body_content || ''}
+                onChange={(e) => handleChange('body_content', e.target.value)}
+                placeholder="<div class='container'>Your page content...</div>"
+                rows={12}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
               />
+              <p className="text-xs text-gray-500 mt-1">
+                You can use HTML to structure your page content. The AI Generate feature can create this for you.
+              </p>
             </div>
           </div>
+        )}
 
-          {/* Preview Panel */}
-          <div className={`${showPreview ? 'block' : 'hidden'} lg:block sticky top-20 h-[calc(100vh-8rem)]`}>
-            <PagePreview
-              headline={formData.headline || ''}
-              subheadline={formData.subheadline}
-              heroImageUrl={formData.hero_image_url}
-              blocks={contentBlocks}
-              forms={forms || []}
-              selectedFormIds={formData.form_ids || []}
-              chatConfig={formData.chat_config}
-              primaryColor={formData.primary_color || '#6366f1'}
-            />
-          </div>
-        </div>
-      ) : (
-      <div className="bg-white rounded-lg shadow p-6">
         {activeTab === 'forms' && (
           <div className="space-y-4">
             <p className="text-gray-600 mb-4">
@@ -577,10 +535,17 @@ export default function PageEditor() {
         )}
 
         {activeTab === 'domain' && (
-          <DomainTab workspaceId={workspaceId || ''} pageId={pageId || ''} pageSlug={page.slug} />
+          <DomainTab
+            workspaceId={workspaceId || ''}
+            pageId={pageId || ''}
+            pageSlug={page.slug}
+            subdomain={formData.subdomain ?? page.subdomain ?? ''}
+            onSubdomainChange={(subdomain) => handleChange('subdomain', subdomain)}
+            onSave={handleSave}
+            isSaving={updatePage.isPending}
+          />
         )}
       </div>
-      )}
 
       {/* AI Generate Modal */}
       {showAIModal && (
@@ -765,14 +730,74 @@ export default function PageEditor() {
 }
 
 // Domain Tab Component
-function DomainTab({ workspaceId, pageId, pageSlug }: { workspaceId: string; pageId: string; pageSlug: string }) {
+interface DomainTabProps {
+  workspaceId: string;
+  pageId: string;
+  pageSlug: string;
+  subdomain: string;
+  onSubdomainChange: (subdomain: string) => void;
+  onSave: () => void;
+  isSaving: boolean;
+}
+
+function DomainTab({
+  workspaceId,
+  pageId,
+  pageSlug,
+  subdomain,
+  onSubdomainChange,
+  onSave,
+  isSaving,
+}: DomainTabProps) {
   const [newDomain, setNewDomain] = useState('');
   const [showSetup, setShowSetup] = useState(false);
+  const [subdomainInput, setSubdomainInput] = useState(subdomain);
+  const [subdomainStatus, setSubdomainStatus] = useState<{
+    checking: boolean;
+    available?: boolean;
+    message?: string;
+    url?: string;
+  }>({ checking: false });
   const toast = useToast();
 
   const { data: domainsData, isLoading } = useDomains(workspaceId);
   const createDomain = useCreateDomain(workspaceId);
   const deleteDomain = useDeleteDomain(workspaceId);
+
+  // Check subdomain availability with debounce
+  useEffect(() => {
+    if (!subdomainInput || subdomainInput === subdomain) {
+      setSubdomainStatus({ checking: false });
+      return;
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setSubdomainStatus({ checking: true });
+      try {
+        const result = await checkSubdomainAvailability(workspaceId, subdomainInput, pageId);
+        setSubdomainStatus({
+          checking: false,
+          available: result.available,
+          message: result.message,
+          url: result.url,
+        });
+      } catch (err) {
+        setSubdomainStatus({ checking: false, message: 'Failed to check availability' });
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [subdomainInput, subdomain, workspaceId, pageId]);
+
+  const handleSubdomainSave = () => {
+    // Block only if we've explicitly checked and it's unavailable
+    if (subdomainStatus.available === false && subdomainInput !== subdomain) {
+      return;
+    }
+    onSubdomainChange(subdomainInput);
+    // Trigger save after state update
+    setTimeout(onSave, 0);
+  };
 
   const allDomains = domainsData?.items || [];
   const limit = domainsData?.limit || 1;
@@ -823,7 +848,106 @@ function DomainTab({ workspaceId, pageId, pageSlug }: { workspaceId: string; pag
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Subdomain Section - Free and Easy */}
+      <div className="border border-gray-200 rounded-lg p-5">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="p-2 bg-green-100 rounded-lg">
+            <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </div>
+          <div>
+            <h4 className="font-medium text-gray-900">Free Subdomain</h4>
+            <p className="text-sm text-gray-600 mt-1">
+              Get a short, memorable URL instantly. No DNS setup required.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex gap-3">
+          <div className="flex-1 flex items-center">
+            <input
+              type="text"
+              value={subdomainInput}
+              onChange={(e) => setSubdomainInput(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+              placeholder="mypage"
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            />
+            <span className="px-4 py-2 bg-gray-100 border border-l-0 border-gray-300 rounded-r-lg text-gray-500 text-sm">
+              {`.${SUBDOMAIN_SUFFIX}`}
+            </span>
+          </div>
+          <button
+            onClick={handleSubdomainSave}
+            disabled={
+              isSaving ||
+              subdomainStatus.checking ||
+              // Only disable if we've explicitly checked and it's not available
+              Boolean(subdomainInput && subdomainStatus.available === false && subdomainInput !== subdomain)
+            }
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+          >
+            {isSaving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+
+        {/* Status messages */}
+        {subdomainStatus.checking && (
+          <p className="text-sm text-gray-500 mt-2 flex items-center gap-2">
+            <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            Checking availability...
+          </p>
+        )}
+        {!subdomainStatus.checking && subdomainStatus.available === true && subdomainInput && (
+          <p className="text-sm text-green-600 mt-2 flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            Available! Your page will be at: <span className="font-medium">{subdomainStatus.url}</span>
+          </p>
+        )}
+        {!subdomainStatus.checking && subdomainStatus.available === false && (
+          <p className="text-sm text-red-600 mt-2 flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            {subdomainStatus.message}
+          </p>
+        )}
+        {subdomain && !subdomainInput && (
+          <p className="text-sm text-gray-500 mt-2">
+            Current subdomain will be removed when you save.
+          </p>
+        )}
+        {subdomain && subdomainInput === subdomain && (
+          <p className="text-sm text-gray-500 mt-2">
+            Your page is live at:{' '}
+            <a
+              href={`https://${subdomain}.${SUBDOMAIN_SUFFIX}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-indigo-600 hover:underline"
+            >
+              {`https://${subdomain}.${SUBDOMAIN_SUFFIX}`}
+            </a>
+          </p>
+        )}
+      </div>
+
+      {/* Divider */}
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-gray-200" />
+        </div>
+        <div className="relative flex justify-center text-sm">
+          <span className="px-3 bg-white text-gray-500">or use your own domain</span>
+        </div>
+      </div>
+
+      {/* Custom Domain Section */}
       <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 rounded-lg p-4">
         <div className="flex items-start gap-3">
           <svg className="w-5 h-5 text-indigo-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

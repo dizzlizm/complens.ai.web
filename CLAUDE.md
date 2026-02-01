@@ -222,8 +222,12 @@ Required in Lambda:
 - `DELETE /workspaces/{ws_id}/forms/{id}` - Delete form
 
 ### Public Endpoints (No Auth Required)
-- `GET /public/pages/{slug}?ws={workspace_id}` - Get public page
+- `GET /public/pages/{slug}?ws={workspace_id}` - Get public page by slug
+- `GET /public/subdomain/{subdomain}` - Get public page by subdomain
 - `POST /public/pages/{page_id}/forms/{form_id}` - Submit form
+
+### Subdomain Management
+- `GET /workspaces/{ws_id}/pages/check-subdomain?subdomain={sub}` - Check availability
 
 ## Coding Standards
 
@@ -472,10 +476,12 @@ sam deploy --config-env dev --parameter-overrides \
 
 **Key Files:**
 - `web/src/lib/api.ts` - Axios client with auth
-- `web/src/lib/hooks/` - React Query hooks (useWorkflows, useContacts, useWorkspaces)
+- `web/src/lib/hooks/` - React Query hooks (useWorkflows, useContacts, useWorkspaces, usePages)
 - `web/src/components/workflow/` - Workflow canvas and node components
 - `web/src/components/workflow/NodeConfigPanel.tsx` - Node configuration sidebar
+- `web/src/components/ui/DropdownMenu.tsx` - Portal-based dropdown (fixes z-index issues)
 - `web/src/pages/WorkflowEditor.tsx` - Full workflow editor with save/load/test
+- `web/src/pages/PageEditor.tsx` - Landing page editor with AI generation, domain/subdomain config
 
 **Node Configuration Panel:**
 - [x] Click any node to open config panel
@@ -494,13 +500,16 @@ sam deploy --config-env dev --parameter-overrides \
 - [x] Auto-saves before testing if unsaved changes
 - [x] Success/error result notifications
 
-**Recent Fixes (Jan 2026):**
+**Recent Fixes (Jan-Feb 2026):**
 - [x] DynamoDB float/Decimal conversion in `base.py` (DynamoDB requires Decimal, not float)
 - [x] Pydantic v2 ConfigDict for WorkflowNode aliases (`type` ↔ `node_type`)
 - [x] Frontend/backend type alignment (removed unused `trigger_type`/`trigger_config` from requests)
 - [x] Proper node/edge validation error handling in workflow handlers
 - [x] Response serialization with `by_alias=True` for React Flow compatibility
 - [x] Enum/string status handling for workflows loaded from DynamoDB
+- [x] **Dropdown menu z-index fix** - Created `DropdownMenu.tsx` using React Portal to render menus in `document.body`, escaping parent `overflow:hidden` containers
+- [x] **Body content editor fix** - Reverted from ContentBlockEditor to simple textarea (ContentBlockEditor was corrupting HTML)
+- [x] **Subdomain save button fix** - Changed disabled logic from `!available` (false when undefined) to `available === false` (only when explicitly unavailable)
 
 **Still TODO:**
 - [ ] Real-time WebSocket updates for workflow runs
@@ -590,6 +599,77 @@ aws cloudfront update-distribution \
 - `PagesCnameTarget` - CNAME target for custom domains (pages.dev.complens.ai)
 - `PagesDistributionId` - CloudFront distribution ID for custom domains
 - `PagesDistributionDomainName` - CloudFront domain name
+
+---
+
+### Free Subdomain for Landing Pages ✅ Implemented
+
+Allow users to claim a subdomain like `itsross.dev.complens.ai` instead of using long slug URLs.
+
+**How it Works:**
+```
+User claims "itsross" subdomain
+    ↓
+Stored in DynamoDB with GSI3 for global lookup
+    ↓
+Visitor hits https://itsross.dev.complens.ai
+    ↓
+CloudFront Function extracts "itsross" from Host header
+    ↓
+Rewrites request to /public/subdomain/itsross
+    ↓
+Lambda looks up page by subdomain (GSI3)
+    ↓
+Returns rendered HTML page
+```
+
+**Backend:**
+- [x] Page model updated with `subdomain` field (3-63 chars, alphanumeric + hyphens)
+- [x] `RESERVED_SUBDOMAINS` set prevents claiming system subdomains (api, ws, www, app, admin, etc.)
+- [x] GSI3 for global subdomain lookup: `GSI3PK=PAGE_SUBDOMAIN#{subdomain}`
+- [x] `get_by_subdomain()` and `subdomain_exists()` in page repository
+- [x] `/pages/check-subdomain` endpoint for real-time availability checking
+- [x] `/public/subdomain/{subdomain}` endpoint for rendering pages by subdomain
+
+**Infrastructure (template.yaml):**
+- [x] GSI3 added to DynamoDB table (GSI3PK, GSI3SK)
+- [x] `SubdomainRouterFunction` - CloudFront Function to extract subdomain from Host
+- [x] `SubdomainDistribution` - CloudFront distribution with wildcard `*.${DomainName}`
+- [x] Wildcard DNS records (A + AAAA) for `*.dev.complens.ai`
+- [x] Wildcard SSL certificate via ACM
+
+**Frontend:**
+- [x] Subdomain input in PageEditor Domain tab
+- [x] Real-time availability checking with 500ms debounce
+- [x] Dynamic suffix based on environment (`VITE_API_URL`)
+- [x] Status indicators (checking, available, taken)
+- [x] Hooks in `usePages.ts`: `checkSubdomainAvailability()`
+
+**Reserved Subdomains:**
+```python
+RESERVED_SUBDOMAINS = {
+    'api', 'ws', 'www', 'app', 'admin', 'dev', 'staging', 'prod',
+    'mail', 'smtp', 'imap', 'pop', 'ftp', 'cdn', 'static', 'assets',
+    'auth', 'login', 'signup', 'register', 'account', 'billing',
+    'support', 'help', 'docs', 'blog', 'status', 'dashboard',
+    'test', 'demo', 'sandbox', 'preview', 'beta', 'alpha',
+}
+```
+
+**URL Patterns:**
+- Subdomain: `https://{subdomain}.dev.complens.ai` (e.g., `https://itsross.dev.complens.ai`)
+- Slug fallback: `/p/{slug}?ws={workspace_id}` (still works)
+- Custom domain: `https://yourdomain.com` (separate feature)
+
+**Key Files:**
+- `src/layers/shared/python/complens/models/page.py` - Subdomain field + validation
+- `src/layers/shared/python/complens/repositories/page.py` - GSI3 lookup methods
+- `src/handlers/api/pages.py` - Availability check endpoint
+- `src/handlers/api/public_pages.py` - Subdomain rendering endpoint
+- `web/src/pages/PageEditor.tsx` - Subdomain UI in Domain tab
+- `web/src/lib/hooks/usePages.ts` - `checkSubdomainAvailability()` function
+
+---
 
 ### Phase 5: Polish
 - [ ] Stripe billing integration

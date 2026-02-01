@@ -120,6 +120,10 @@ Resources:
           AttributeType: S
         - AttributeName: GSI2SK
           AttributeType: S
+        - AttributeName: GSI3PK
+          AttributeType: S
+        - AttributeName: GSI3SK
+          AttributeType: S
       KeySchema:
         - AttributeName: PK
           KeyType: HASH
@@ -139,6 +143,14 @@ Resources:
             - AttributeName: GSI2PK
               KeyType: HASH
             - AttributeName: GSI2SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: GSI3
+          KeySchema:
+            - AttributeName: GSI3PK
+              KeyType: HASH
+            - AttributeName: GSI3SK
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
@@ -848,6 +860,12 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/pages/generate
             Method: POST
+        CheckSubdomain:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/check-subdomain
+            Method: GET
         Get:
           Type: Api
           Properties:
@@ -1077,6 +1095,14 @@ Resources:
           Properties:
             RestApiId: !Ref RestApi
             Path: /public/domain/{domain}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        GetPageBySubdomain:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/subdomain/{subdomain}
             Method: GET
             Auth:
               Authorizer: NONE
@@ -1904,6 +1930,112 @@ Resources:
         HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (constant)
         EvaluateTargetHealth: false
 
+  # ============================================
+  # CloudFront Distribution for Subdomain Pages
+  # ============================================
+  # This distribution serves landing pages for subdomains like itsross.dev.complens.ai
+  #
+  # How it works:
+  # 1. User claims subdomain "itsross" for their page
+  # 2. Wildcard DNS *.dev.complens.ai → this CloudFront distribution
+  # 3. CloudFront Function extracts subdomain from Host header
+  # 4. Request forwarded to API: /public/subdomain/{subdomain}
+  # 5. Lambda renders the page HTML
+
+  SubdomainRouterFunction:
+    Type: AWS::CloudFront::Function
+    Condition: CustomDomainEnabled
+    Properties:
+      Name: !Sub "complens-${Stage}-subdomain-router"
+      AutoPublish: true
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var host = request.headers.host.value;
+
+          // Extract subdomain from host (e.g., "itsross" from "itsross.dev.complens.ai")
+          var parts = host.split('.');
+          var subdomain = parts[0];
+
+          // Rewrite URI to include subdomain path
+          request.uri = '/' + subdomain;
+
+          return request;
+        }
+      FunctionConfig:
+        Comment: !Sub "Route subdomain requests to API for ${Stage}"
+        Runtime: cloudfront-js-1.0
+
+  SubdomainDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: CustomDomainEnabled
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "Complens ${Stage} Subdomain Pages (*.${DomainName})"
+        Aliases:
+          - !Sub "*.${DomainName}"
+        ViewerCertificate:
+          AcmCertificateArn: !If [UseCertificateArn, !Ref CertificateArn, !Ref ApiCertificate]
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: ApiGatewayOrigin
+            DomainName: !Sub "${RestApi}.execute-api.${AWS::Region}.amazonaws.com"
+            OriginPath: !Sub "/${Stage}/public/subdomain"
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: ApiGatewayOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf  # CORS-S3Origin
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SubdomainRouterFunction.FunctionARN
+        PriceClass: PriceClass_100
+        HttpVersion: http2and3
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  # Wildcard DNS record for subdomains
+  SubdomainDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CustomDomainEnabled
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "*.${DomainName}"
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt SubdomainDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (constant)
+        EvaluateTargetHealth: false
+
+  SubdomainDnsRecordIPv6:
+    Type: AWS::Route53::RecordSet
+    Condition: CustomDomainEnabled
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "*.${DomainName}"
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt SubdomainDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (constant)
+        EvaluateTargetHealth: false
+
 Conditions:
   IsProd: !Equals [!Ref Stage, "prod"]
   CustomDomainEnabled: !Equals [!Ref EnableCustomDomain, "true"]
@@ -2031,3 +2163,24 @@ Outputs:
     Value: !Sub "pages.${DomainName}"
     Export:
       Name: !Sub "${AWS::StackName}-PagesCnameTarget"
+
+  SubdomainDistributionId:
+    Condition: CustomDomainEnabled
+    Description: Subdomain CloudFront Distribution ID (for *.dev.complens.ai)
+    Value: !Ref SubdomainDistribution
+    Export:
+      Name: !Sub "${AWS::StackName}-SubdomainDistributionId"
+
+  SubdomainDistributionDomainName:
+    Condition: CustomDomainEnabled
+    Description: Subdomain CloudFront Distribution Domain Name
+    Value: !GetAtt SubdomainDistribution.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-SubdomainDistributionDomainName"
+
+  SubdomainBaseUrl:
+    Condition: CustomDomainEnabled
+    Description: Base URL pattern for subdomain pages (e.g., yourname.dev.complens.ai)
+    Value: !Sub "*.${DomainName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-SubdomainBaseUrl"

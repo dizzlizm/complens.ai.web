@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2, AlertTriangle } from 'lucide-react';
 import { useWorkflows, useCurrentWorkspace, useDeleteWorkflow, type Workflow } from '../lib/hooks';
 import api from '../lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../components/Toast';
+import DropdownMenu, { DropdownItem } from '../components/ui/DropdownMenu';
 
 // Format trigger type for display
 function formatTriggerType(triggerType: string): string {
@@ -41,8 +42,8 @@ export default function Workflows() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { data: workflows, isLoading, error, refetch } = useWorkflows(workspaceId || '');
@@ -78,7 +79,6 @@ export default function Workflows() {
     }
 
     setDeletingId(workflowId);
-    setMenuOpenId(null);
 
     try {
       await deleteWorkflow.mutateAsync(workflowId);
@@ -90,15 +90,6 @@ export default function Workflows() {
       setDeletingId(null);
     }
   };
-
-  // Close menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = () => setMenuOpenId(null);
-    if (menuOpenId) {
-      document.addEventListener('click', handleClickOutside);
-      return () => document.removeEventListener('click', handleClickOutside);
-    }
-  }, [menuOpenId]);
 
   // Filter workflows
   const filteredWorkflows = workflows?.filter((wf) => {
@@ -262,34 +253,24 @@ export default function Workflows() {
                           <Play className="w-5 h-5" />
                         )}
                       </button>
-                      <div className="relative">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMenuOpenId(menuOpenId === workflow.id ? null : workflow.id);
-                          }}
-                          className="p-1 text-gray-400 hover:text-gray-600"
+                      <DropdownMenu
+                        trigger={
+                          <button className="p-1 text-gray-400 hover:text-gray-600">
+                            <MoreVertical className="w-5 h-5" />
+                          </button>
+                        }
+                      >
+                        <DropdownItem onClick={() => navigate(`/workflows/${workflow.id}`)}>
+                          Edit
+                        </DropdownItem>
+                        <DropdownItem
+                          variant="danger"
+                          onClick={() => handleDelete(workflow.id)}
+                          disabled={deletingId === workflow.id}
                         >
-                          <MoreVertical className="w-5 h-5" />
-                        </button>
-                        {menuOpenId === workflow.id && (
-                          <div className="absolute right-0 mt-1 w-36 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-50">
-                            <Link
-                              to={`/workflows/${workflow.id}`}
-                              className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                            >
-                              Edit
-                            </Link>
-                            <button
-                              onClick={() => handleDelete(workflow.id)}
-                              disabled={deletingId === workflow.id}
-                              className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
-                            >
-                              {deletingId === workflow.id ? 'Deleting...' : 'Delete'}
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                          {deletingId === workflow.id ? 'Deleting...' : 'Delete'}
+                        </DropdownItem>
+                      </DropdownMenu>
                     </div>
                   </td>
                 </tr>

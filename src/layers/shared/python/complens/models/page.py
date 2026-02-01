@@ -11,6 +11,21 @@ from complens.models.base import BaseModel
 # Hex color validation pattern
 HEX_COLOR_PATTERN = re.compile(r'^#[0-9A-Fa-f]{6}$')
 
+# Subdomain validation pattern (lowercase alphanumeric and hyphens, 3-63 chars)
+SUBDOMAIN_PATTERN = re.compile(r'^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$')
+
+# Reserved subdomains that cannot be claimed
+RESERVED_SUBDOMAINS = {
+    'api', 'ws', 'www', 'app', 'admin', 'dev', 'staging', 'prod', 'production',
+    'test', 'testing', 'demo', 'mail', 'email', 'smtp', 'ftp', 'ssh', 'sftp',
+    'cdn', 'static', 'assets', 'media', 'img', 'images', 'files', 'download',
+    'help', 'support', 'docs', 'documentation', 'blog', 'status', 'health',
+    'login', 'signin', 'signup', 'register', 'auth', 'oauth', 'sso',
+    'dashboard', 'console', 'panel', 'portal', 'account', 'billing', 'payment',
+    'localhost', 'local', 'internal', 'private', 'public', 'secure', 'ssl',
+    'complens', 'anthropic', 'claude', 'ai', 'chatbot', 'widget',
+}
+
 
 class PageStatus(str, Enum):
     """Page status enum."""
@@ -97,8 +112,30 @@ class Page(BaseModel):
     )
     og_image_url: str | None = Field(None, description="Open Graph image URL")
 
+    # Subdomain on complens.ai (e.g., "mypage" for mypage.complens.ai)
+    subdomain: str | None = Field(
+        None,
+        min_length=3,
+        max_length=63,
+        pattern=r"^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$",
+        description="Subdomain on complens.ai",
+    )
+
     # Custom domain (future)
     custom_domain: str | None = Field(None, description="Custom domain for this page")
+
+    @field_validator("subdomain")
+    @classmethod
+    def validate_subdomain(cls, v: str | None) -> str | None:
+        """Validate subdomain format and reserved names."""
+        if v is None:
+            return None
+        v = v.lower()
+        if not SUBDOMAIN_PATTERN.match(v):
+            raise ValueError("Subdomain must be 3-63 characters, lowercase alphanumeric and hyphens")
+        if v in RESERVED_SUBDOMAINS:
+            raise ValueError(f"Subdomain '{v}' is reserved")
+        return v
 
     # Analytics
     view_count: int = Field(default=0, description="Total page views")
@@ -129,8 +166,30 @@ class Page(BaseModel):
             }
         return None
 
-    def get_public_url(self, base_url: str = "") -> str:
-        """Get the public URL for this page."""
+    def get_gsi3_keys(self) -> dict[str, str] | None:
+        """Get GSI3 keys for subdomain lookup (if configured)."""
+        if self.subdomain:
+            return {
+                "GSI3PK": f"PAGE_SUBDOMAIN#{self.subdomain.lower()}",
+                "GSI3SK": f"PAGE#{self.id}",
+            }
+        return None
+
+    def get_public_url(self, base_url: str = "", stage: str = "prod") -> str:
+        """Get the public URL for this page.
+
+        Args:
+            base_url: Base URL for fallback slug-based URL.
+            stage: Environment stage (dev, staging, prod).
+
+        Returns:
+            The public URL for this page.
+        """
+        if self.subdomain:
+            # Return subdomain URL with stage
+            if stage == "prod":
+                return f"https://{self.subdomain}.complens.ai"
+            return f"https://{self.subdomain}.{stage}.complens.ai"
         return f"{base_url}/p/{self.slug}?ws={self.workspace_id}"
 
 
@@ -167,4 +226,10 @@ class UpdatePageRequest(PydanticBaseModel):
     custom_css: str | None = None
     meta_title: str | None = None
     meta_description: str | None = None
+    subdomain: str | None = Field(
+        None,
+        min_length=3,
+        max_length=63,
+        pattern=r"^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$",
+    )
     custom_domain: str | None = None
