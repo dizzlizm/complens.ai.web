@@ -226,10 +226,20 @@ class UpdatePageRequest(PydanticBaseModel):
     custom_css: str | None = None
     meta_title: str | None = None
     meta_description: str | None = None
-    subdomain: str | None = Field(
-        None,
-        min_length=3,
-        max_length=63,
-        pattern=r"^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$",
-    )
+    subdomain: str | None = Field(None, max_length=63)
     custom_domain: str | None = None
+
+    @field_validator("subdomain")
+    @classmethod
+    def validate_subdomain_format(cls, v: str | None) -> str | None:
+        """Validate subdomain format, allowing empty string to clear."""
+        if v is None or v == "":
+            return v  # Allow None or empty string (will be converted to None in handler)
+        v = v.lower()
+        if len(v) < 3:
+            raise ValueError("Subdomain must be at least 3 characters")
+        if not SUBDOMAIN_PATTERN.match(v):
+            raise ValueError("Subdomain must be lowercase alphanumeric and hyphens, starting and ending with alphanumeric")
+        if v in RESERVED_SUBDOMAINS:
+            raise ValueError(f"Subdomain '{v}' is reserved")
+        return v

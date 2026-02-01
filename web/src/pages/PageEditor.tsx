@@ -61,6 +61,7 @@ export default function PageEditor() {
         custom_css: page.custom_css || '',
         meta_title: page.meta_title || '',
         meta_description: page.meta_description || '',
+        subdomain: page.subdomain || '',
         custom_domain: page.custom_domain || '',
       });
     }
@@ -971,6 +972,11 @@ function DomainTab({
   const { data: domainsData, isLoading } = useDomains(workspaceId);
   const createDomain = useCreateDomain(workspaceId);
   const deleteDomain = useDeleteDomain(workspaceId);
+
+  // Sync local state with prop when page data changes (e.g., after save)
+  useEffect(() => {
+    setSubdomainInput(subdomain);
+  }, [subdomain]);
 
   // Check subdomain availability with debounce
   useEffect(() => {

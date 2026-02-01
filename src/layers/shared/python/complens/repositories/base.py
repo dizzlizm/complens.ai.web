@@ -309,6 +309,15 @@ class BaseRepository(Generic[T]):
                     key_condition = key_condition.replace(":pk", ":gsi2pk").replace(
                         ":sk_prefix", ":gsi2sk_prefix"
                     )
+                elif index_name == "GSI3":
+                    key_condition = key_condition.replace("PK", "GSI3PK").replace("SK", "GSI3SK")
+                    expr_values = {
+                        k.replace(":pk", ":gsi3pk").replace(":sk_prefix", ":gsi3sk_prefix"): v
+                        for k, v in expr_values.items()
+                    }
+                    key_condition = key_condition.replace(":pk", ":gsi3pk").replace(
+                        ":sk_prefix", ":gsi3sk_prefix"
+                    )
 
             # Merge with additional expression values
             if expression_values:

@@ -136,10 +136,15 @@ def get_page_by_subdomain(subdomain: str) -> dict:
 
     # Normalize subdomain
     subdomain = subdomain.lower().strip()
+    logger.info("Looking up page by subdomain", subdomain=subdomain)
 
     # Look up page by subdomain using GSI3
-    repo = PageRepository()
-    page = repo.get_by_subdomain(subdomain)
+    try:
+        repo = PageRepository()
+        page = repo.get_by_subdomain(subdomain)
+    except Exception as e:
+        logger.exception("Failed to look up page by subdomain", subdomain=subdomain, error=str(e))
+        return error(f"Failed to look up page: {str(e)}", 500)
 
     if not page:
         logger.info("Page not found for subdomain", subdomain=subdomain)
@@ -175,13 +180,23 @@ def get_page_by_subdomain(subdomain: str) -> dict:
         logger.warning("Failed to increment view count", page_id=page.id, error=str(e))
 
     # Fetch forms associated with this page
+    # Supports both legacy (form_ids list) and new (page_id field on forms)
     forms = []
+    form_repo = FormRepository()
+
+    # New way: forms with page_id set
+    page_forms, _ = form_repo.list_by_page(page.id)
+    for form in page_forms:
+        forms.append(form.model_dump(mode="json"))
+
+    # Legacy way: forms referenced by form_ids (for backwards compatibility)
+    form_ids_set = set(f.get("id") for f in forms)  # Avoid duplicates
     if page.form_ids:
-        form_repo = FormRepository()
         for form_id in page.form_ids:
-            form = form_repo.get_by_id(page.workspace_id, form_id)
-            if form:
-                forms.append(form.model_dump(mode="json"))
+            if form_id not in form_ids_set:
+                form = form_repo.get_by_id(page.workspace_id, form_id)
+                if form:
+                    forms.append(form.model_dump(mode="json"))
 
     # Get API URLs from environment
     ws_url = os.environ.get("WEBSOCKET_ENDPOINT", "wss://ws.dev.complens.ai")
@@ -277,13 +292,23 @@ def get_page_by_domain(domain: str) -> dict:
         logger.warning("Failed to increment view count", page_id=page.id, error=str(e))
 
     # Fetch forms associated with this page
+    # Supports both legacy (form_ids list) and new (page_id field on forms)
     forms = []
+    form_repo = FormRepository()
+
+    # New way: forms with page_id set
+    page_forms, _ = form_repo.list_by_page(page.id)
+    for form in page_forms:
+        forms.append(form.model_dump(mode="json"))
+
+    # Legacy way: forms referenced by form_ids (for backwards compatibility)
+    form_ids_set = set(f.get("id") for f in forms)  # Avoid duplicates
     if page.form_ids:
-        form_repo = FormRepository()
         for form_id in page.form_ids:
-            form = form_repo.get_by_id(page.workspace_id, form_id)
-            if form:
-                forms.append(form.model_dump(mode="json"))
+            if form_id not in form_ids_set:
+                form = form_repo.get_by_id(page.workspace_id, form_id)
+                if form:
+                    forms.append(form.model_dump(mode="json"))
 
     # Get API URLs from environment
     ws_url = os.environ.get("WEBSOCKET_ENDPOINT", "wss://ws.dev.complens.ai")

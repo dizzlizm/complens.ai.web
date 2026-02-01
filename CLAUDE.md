@@ -510,11 +510,51 @@ sam deploy --config-env dev --parameter-overrides \
 - [x] **Dropdown menu z-index fix** - Created `DropdownMenu.tsx` using React Portal to render menus in `document.body`, escaping parent `overflow:hidden` containers
 - [x] **Body content editor fix** - Reverted from ContentBlockEditor to simple textarea (ContentBlockEditor was corrupting HTML)
 - [x] **Subdomain save button fix** - Changed disabled logic from `!available` (false when undefined) to `available === false` (only when explicitly unavailable)
+- [x] **Page-centric architecture** - Forms and workflows now nested under pages (see below)
+- [x] **GSI3 support in base repository** - Fixed query method to handle GSI3 for subdomain lookups
+- [x] **Subdomain validation fix** - Allow empty string in UpdatePageRequest to clear subdomain
+- [x] **Form loading for public pages** - Support both legacy (form_ids) and new (page_id) methods
 
 **Still TODO:**
 - [ ] Real-time WebSocket updates for workflow runs
-- [ ] Form builder UI in PageEditor (currently JSON-based)
 - [ ] Custom domain support for pages (in progress - see below)
+
+---
+
+### Page-Centric Architecture ✅ Implemented
+
+Restructured the app so Pages are the primary entity with Forms and Workflows nested inside.
+
+**Data Model Changes:**
+- Forms have optional `page_id` field (required for new forms, null for legacy)
+- Workflows have optional `page_id` field (null = workspace-level)
+- GSI1 updated for forms: `PAGE#{page_id}#FORMS` for page-scoped queries
+- GSI2 updated for workflows: `PAGE#{page_id}#WORKFLOWS` for page-scoped queries
+
+**API Endpoints (nested under pages):**
+```
+GET/POST   /workspaces/{ws}/pages/{page}/forms
+GET/PUT/DELETE /workspaces/{ws}/pages/{page}/forms/{form}
+GET/POST   /workspaces/{ws}/pages/{page}/workflows
+GET/PUT/DELETE /workspaces/{ws}/pages/{page}/workflows/{workflow}
+```
+
+**Frontend Changes:**
+- Forms tab added to PageEditor with inline FormBuilder component
+- Workflows tab added to PageEditor for page-specific workflows
+- Forms removed from sidebar navigation
+- Workflows page shows only workspace-level workflows (with info banner)
+
+**Key Files:**
+- `models/form.py` - Added `page_id` field, updated GSI1 keys
+- `models/workflow.py` - Added `page_id` field, added GSI2 keys method
+- `repositories/form.py` - Added `list_by_page()` method
+- `repositories/workflow.py` - Added `list_by_page()`, `list_workspace_level()` methods
+- `handlers/api/pages.py` - Added nested form/workflow endpoints
+- `web/src/pages/PageEditor.tsx` - Added Forms and Workflows tabs
+- `web/src/components/FormBuilder.tsx` - New inline form builder component
+- `web/src/lib/hooks/useForms.ts` - Added page-scoped hooks
+- `web/src/lib/hooks/useWorkflows.ts` - Added page-scoped hooks
 
 ---
 
