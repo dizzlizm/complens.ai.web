@@ -1,5 +1,10 @@
-import { X, Zap, Play, GitBranch, Sparkles } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { X, Zap, Play, GitBranch, Sparkles, Loader2 } from 'lucide-react';
 import { type Node } from '@xyflow/react';
+import { useForms } from '../../lib/hooks/useForms';
+import { usePages } from '../../lib/hooks/usePages';
+import { useWorkflows } from '../../lib/hooks/useWorkflows';
+import { useContacts } from '../../lib/hooks/useContacts';
 
 interface NodeData {
   label: string;
@@ -9,9 +14,54 @@ interface NodeData {
 
 interface NodeConfigPanelProps {
   node: Node | null;
+  workspaceId: string | undefined;
   onClose: () => void;
   onUpdate: (nodeId: string, data: Partial<NodeData>) => void;
 }
+
+// Debounce hook for smoother editing
+function useDebouncedCallback<T extends (...args: Parameters<T>) => void>(
+  callback: T,
+  delay: number
+): T {
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  return useCallback(
+    ((...args: Parameters<T>) => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => {
+        callback(...args);
+      }, delay);
+    }) as T,
+    [callback, delay]
+  );
+}
+
+interface FieldConfig {
+  key: string;
+  label: string;
+  type: 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'dynamic_select';
+  placeholder?: string;
+  options?: { value: string; label: string }[];
+  // For dynamic_select: which data source to use
+  dataSource?: 'forms' | 'pages' | 'workflows' | 'tags' | 'contact_fields';
+  // Optional helper text below the field
+  helperText?: string;
+}
+
+// Standard contact fields for condition builders
+const CONTACT_FIELDS = [
+  { value: 'contact.email', label: 'Email' },
+  { value: 'contact.phone', label: 'Phone' },
+  { value: 'contact.first_name', label: 'First Name' },
+  { value: 'contact.last_name', label: 'Last Name' },
+  { value: 'contact.full_name', label: 'Full Name' },
+  { value: 'contact.tags', label: 'Tags (contains)' },
+  { value: 'contact.source', label: 'Source' },
+  { value: 'contact.created_at', label: 'Created Date' },
+];
 
 // Config field definitions for each node type
 const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
@@ -19,14 +69,68 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
   trigger_form_submitted: {
     title: 'Form Submitted Trigger',
     fields: [
-      { key: 'formId', label: 'Form ID', type: 'text', placeholder: 'Enter form ID' },
-      { key: 'formName', label: 'Form Name', type: 'text', placeholder: 'Optional form name filter' },
+      {
+        key: 'formId',
+        label: 'Select Form',
+        type: 'dynamic_select',
+        dataSource: 'forms',
+        helperText: 'Workflow triggers when this form is submitted'
+      },
     ],
   },
   trigger_tag_added: {
     title: 'Tag Added Trigger',
     fields: [
-      { key: 'tagName', label: 'Tag Name', type: 'text', placeholder: 'Tag to watch for' },
+      {
+        key: 'tagName',
+        label: 'Select Tag',
+        type: 'dynamic_select',
+        dataSource: 'tags',
+        helperText: 'Triggers when this tag is added to a contact'
+      },
+    ],
+  },
+  trigger_chat_started: {
+    title: 'Chat Started Trigger',
+    fields: [
+      {
+        key: 'pageId',
+        label: 'On Page (optional)',
+        type: 'dynamic_select',
+        dataSource: 'pages',
+        helperText: 'Trigger only on this page, or leave empty for all pages'
+      },
+    ],
+  },
+  trigger_chat_message: {
+    title: 'Chat Message Trigger',
+    fields: [
+      {
+        key: 'pageId',
+        label: 'On Page (optional)',
+        type: 'dynamic_select',
+        dataSource: 'pages',
+        helperText: 'Filter to specific page'
+      },
+      {
+        key: 'chat_keyword',
+        label: 'Keyword Filter (optional)',
+        type: 'text',
+        placeholder: 'e.g., pricing, demo, help',
+        helperText: 'Only trigger if message contains this keyword'
+      },
+    ],
+  },
+  trigger_page_visit: {
+    title: 'Page Visit Trigger',
+    fields: [
+      {
+        key: 'pageId',
+        label: 'Select Page',
+        type: 'dynamic_select',
+        dataSource: 'pages',
+        helperText: 'Triggers when visitor lands on this page'
+      },
     ],
   },
   trigger_webhook: {
@@ -39,7 +143,7 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
   trigger_schedule: {
     title: 'Schedule Trigger',
     fields: [
-      { key: 'schedule', label: 'Cron Expression', type: 'text', placeholder: '0 9 * * *' },
+      { key: 'schedule', label: 'Cron Expression', type: 'text', placeholder: '0 9 * * *', helperText: 'e.g., "0 9 * * *" for 9 AM daily' },
       { key: 'timezone', label: 'Timezone', type: 'select', options: [
         { value: 'UTC', label: 'UTC' },
         { value: 'America/New_York', label: 'Eastern Time' },
@@ -95,15 +199,32 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
   action_update_contact: {
     title: 'Update Contact',
     fields: [
-      { key: 'addTags', label: 'Add Tags', type: 'text', placeholder: 'tag1, tag2' },
-      { key: 'removeTags', label: 'Remove Tags', type: 'text', placeholder: 'tag3, tag4' },
+      {
+        key: 'addTags',
+        label: 'Add Tags',
+        type: 'dynamic_select',
+        dataSource: 'tags',
+        helperText: 'Select existing tag or type new one'
+      },
+      {
+        key: 'removeTags',
+        label: 'Remove Tags',
+        type: 'dynamic_select',
+        dataSource: 'tags'
+      },
       { key: 'setFields', label: 'Set Fields (JSON)', type: 'textarea', placeholder: '{"custom_field": "value"}' },
     ],
   },
   action_run_workflow: {
     title: 'Run Workflow',
     fields: [
-      { key: 'workflowId', label: 'Workflow ID', type: 'text', placeholder: 'Target workflow ID' },
+      {
+        key: 'workflowId',
+        label: 'Select Workflow',
+        type: 'dynamic_select',
+        dataSource: 'workflows',
+        helperText: 'The workflow to trigger'
+      },
       { key: 'passData', label: 'Pass Contact Data', type: 'checkbox' },
     ],
   },
@@ -112,7 +233,12 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
   logic_branch: {
     title: 'If/Else Branch',
     fields: [
-      { key: 'field', label: 'Field to Check', type: 'text', placeholder: 'contact.tags' },
+      {
+        key: 'field',
+        label: 'Field to Check',
+        type: 'dynamic_select',
+        dataSource: 'contact_fields'
+      },
       { key: 'operator', label: 'Operator', type: 'select', options: [
         { value: 'equals', label: 'Equals' },
         { value: 'not_equals', label: 'Not Equals' },
@@ -129,7 +255,12 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
   logic_filter: {
     title: 'Filter',
     fields: [
-      { key: 'field', label: 'Field to Check', type: 'text', placeholder: 'contact.email' },
+      {
+        key: 'field',
+        label: 'Field to Check',
+        type: 'dynamic_select',
+        dataSource: 'contact_fields'
+      },
       { key: 'operator', label: 'Operator', type: 'select', options: [
         { value: 'equals', label: 'Equals' },
         { value: 'not_equals', label: 'Not Equals' },
@@ -145,7 +276,12 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
     title: 'Goal',
     fields: [
       { key: 'goalName', label: 'Goal Name', type: 'text', placeholder: 'e.g., Purchased' },
-      { key: 'field', label: 'Field to Check', type: 'text', placeholder: 'contact.has_purchased' },
+      {
+        key: 'field',
+        label: 'Field to Check',
+        type: 'dynamic_select',
+        dataSource: 'contact_fields'
+      },
       { key: 'value', label: 'Expected Value', type: 'text', placeholder: 'true' },
     ],
   },
@@ -156,9 +292,9 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
     fields: [
       { key: 'prompt', label: 'System Prompt', type: 'textarea', placeholder: 'You are a helpful assistant...' },
       { key: 'channel', label: 'Response Channel', type: 'select', options: [
+        { value: 'same_channel', label: 'Same as trigger' },
         { value: 'email', label: 'Email' },
         { value: 'sms', label: 'SMS' },
-        { value: 'both', label: 'Both' },
       ]},
       { key: 'maxTokens', label: 'Max Tokens', type: 'number', placeholder: '500' },
     ],
@@ -180,23 +316,21 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
   },
 };
 
-interface FieldConfig {
-  key: string;
-  label: string;
-  type: 'text' | 'textarea' | 'number' | 'select' | 'checkbox';
-  placeholder?: string;
-  options?: { value: string; label: string }[];
+interface ConfigFieldProps {
+  field: FieldConfig;
+  value: unknown;
+  onChange: (value: unknown) => void;
+  dynamicOptions?: { value: string; label: string }[];
+  isLoading?: boolean;
 }
 
 function ConfigField({
   field,
   value,
   onChange,
-}: {
-  field: FieldConfig;
-  value: unknown;
-  onChange: (value: unknown) => void;
-}) {
+  dynamicOptions,
+  isLoading,
+}: ConfigFieldProps) {
   switch (field.type) {
     case 'textarea':
       return (
@@ -209,6 +343,9 @@ function ConfigField({
             className="input min-h-[100px] resize-y"
             rows={4}
           />
+          {field.helperText && (
+            <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>
+          )}
         </div>
       );
     case 'number':
@@ -222,6 +359,9 @@ function ConfigField({
             placeholder={field.placeholder}
             className="input"
           />
+          {field.helperText && (
+            <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>
+          )}
         </div>
       );
     case 'select':
@@ -238,6 +378,39 @@ function ConfigField({
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
+          {field.helperText && (
+            <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>
+          )}
+        </div>
+      );
+    case 'dynamic_select':
+      return (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+          <div className="relative">
+            <select
+              value={(value as string) || ''}
+              onChange={(e) => onChange(e.target.value)}
+              className="input"
+              disabled={isLoading}
+            >
+              <option value="">{isLoading ? 'Loading...' : 'Select...'}</option>
+              {dynamicOptions?.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            {isLoading && (
+              <div className="absolute right-8 top-1/2 -translate-y-1/2">
+                <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+              </div>
+            )}
+          </div>
+          {field.helperText && (
+            <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>
+          )}
+          {!isLoading && dynamicOptions?.length === 0 && (
+            <p className="mt-1 text-xs text-amber-600">No items found. Create one first.</p>
+          )}
         </div>
       );
     case 'checkbox':
@@ -263,6 +436,9 @@ function ConfigField({
             placeholder={field.placeholder}
             className="input"
           />
+          {field.helperText && (
+            <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>
+          )}
         </div>
       );
   }
@@ -288,7 +464,79 @@ function getNodeColor(type: string) {
   }
 }
 
-export default function NodeConfigPanel({ node, onClose, onUpdate }: NodeConfigPanelProps) {
+export default function NodeConfigPanel({ node, workspaceId, onClose, onUpdate }: NodeConfigPanelProps) {
+  // Local state for smooth editing
+  const [localLabel, setLocalLabel] = useState('');
+  const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
+  const prevNodeIdRef = useRef<string | null>(null);
+
+  // Fetch workspace data for dynamic dropdowns
+  const { data: forms, isLoading: isLoadingForms } = useForms(workspaceId);
+  const { data: pages, isLoading: isLoadingPages } = usePages(workspaceId);
+  const { data: workflows, isLoading: isLoadingWorkflows } = useWorkflows(workspaceId || '');
+  const { data: contactsData, isLoading: isLoadingContacts } = useContacts(workspaceId || '', { limit: 100 });
+
+  // Extract unique tags from contacts
+  const allTags = useMemo(() => {
+    if (!contactsData?.contacts) return [];
+    const tagSet = new Set<string>();
+    contactsData.contacts.forEach(contact => {
+      contact.tags?.forEach(tag => tagSet.add(tag));
+    });
+    return Array.from(tagSet).sort();
+  }, [contactsData]);
+
+  // Build dynamic options based on data source
+  const getDynamicOptions = useCallback((dataSource: string | undefined): { options: { value: string; label: string }[], isLoading: boolean } => {
+    switch (dataSource) {
+      case 'forms':
+        return {
+          options: forms?.map(f => ({ value: f.id, label: f.name })) || [],
+          isLoading: isLoadingForms,
+        };
+      case 'pages':
+        return {
+          options: pages?.map(p => ({ value: p.id, label: p.name })) || [],
+          isLoading: isLoadingPages,
+        };
+      case 'workflows':
+        return {
+          options: workflows?.map(w => ({ value: w.id, label: w.name })) || [],
+          isLoading: isLoadingWorkflows,
+        };
+      case 'tags':
+        return {
+          options: allTags.map(t => ({ value: t, label: t })),
+          isLoading: isLoadingContacts,
+        };
+      case 'contact_fields':
+        return {
+          options: CONTACT_FIELDS,
+          isLoading: false,
+        };
+      default:
+        return { options: [], isLoading: false };
+    }
+  }, [forms, pages, workflows, allTags, isLoadingForms, isLoadingPages, isLoadingWorkflows, isLoadingContacts]);
+
+  // Initialize local state when node changes
+  useEffect(() => {
+    if (node && node.id !== prevNodeIdRef.current) {
+      const nodeData = node.data as unknown as NodeData;
+      setLocalLabel(nodeData.label || '');
+      setLocalConfig(nodeData.config || {});
+      prevNodeIdRef.current = node.id;
+    }
+  }, [node]);
+
+  // Debounced update to canvas
+  const debouncedUpdate = useDebouncedCallback(
+    (nodeId: string, data: Partial<NodeData>) => {
+      onUpdate(nodeId, data);
+    },
+    150
+  );
+
   if (!node) return null;
 
   const nodeData = node.data as unknown as NodeData;
@@ -304,22 +552,20 @@ export default function NodeConfigPanel({ node, onClose, onUpdate }: NodeConfigP
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>
-        <p className="text-sm text-gray-500">No configuration available for this node type.</p>
+        <p className="text-sm text-gray-500">No configuration available for this node type: {nodeType}</p>
       </div>
     );
   }
 
   const handleFieldChange = (key: string, value: unknown) => {
-    onUpdate(node.id, {
-      config: {
-        ...nodeData.config,
-        [key]: value,
-      },
-    });
+    const newConfig = { ...localConfig, [key]: value };
+    setLocalConfig(newConfig);
+    debouncedUpdate(node.id, { config: newConfig });
   };
 
   const handleLabelChange = (label: string) => {
-    onUpdate(node.id, { label });
+    setLocalLabel(label);
+    debouncedUpdate(node.id, { label });
   };
 
   return (
@@ -344,7 +590,7 @@ export default function NodeConfigPanel({ node, onClose, onUpdate }: NodeConfigP
           <label className="block text-sm font-medium text-gray-700 mb-1">Node Label</label>
           <input
             type="text"
-            value={nodeData.label}
+            value={localLabel}
             onChange={(e) => handleLabelChange(e.target.value)}
             className="input"
             placeholder="Node name"
@@ -354,14 +600,22 @@ export default function NodeConfigPanel({ node, onClose, onUpdate }: NodeConfigP
         <hr className="border-gray-200" />
 
         {/* Type-specific fields */}
-        {config.fields.map((field) => (
-          <ConfigField
-            key={field.key}
-            field={field}
-            value={nodeData.config[field.key]}
-            onChange={(value) => handleFieldChange(field.key, value)}
-          />
-        ))}
+        {config.fields.map((field) => {
+          const dynamicData = field.type === 'dynamic_select'
+            ? getDynamicOptions(field.dataSource)
+            : { options: [], isLoading: false };
+
+          return (
+            <ConfigField
+              key={field.key}
+              field={field}
+              value={localConfig[field.key]}
+              onChange={(value) => handleFieldChange(field.key, value)}
+              dynamicOptions={field.type === 'dynamic_select' ? dynamicData.options : undefined}
+              isLoading={field.type === 'dynamic_select' ? dynamicData.isLoading : undefined}
+            />
+          );
+        })}
       </div>
 
       {/* Footer hint */}

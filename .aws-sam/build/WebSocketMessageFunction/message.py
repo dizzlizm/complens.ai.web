@@ -7,7 +7,12 @@ from typing import Any
 import boto3
 import structlog
 
+from complens.repositories.page import PageRepository
+
 logger = structlog.get_logger()
+
+# Bedrock model for chat responses
+CHAT_MODEL = os.environ.get("CHAT_MODEL", "us.anthropic.claude-3-sonnet-20240229-v1:0")
 
 
 def handler(event: dict[str, Any], context: Any) -> dict:
@@ -50,9 +55,229 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         return handle_unsubscribe(connection_id, data)
     elif action == "ping":
         return send_to_connection(connection_id, domain, stage, {"action": "pong"})
+    elif action == "public_chat":
+        return handle_public_chat(connection_id, domain, stage, body)
     else:
         logger.warning("Unknown action", action=action)
         return {"statusCode": 400, "body": f"Unknown action: {action}"}
+
+
+def handle_public_chat(
+    connection_id: str,
+    domain: str,
+    stage: str,
+    body: dict,
+) -> dict:
+    """Handle public chat message from landing page.
+
+    Args:
+        connection_id: WebSocket connection ID.
+        domain: API Gateway domain.
+        stage: API Gateway stage.
+        body: Message body with page_id, message, visitor_id.
+
+    Returns:
+        Response.
+    """
+    page_id = body.get("page_id")
+    message = body.get("message", "")
+    visitor_id = body.get("visitor_id", "anonymous")
+
+    if not page_id or not message:
+        return {"statusCode": 400, "body": "page_id and message are required"}
+
+    logger.info(
+        "Public chat message",
+        page_id=page_id,
+        visitor_id=visitor_id,
+        message_length=len(message),
+    )
+
+    # Look up page to get AI persona and context
+    try:
+        page_repo = PageRepository()
+        # We need workspace_id to look up the page - get it from the page_id
+        # For now, we'll do a scan to find the page (not ideal but works for MVP)
+        page = _find_page_by_id(page_repo, page_id)
+
+        if not page:
+            logger.warning("Page not found", page_id=page_id)
+            send_to_connection(
+                connection_id,
+                domain,
+                stage,
+                {
+                    "action": "ai_response",
+                    "message": "Sorry, I couldn't find the page configuration. Please try again later.",
+                },
+            )
+            return {"statusCode": 404}
+
+        # Build AI prompt with page context
+        chat_config = page.chat_config or {}
+        ai_persona = chat_config.get("ai_persona") or "You are a helpful assistant."
+        business_context = chat_config.get("business_context", {})
+
+        system_prompt = f"""{ai_persona}
+
+Page Context:
+- Page Name: {page.name}
+- Headline: {page.headline}
+{f"- Business Context: {json.dumps(business_context)}" if business_context else ""}
+
+Keep responses concise and helpful. If you don't know something, say so politely."""
+
+        # Fire EventBridge event for workflow triggers
+        _fire_chat_event(
+            workspace_id=page.workspace_id,
+            page_id=page_id,
+            page_name=page.name,
+            visitor_id=visitor_id,
+            message=message,
+        )
+
+        # Call Bedrock for AI response
+        ai_response = _generate_chat_response(system_prompt, message)
+
+        # Send response back to client
+        send_to_connection(
+            connection_id,
+            domain,
+            stage,
+            {"action": "ai_response", "message": ai_response},
+        )
+
+        return {"statusCode": 200}
+
+    except Exception as e:
+        logger.error("Chat processing failed", error=str(e))
+        send_to_connection(
+            connection_id,
+            domain,
+            stage,
+            {
+                "action": "ai_response",
+                "message": "Sorry, I encountered an error. Please try again.",
+            },
+        )
+        return {"statusCode": 500}
+
+
+def _fire_chat_event(
+    workspace_id: str,
+    page_id: str,
+    page_name: str,
+    visitor_id: str,
+    message: str,
+) -> None:
+    """Fire EventBridge events for chat triggers.
+
+    Args:
+        workspace_id: Workspace ID.
+        page_id: Page ID.
+        page_name: Page name.
+        visitor_id: Visitor ID.
+        message: Chat message.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        events = boto3.client("events")
+
+        # Fire chat_message event (workflows can filter by keyword)
+        events.put_events(
+            Entries=[
+                {
+                    "Source": "complens.chat",
+                    "DetailType": "chat_message",
+                    "Detail": json.dumps({
+                        "workspace_id": workspace_id,
+                        "trigger_type": "trigger_chat_message",
+                        "page_id": page_id,
+                        "page_name": page_name,
+                        "visitor_id": visitor_id,
+                        "message": message,
+                        "sent_at": datetime.now(timezone.utc).isoformat(),
+                    }),
+                }
+            ]
+        )
+
+        logger.info(
+            "Chat event fired",
+            workspace_id=workspace_id,
+            page_id=page_id,
+            visitor_id=visitor_id,
+        )
+
+    except Exception as e:
+        # Don't fail the chat if events fail
+        logger.warning("Failed to fire chat event", error=str(e))
+
+
+def _find_page_by_id(page_repo: PageRepository, page_id: str):
+    """Find a page by ID (scans all workspaces - not ideal but works for MVP).
+
+    Args:
+        page_repo: Page repository.
+        page_id: Page ID to find.
+
+    Returns:
+        Page if found, None otherwise.
+    """
+    # This is a simple scan - for production, we'd add a GSI for page_id lookup
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ.get("TABLE_NAME", "complens-dev"))
+
+    response = table.scan(
+        FilterExpression="SK = :sk",
+        ExpressionAttributeValues={":sk": f"PAGE#{page_id}"},
+        Limit=1,
+    )
+
+    items = response.get("Items", [])
+    if not items:
+        return None
+
+    item = items[0]
+    # Extract workspace_id from PK (format: WS#{workspace_id})
+    workspace_id = item.get("PK", "").replace("WS#", "")
+
+    return page_repo.get(workspace_id, page_id)
+
+
+def _generate_chat_response(system_prompt: str, user_message: str) -> str:
+    """Generate AI response using Bedrock.
+
+    Args:
+        system_prompt: System prompt with AI persona.
+        user_message: User's message.
+
+    Returns:
+        AI response text.
+    """
+    bedrock = boto3.client("bedrock-runtime")
+
+    body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 500,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_message}],
+    }
+
+    try:
+        response = bedrock.invoke_model(
+            modelId=CHAT_MODEL,
+            body=json.dumps(body),
+            contentType="application/json",
+        )
+
+        response_body = json.loads(response["body"].read())
+        return response_body["content"][0]["text"]
+
+    except Exception as e:
+        logger.error("Bedrock invocation failed", error=str(e))
+        return "I'm having trouble connecting right now. Please try again in a moment."
 
 
 def handle_subscribe(connection_id: str, data: dict) -> dict:

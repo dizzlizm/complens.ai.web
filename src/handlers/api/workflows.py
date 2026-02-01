@@ -22,7 +22,7 @@ from complens.repositories.contact import ContactRepository
 from complens.repositories.workflow import WorkflowRepository, WorkflowRunRepository
 from complens.services.workflow_engine import WorkflowEngine
 from complens.utils.auth import get_auth_context, require_workspace_access
-from complens.utils.exceptions import NotFoundError, ValidationError
+from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
 
 logger = structlog.get_logger()
@@ -77,6 +77,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         return validation_error(e.errors)
     except NotFoundError as e:
         return not_found(e.resource_type, e.resource_id)
+    except ForbiddenError as e:
+        return error(e.message, 403, error_code="FORBIDDEN")
     except ValueError as e:
         return error(str(e), 400)
     except Exception as e:
@@ -104,8 +106,9 @@ def list_workflows(
 
     workflows, next_key = repo.list_by_workspace(workspace_id, status, limit)
 
+    # Use by_alias=True to return 'type' instead of 'node_type' for React Flow compatibility
     return success({
-        "items": [w.model_dump(mode="json") for w in workflows],
+        "items": [w.model_dump(mode="json", by_alias=True) for w in workflows],
         "pagination": {
             "limit": limit,
         },
@@ -122,7 +125,8 @@ def get_workflow(
     if not workflow:
         return not_found("Workflow", workflow_id)
 
-    return success(workflow.model_dump(mode="json"))
+    # Use by_alias=True to return 'type' instead of 'node_type' for React Flow compatibility
+    return success(workflow.model_dump(mode="json", by_alias=True))
 
 
 def create_workflow(
@@ -133,18 +137,53 @@ def create_workflow(
     """Create a new workflow."""
     try:
         body = json.loads(event.get("body", "{}"))
+        logger.info("Create workflow request", workspace_id=workspace_id, body=body)
         request = CreateWorkflowRequest.model_validate(body)
     except PydanticValidationError as e:
+        logger.warning("Workflow request validation failed", errors=e.errors())
         return validation_error([
             {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
             for err in e.errors()
         ])
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.warning("Invalid JSON body", error=str(e))
         return error("Invalid JSON body", 400)
 
-    # Parse nodes and edges
-    nodes = [WorkflowNode.model_validate(n) for n in request.nodes]
-    edges = [WorkflowEdge.model_validate(e) for e in request.edges]
+    # Parse nodes with validation
+    nodes = []
+    for i, n in enumerate(request.nodes):
+        try:
+            node = WorkflowNode.model_validate(n)
+            nodes.append(node)
+            logger.debug("Parsed node", index=i, node_id=node.id, node_type=node.node_type)
+        except PydanticValidationError as e:
+            logger.warning("Node validation failed", index=i, node=n, errors=e.errors())
+            return validation_error([
+                {"field": f"nodes[{i}].{'.'.join(str(x) for x in err['loc'])}", "message": err["msg"]}
+                for err in e.errors()
+            ])
+
+    # Parse edges with validation
+    edges = []
+    for i, e_data in enumerate(request.edges):
+        try:
+            edge = WorkflowEdge.model_validate(e_data)
+            edges.append(edge)
+        except PydanticValidationError as e:
+            logger.warning("Edge validation failed", index=i, edge=e_data, errors=e.errors())
+            return validation_error([
+                {"field": f"edges[{i}].{'.'.join(str(x) for x in err['loc'])}", "message": err["msg"]}
+                for err in e.errors()
+            ])
+
+    # Build settings (merge defaults with request settings)
+    default_settings = {
+        "max_concurrent_runs": 100,
+        "timeout_minutes": 60,
+        "retry_on_failure": True,
+        "max_retries": 3,
+    }
+    settings = {**default_settings, **request.settings} if request.settings else default_settings
 
     # Create workflow
     workflow = Workflow(
@@ -154,19 +193,21 @@ def create_workflow(
         nodes=nodes,
         edges=edges,
         viewport=request.viewport,
-        settings={**workflow.settings, **request.settings} if request.settings else workflow.settings,
+        settings=settings,
     )
 
-    # Validate workflow
+    # Validate workflow graph
     validation_errors = workflow.validate_graph()
     if validation_errors:
+        logger.warning("Workflow graph validation failed", errors=validation_errors)
         return validation_error([{"field": "graph", "message": err} for err in validation_errors])
 
     workflow = repo.create_workflow(workflow)
 
     logger.info("Workflow created", workflow_id=workflow.id, workspace_id=workspace_id)
 
-    return created(workflow.model_dump(mode="json"))
+    # Use by_alias=True to return 'type' instead of 'node_type' for React Flow compatibility
+    return created(workflow.model_dump(mode="json", by_alias=True))
 
 
 def update_workflow(
@@ -183,8 +224,10 @@ def update_workflow(
 
     try:
         body = json.loads(event.get("body", "{}"))
+        logger.info("Update workflow request", workflow_id=workflow_id, body=body)
         request = UpdateWorkflowRequest.model_validate(body)
     except PydanticValidationError as e:
+        logger.warning("Update request validation failed", errors=e.errors())
         return validation_error([
             {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
             for err in e.errors()
@@ -199,10 +242,37 @@ def update_workflow(
         workflow.description = request.description
     if request.status is not None:
         workflow.status = request.status
+
+    # Parse nodes with validation
     if request.nodes is not None:
-        workflow.nodes = [WorkflowNode.model_validate(n) for n in request.nodes]
+        nodes = []
+        for i, n in enumerate(request.nodes):
+            try:
+                node = WorkflowNode.model_validate(n)
+                nodes.append(node)
+            except PydanticValidationError as e:
+                logger.warning("Node validation failed in update", index=i, node=n, errors=e.errors())
+                return validation_error([
+                    {"field": f"nodes[{i}].{'.'.join(str(x) for x in err['loc'])}", "message": err["msg"]}
+                    for err in e.errors()
+                ])
+        workflow.nodes = nodes
+
+    # Parse edges with validation
     if request.edges is not None:
-        workflow.edges = [WorkflowEdge.model_validate(e) for e in request.edges]
+        edges = []
+        for i, e_data in enumerate(request.edges):
+            try:
+                edge = WorkflowEdge.model_validate(e_data)
+                edges.append(edge)
+            except PydanticValidationError as e:
+                logger.warning("Edge validation failed in update", index=i, edge=e_data, errors=e.errors())
+                return validation_error([
+                    {"field": f"edges[{i}].{'.'.join(str(x) for x in err['loc'])}", "message": err["msg"]}
+                    for err in e.errors()
+                ])
+        workflow.edges = edges
+
     if request.viewport is not None:
         workflow.viewport = request.viewport
     if request.settings is not None:
@@ -212,6 +282,7 @@ def update_workflow(
     if request.nodes is not None or request.edges is not None:
         validation_errors = workflow.validate_graph()
         if validation_errors:
+            logger.warning("Graph validation failed in update", errors=validation_errors)
             return validation_error([{"field": "graph", "message": err} for err in validation_errors])
 
     # Save
@@ -219,7 +290,8 @@ def update_workflow(
 
     logger.info("Workflow updated", workflow_id=workflow_id, workspace_id=workspace_id)
 
-    return success(workflow.model_dump(mode="json"))
+    # Use by_alias=True to return 'type' instead of 'node_type' for React Flow compatibility
+    return success(workflow.model_dump(mode="json", by_alias=True))
 
 
 def delete_workflow(
@@ -254,9 +326,11 @@ def execute_workflow(
     if not workflow:
         return not_found("Workflow", workflow_id)
 
-    if workflow.status != WorkflowStatus.ACTIVE:
+    # Handle status as string or enum (DynamoDB stores as string)
+    status_value = workflow.status.value if hasattr(workflow.status, 'value') else workflow.status
+    if status_value != WorkflowStatus.ACTIVE.value:
         return error(
-            f"Workflow is not active (status: {workflow.status.value})",
+            f"Workflow is not active (status: {status_value})",
             400,
             error_code="WORKFLOW_NOT_ACTIVE",
         )
@@ -349,7 +423,7 @@ def list_workflow_runs(
     runs = run_repo.list_by_workflow(workflow_id, limit=limit)
 
     return success({
-        "items": [r.model_dump(mode="json") for r in runs],
+        "items": [r.model_dump(mode="json", by_alias=True) for r in runs],
         "pagination": {
             "limit": limit,
         },

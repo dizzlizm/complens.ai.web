@@ -212,6 +212,117 @@ class ScheduleTrigger(BaseTrigger):
         }
 
 
+class ChatStartedTrigger(BaseTrigger):
+    """Trigger when a visitor starts a chat on a landing page."""
+
+    node_type = "trigger_chat_started"
+
+    def validate_trigger_data(self, data: dict) -> list[str]:
+        """Validate chat start data."""
+        errors = []
+        if not data.get("page_id"):
+            errors.append("page_id is required")
+        if not data.get("visitor_id"):
+            errors.append("visitor_id is required")
+        return errors
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract chat start data."""
+        return {
+            "page_id": data.get("page_id"),
+            "page_name": data.get("page_name"),
+            "visitor_id": data.get("visitor_id"),
+            "started_at": data.get("started_at"),
+            "referrer": data.get("referrer"),
+            "user_agent": data.get("user_agent"),
+        }
+
+
+class ChatMessageTrigger(BaseTrigger):
+    """Trigger when a visitor sends a chat message.
+
+    Can filter by keyword or intent.
+    """
+
+    node_type = "trigger_chat_message"
+
+    def validate_trigger_data(self, data: dict) -> list[str]:
+        """Validate chat message data."""
+        errors = []
+        if not data.get("message"):
+            errors.append("message is required")
+        return errors
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract chat message data."""
+        return {
+            "page_id": data.get("page_id"),
+            "visitor_id": data.get("visitor_id"),
+            "message": data.get("message"),
+            "message_content": data.get("message"),  # Alias for consistency
+            "sent_at": data.get("sent_at"),
+            "channel": "chat",
+        }
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Check if message matches configured keyword filter.
+
+        Args:
+            context: Execution context with trigger data.
+
+        Returns:
+            NodeResult - completed if matches, skipped otherwise.
+        """
+        # Get configured keyword filter
+        keyword_filter = self._get_config_value("chat_keyword")
+        message = context.trigger_data.get("message", "")
+
+        self.logger.info(
+            "Chat message trigger checking",
+            keyword_filter=keyword_filter,
+            message_preview=message[:50] if message else "",
+        )
+
+        # If no filter configured, match all messages
+        if not keyword_filter:
+            return await super().execute(context)
+
+        # Check if message contains keyword (case-insensitive)
+        if keyword_filter.lower() in message.lower():
+            return await super().execute(context)
+        else:
+            return NodeResult.completed(
+                output={"skipped": True, "reason": "keyword not found in message"},
+            )
+
+
+class PageVisitTrigger(BaseTrigger):
+    """Trigger when a visitor lands on a page."""
+
+    node_type = "trigger_page_visit"
+
+    def validate_trigger_data(self, data: dict) -> list[str]:
+        """Validate page visit data."""
+        errors = []
+        if not data.get("page_id"):
+            errors.append("page_id is required")
+        return errors
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract page visit data."""
+        return {
+            "page_id": data.get("page_id"),
+            "page_name": data.get("page_name"),
+            "page_slug": data.get("page_slug"),
+            "visitor_id": data.get("visitor_id"),
+            "referrer": data.get("referrer"),
+            "utm_source": data.get("utm_source"),
+            "utm_medium": data.get("utm_medium"),
+            "utm_campaign": data.get("utm_campaign"),
+            "visited_at": data.get("visited_at"),
+        }
+
+
 class SegmentEventTrigger(BaseTrigger):
     """Trigger on Segment track events.
 
@@ -297,11 +408,18 @@ class SegmentEventTrigger(BaseTrigger):
 
 # Registry of trigger node classes
 TRIGGER_NODES = {
+    # Lead generation triggers
     "trigger_form_submitted": FormSubmittedTrigger,
-    "trigger_appointment_booked": AppointmentBookedTrigger,
+    "trigger_chat_started": ChatStartedTrigger,
+    "trigger_chat_message": ChatMessageTrigger,
+    "trigger_page_visit": PageVisitTrigger,
+    # Contact triggers
     "trigger_tag_added": TagAddedTrigger,
+    "trigger_appointment_booked": AppointmentBookedTrigger,
+    # Communication triggers
     "trigger_sms_received": SmsReceivedTrigger,
     "trigger_email_received": EmailReceivedTrigger,
+    # Integration triggers
     "trigger_webhook": WebhookTrigger,
     "trigger_schedule": ScheduleTrigger,
     "trigger_segment_event": SegmentEventTrigger,

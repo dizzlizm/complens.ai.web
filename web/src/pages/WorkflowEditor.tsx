@@ -7,19 +7,24 @@ import NodeToolbar from '../components/workflow/NodeToolbar';
 import NodeConfigPanel from '../components/workflow/NodeConfigPanel';
 import {
   useWorkflow,
-  useCreateWorkflow,
   useUpdateWorkflow,
   useExecuteWorkflow,
   useCurrentWorkspace,
+  useCreateWorkspace,
   type WorkflowNode,
   type WorkflowEdge,
+  type Workflow,
+  type CreateWorkflowInput,
 } from '../lib/hooks';
+import api from '../lib/api';
+import { useToast } from '../components/Toast';
 
 export default function WorkflowEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
   const isNew = id === 'new';
   const canvasRef = useRef<WorkflowCanvasRef>(null);
+  const toast = useToast();
 
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { data: workflow, isLoading: isLoadingWorkflow } = useWorkflow(
@@ -27,16 +32,16 @@ export default function WorkflowEditor() {
     id || ''
   );
 
-  const createWorkflow = useCreateWorkflow(workspaceId || '');
   const updateWorkflow = useUpdateWorkflow(workspaceId || '', id || '');
   const executeWorkflow = useExecuteWorkflow(workspaceId || '', id || '');
 
   const [name, setName] = useState('Untitled Workflow');
-  const [hasChanges, setHasChanges] = useState(false);
+  const [hasChanges, setHasChanges] = useState(isNew); // New workflows start with changes (the default trigger node)
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
-  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  const createWorkspace = useCreateWorkspace();
 
   // Load workflow data when available
   useEffect(() => {
@@ -44,18 +49,32 @@ export default function WorkflowEditor() {
       setName(workflow.name);
       // Convert API nodes/edges to React Flow format
       if (workflow.nodes && canvasRef.current) {
-        const rfNodes: Node[] = workflow.nodes.map((n: WorkflowNode) => ({
-          id: n.id,
-          type: n.type,
-          position: n.position,
-          data: n.data,
-        }));
+        const rfNodes: Node[] = workflow.nodes.map((n: WorkflowNode) => {
+          // Derive React Flow type (category) from specific node type
+          // e.g., "trigger_form_submitted" -> "trigger", "action_send_email" -> "action"
+          const nodeType = n.type || n.data?.nodeType || 'action';
+          let rfType = 'action';
+          if (nodeType.startsWith('trigger_')) rfType = 'trigger';
+          else if (nodeType.startsWith('action_')) rfType = 'action';
+          else if (nodeType.startsWith('logic_')) rfType = 'logic';
+          else if (nodeType.startsWith('ai_')) rfType = 'ai';
+
+          return {
+            id: n.id,
+            type: rfType, // React Flow category for rendering
+            position: n.position,
+            data: {
+              ...n.data,
+              nodeType: nodeType, // Keep specific type in data
+            },
+          };
+        });
         const rfEdges: Edge[] = (workflow.edges || []).map((e: WorkflowEdge) => ({
           id: e.id,
           source: e.source,
           target: e.target,
-          sourceHandle: e.sourceHandle,
-          targetHandle: e.targetHandle,
+          sourceHandle: e.source_handle,
+          targetHandle: e.target_handle,
           animated: true,
         }));
         canvasRef.current.setNodes(rfNodes);
@@ -64,14 +83,19 @@ export default function WorkflowEditor() {
     }
   }, [workflow]);
 
+  // Get selected node from canvas (avoids state duplication)
+  const selectedNode = selectedNodeId && canvasRef.current
+    ? canvasRef.current.getNodes().find(n => n.id === selectedNodeId) || null
+    : null;
+
   // Track changes
   const handleCanvasChange = useCallback(() => {
     setHasChanges(true);
   }, []);
 
-  // Handle node selection
+  // Handle node selection - just track the ID, not the full node
   const handleNodeSelect = useCallback((node: Node | null) => {
-    setSelectedNode(node);
+    setSelectedNodeId(node?.id || null);
   }, []);
 
   // Handle node data update from config panel
@@ -79,27 +103,50 @@ export default function WorkflowEditor() {
     if (canvasRef.current) {
       canvasRef.current.updateNodeData(nodeId, data);
       setHasChanges(true);
-      // Update selected node to reflect changes
-      const updatedNode = canvasRef.current.getNodes().find(n => n.id === nodeId);
-      if (updatedNode) {
-        setSelectedNode({ ...updatedNode });
-      }
     }
   }, []);
 
   // Save workflow
   const handleSave = async () => {
-    if (!workspaceId || !canvasRef.current) return;
+    if (!canvasRef.current) return;
+
+    // Check for workspace - create one if missing
+    let effectiveWorkspaceId = workspaceId;
+    if (!effectiveWorkspaceId) {
+      toast.info('Creating a default workspace...');
+      try {
+        // Generate a slug from name
+        const slug = 'my-workspace-' + Date.now().toString(36);
+        const newWorkspace = await createWorkspace.mutateAsync({
+          name: 'My Workspace',
+          slug,
+        });
+        effectiveWorkspaceId = newWorkspace.id;
+      } catch (error) {
+        toast.error(`Failed to create workspace: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        return;
+      }
+    }
 
     setIsSaving(true);
     try {
       const nodes = canvasRef.current.getNodes();
       const edges = canvasRef.current.getEdges();
 
+      // Validate: must have at least one trigger
+      const triggerNode = nodes.find((n) => n.type === 'trigger');
+      if (!triggerNode) {
+        toast.error('Workflow must have at least one trigger node.');
+        setIsSaving(false);
+        return;
+      }
+
       // Convert React Flow format to API format
+      // Note: Backend expects 'type' to be the specific node type (e.g., 'trigger_form_submitted')
+      // not the React Flow category (e.g., 'trigger')
       const apiNodes: WorkflowNode[] = nodes.map((n) => ({
         id: n.id,
-        type: n.type || 'action',
+        type: (n.data as { nodeType?: string })?.nodeType || n.type || 'action',
         position: n.position,
         data: n.data as WorkflowNode['data'],
       }));
@@ -108,38 +155,43 @@ export default function WorkflowEditor() {
         id: e.id,
         source: e.source,
         target: e.target,
-        sourceHandle: e.sourceHandle || undefined,
-        targetHandle: e.targetHandle || undefined,
+        source_handle: e.sourceHandle || undefined,
+        target_handle: e.targetHandle || undefined,
       }));
 
-      // Find trigger node for trigger_type
-      const triggerNode = nodes.find((n) => n.type === 'trigger');
-      const triggerType = (triggerNode?.data?.nodeType as string) || 'trigger_manual';
-      const triggerConfig = (triggerNode?.data?.config as Record<string, unknown>) || {};
+      // Get viewport from React Flow
+      const viewport = canvasRef.current.getViewport?.() || { x: 0, y: 0, zoom: 1 };
 
       if (isNew) {
-        const created = await createWorkflow.mutateAsync({
+        // Create workflow - backend derives trigger info from the trigger node itself
+        const input: CreateWorkflowInput = {
           name,
-          trigger_type: triggerType,
-          trigger_config: triggerConfig,
           nodes: apiNodes,
           edges: apiEdges,
-        });
+          viewport,
+        };
+        console.log('Creating workflow with payload:', JSON.stringify(input, null, 2));
+        const { data: created } = await api.post<Workflow>(
+          `/workspaces/${effectiveWorkspaceId}/workflows`,
+          input
+        );
         setHasChanges(false);
+        toast.success('Workflow created successfully!');
         // Navigate to the created workflow
         navigate(`/workflows/${created.id}`, { replace: true });
       } else {
         await updateWorkflow.mutateAsync({
           name,
-          trigger_type: triggerType,
-          trigger_config: triggerConfig,
           nodes: apiNodes,
           edges: apiEdges,
+          viewport,
         });
         setHasChanges(false);
+        toast.success('Workflow saved!');
       }
     } catch (error) {
       console.error('Failed to save workflow:', error);
+      toast.error(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsSaving(false);
     }
@@ -148,7 +200,7 @@ export default function WorkflowEditor() {
   // Test workflow execution
   const handleTest = async () => {
     if (isNew || !workspaceId) {
-      setTestResult({ success: false, message: 'Please save the workflow before testing.' });
+      toast.warning('Please save the workflow before testing.');
       return;
     }
 
@@ -158,18 +210,11 @@ export default function WorkflowEditor() {
     }
 
     setIsTesting(true);
-    setTestResult(null);
     try {
       const result = await executeWorkflow.mutateAsync(undefined);
-      setTestResult({
-        success: true,
-        message: `Workflow executed successfully! Run ID: ${result.run_id || 'N/A'}`,
-      });
+      toast.success(`Workflow executed! Run ID: ${result.run_id || 'N/A'}`);
     } catch (error) {
-      setTestResult({
-        success: false,
-        message: `Execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      });
+      toast.error(`Execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsTesting(false);
     }
@@ -240,19 +285,6 @@ export default function WorkflowEditor() {
         </div>
       </div>
 
-      {/* Test result notification */}
-      {testResult && (
-        <div className={`px-4 py-2 text-sm ${testResult.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
-          {testResult.message}
-          <button
-            onClick={() => setTestResult(null)}
-            className="ml-2 underline hover:no-underline"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
         <NodeToolbar />
@@ -267,7 +299,8 @@ export default function WorkflowEditor() {
         {selectedNode && (
           <NodeConfigPanel
             node={selectedNode}
-            onClose={() => setSelectedNode(null)}
+            workspaceId={workspaceId}
+            onClose={() => setSelectedNodeId(null)}
             onUpdate={handleNodeUpdate}
           />
         )}

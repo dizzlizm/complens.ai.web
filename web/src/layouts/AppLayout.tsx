@@ -4,6 +4,8 @@ import {
   LayoutDashboard,
   GitBranch,
   Users,
+  FileText,
+  ClipboardList,
   Settings,
   User,
   LogOut,
@@ -16,6 +18,8 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Workflows', href: '/workflows', icon: GitBranch },
   { name: 'Contacts', href: '/contacts', icon: Users },
+  { name: 'Pages', href: '/pages', icon: FileText },
+  { name: 'Forms', href: '/forms', icon: ClipboardList },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
@@ -33,7 +37,7 @@ export default function AppLayout() {
       {/* Mobile sidebar backdrop */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-40 bg-gray-600 bg-opacity-75 lg:hidden"
+          className="fixed inset-0 z-40 bg-gray-900/50 backdrop-blur-sm lg:hidden animate-fade-in"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -81,20 +85,23 @@ export default function AppLayout() {
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 px-4 py-4 space-y-1">
+          <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto scrollbar-thin">
             {navigation.map((item) => {
-              const isActive = location.pathname === item.href;
+              const isActive = location.pathname === item.href ||
+                (item.href !== '/' && location.pathname.startsWith(item.href));
               return (
                 <Link
                   key={item.name}
                   to={item.href}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                  className={`group flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 ${
                     isActive
-                      ? 'bg-primary-50 text-primary-700 font-medium'
-                      : 'text-gray-700 hover:bg-gray-100'
+                      ? 'bg-primary-50 text-primary-700 font-medium shadow-sm'
+                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                   }`}
                 >
-                  <item.icon className="w-5 h-5" />
+                  <item.icon className={`w-5 h-5 transition-transform duration-200 ${
+                    isActive ? '' : 'group-hover:scale-110'
+                  }`} />
                   {item.name}
                 </Link>
               );
@@ -136,7 +143,7 @@ export default function AppLayout() {
       {/* Main content */}
       <div className="lg:pl-64">
         {/* Top bar */}
-        <div className="sticky top-0 z-30 flex items-center h-16 px-4 bg-white border-b border-gray-200 lg:px-8">
+        <div className="sticky top-0 z-30 flex items-center h-16 px-4 bg-white/95 backdrop-blur-sm border-b border-gray-200 shadow-sm lg:px-8">
           <button
             onClick={() => setSidebarOpen(true)}
             className="p-2 -ml-2 lg:hidden"

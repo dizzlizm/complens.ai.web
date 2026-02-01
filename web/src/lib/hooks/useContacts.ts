@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 import api from '../api';
 
 export interface Contact {
@@ -35,11 +35,31 @@ export function useContacts(workspaceId: string, options?: { limit?: number; cur
       if (options?.limit) params.set('limit', options.limit.toString());
       if (options?.cursor) params.set('cursor', options.cursor);
 
-      const { data } = await api.get<{ contacts: Contact[]; next_cursor?: string }>(
+      const { data } = await api.get<{ items: Contact[]; pagination?: { next_cursor?: string } }>(
         `/workspaces/${workspaceId}/contacts?${params}`
       );
-      return data;
+      return { contacts: data.items, next_cursor: data.pagination?.next_cursor };
     },
+    enabled: !!workspaceId,
+  });
+}
+
+// Infinite query for paginated contacts
+export function useInfiniteContacts(workspaceId: string, limit: number = 25) {
+  return useInfiniteQuery({
+    queryKey: ['contacts-infinite', workspaceId, limit],
+    queryFn: async ({ pageParam }) => {
+      const params = new URLSearchParams();
+      params.set('limit', limit.toString());
+      if (pageParam) params.set('cursor', pageParam);
+
+      const { data } = await api.get<{ items: Contact[]; pagination?: { next_cursor?: string } }>(
+        `/workspaces/${workspaceId}/contacts?${params}`
+      );
+      return { contacts: data.items, next_cursor: data.pagination?.next_cursor };
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
     enabled: !!workspaceId,
   });
 }

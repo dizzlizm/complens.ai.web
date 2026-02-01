@@ -59,7 +59,7 @@ Globals:
     MemorySize: 256
     Tracing: Active
     Architectures:
-    - arm64
+    - x86_64
     Environment:
       Variables:
         TABLE_NAME:
@@ -77,6 +77,11 @@ Globals:
           Fn::Sub: complens-${Stage}-workflow-events
         WEBSOCKET_ENDPOINT:
           Fn::Sub: https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
+        CORS_ALLOWED_ORIGIN:
+          Fn::If:
+          - IsProd
+          - https://complens.ai
+          - Fn::Sub: https://${DomainName}
         TWILIO_ACCOUNT_SID:
           Ref: TwilioAccountSid
         TWILIO_AUTH_TOKEN:
@@ -410,15 +415,12 @@ Resources:
       LayerName:
         Fn::Sub: complens-${Stage}-shared
       Description: Shared code for Complens Lambda functions
-      ContentUri: SharedLayer
+      ContentUri: ../../src/layers/shared
       CompatibleRuntimes:
       - python3.12
       CompatibleArchitectures:
-      - arm64
+      - x86_64
       RetentionPolicy: Retain
-    Metadata:
-      BuildMethod: python3.12
-      SamResourceId: SharedLayer
   RestApi:
     Type: AWS::Serverless::Api
     Properties:
@@ -429,11 +431,17 @@ Resources:
       TracingEnabled: true
       Cors:
         AllowMethods: '''GET,POST,PUT,PATCH,DELETE,OPTIONS'''
-        AllowHeaders: '''Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'''
-        AllowOrigin: '''*'''
+        AllowHeaders: '''Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Requested-With'''
+        AllowOrigin:
+          Fn::If:
+          - IsProd
+          - '''https://complens.ai'''
+          - Fn::Sub: '''https://${DomainName}'''
+        AllowCredentials: true
         MaxAge: '''600'''
       Auth:
         DefaultAuthorizer: JwtAuthorizer
+        AddDefaultAuthorizerToCorsPreflight: false
         Authorizers:
           JwtAuthorizer:
             FunctionArn:
@@ -446,18 +454,54 @@ Resources:
               - Authorization
               ReauthorizeEvery: 300
       GatewayResponses:
+        DEFAULT_4XX:
+          StatusCode: 400
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin:
+                Fn::If:
+                - IsProd
+                - '''https://complens.ai'''
+                - Fn::Sub: '''https://${DomainName}'''
+              Access-Control-Allow-Headers: '''Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'''
+          ResponseTemplates:
+            application/json: '{"message": "$context.error.messageString"}'
+        DEFAULT_5XX:
+          StatusCode: 500
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin:
+                Fn::If:
+                - IsProd
+                - '''https://complens.ai'''
+                - Fn::Sub: '''https://${DomainName}'''
+              Access-Control-Allow-Headers: '''Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'''
+          ResponseTemplates:
+            application/json: '{"message": "Internal server error"}'
         UNAUTHORIZED:
           StatusCode: 401
           ResponseParameters:
             Headers:
-              Access-Control-Allow-Origin: '''*'''
+              Access-Control-Allow-Origin:
+                Fn::If:
+                - IsProd
+                - '''https://complens.ai'''
+                - Fn::Sub: '''https://${DomainName}'''
+              Access-Control-Allow-Headers: '''Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'''
+              Access-Control-Allow-Methods: '''GET,POST,PUT,PATCH,DELETE,OPTIONS'''
           ResponseTemplates:
             application/json: '{"message": "Unauthorized"}'
         ACCESS_DENIED:
           StatusCode: 403
           ResponseParameters:
             Headers:
-              Access-Control-Allow-Origin: '''*'''
+              Access-Control-Allow-Origin:
+                Fn::If:
+                - IsProd
+                - '''https://complens.ai'''
+                - Fn::Sub: '''https://${DomainName}'''
+              Access-Control-Allow-Headers: '''Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'''
+              Access-Control-Allow-Methods: '''GET,POST,PUT,PATCH,DELETE,OPTIONS'''
           ResponseTemplates:
             application/json: '{"message": "Access denied"}'
       MethodSettings:
@@ -547,6 +591,16 @@ Resources:
       IntegrationType: AWS_PROXY
       IntegrationUri:
         Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketMessageFunction.Arn}/invocations
+  WebSocketDefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: WebSocketApi
+      RouteKey: $default
+      AuthorizationType: NONE
+      OperationName: Default
+      Target:
+        Fn::Sub: integrations/${WebSocketMessageIntegration}
   JwtAuthorizerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -834,6 +888,337 @@ Resources:
             Method: GET
     Metadata:
       SamResourceId: WorkflowsFunction
+  PagesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: complens-${Stage}-pages
+      Handler: pages.handler
+      CodeUri: PagesFunction
+      Description: Pages CRUD operations with AI generation
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          ASSETS_BUCKET:
+            Ref: AssetsBucket
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: MainTable
+      - S3CrudPolicy:
+          BucketName:
+            Ref: AssetsBucket
+      - Statement:
+        - Effect: Allow
+          Action:
+          - bedrock:InvokeModel
+          Resource: '*'
+      Events:
+        List:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages
+            Method: GET
+        Create:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages
+            Method: POST
+        Generate:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/generate
+            Method: POST
+        Get:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}
+            Method: GET
+        Update:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}
+            Method: PUT
+        Delete:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}
+            Method: DELETE
+    Metadata:
+      SamResourceId: PagesFunction
+  FormsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: complens-${Stage}-forms
+      Handler: forms.handler
+      CodeUri: FormsFunction
+      Description: Forms CRUD operations
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: MainTable
+      Events:
+        List:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/forms
+            Method: GET
+        Create:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/forms
+            Method: POST
+        Get:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/forms/{form_id}
+            Method: GET
+        Update:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/forms/{form_id}
+            Method: PUT
+        Delete:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/forms/{form_id}
+            Method: DELETE
+        Submissions:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/forms/{form_id}/submissions
+            Method: GET
+    Metadata:
+      SamResourceId: FormsFunction
+  DomainsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: complens-${Stage}-domains
+      Handler: domains.handler
+      CodeUri: DomainsFunction
+      Description: Custom domain management
+      Timeout: 60
+      Environment:
+        Variables:
+          MAX_DOMAINS_PER_WORKSPACE: '1'
+          DOMAIN_PROVISIONING_STATE_MACHINE_ARN:
+            Fn::If:
+            - CustomDomainEnabled
+            - Ref: DomainProvisioningStateMachine
+            - ''
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: MainTable
+      - Statement:
+        - Effect: Allow
+          Action:
+          - acm:RequestCertificate
+          - acm:DescribeCertificate
+          - acm:DeleteCertificate
+          - acm:AddTagsToCertificate
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - cloudfront:GetDistribution
+          - cloudfront:UpdateDistribution
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - states:StartExecution
+          Resource:
+            Fn::If:
+            - CustomDomainEnabled
+            - Ref: DomainProvisioningStateMachine
+            - Fn::Sub: arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:*
+      Events:
+        List:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/domains
+            Method: GET
+        Create:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/domains
+            Method: POST
+        GetStatus:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/domains/{domain}
+            Method: GET
+        Delete:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/domains/{domain}
+            Method: DELETE
+    Metadata:
+      SamResourceId: DomainsFunction
+  DomainProvisionerFunction:
+    Type: AWS::Serverless::Function
+    Condition: CustomDomainEnabled
+    Properties:
+      FunctionName:
+        Fn::Sub: complens-${Stage}-domain-provisioner
+      Handler: domain_provisioner.handler
+      CodeUri: DomainProvisionerFunction
+      Description: Domain provisioning worker for Step Functions
+      Timeout: 120
+      Environment:
+        Variables:
+          API_GATEWAY_DOMAIN:
+            Fn::Sub: api.${DomainName}
+          STAGE:
+            Ref: Stage
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: MainTable
+      - Statement:
+        - Effect: Allow
+          Action:
+          - acm:DescribeCertificate
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - cloudfront:CreateDistribution
+          - cloudfront:GetDistribution
+          - cloudfront:UpdateDistribution
+          - cloudfront:DeleteDistribution
+          - cloudfront:TagResource
+          Resource: '*'
+    Metadata:
+      SamResourceId: DomainProvisionerFunction
+  DomainProvisioningStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Condition: CustomDomainEnabled
+    Properties:
+      Name:
+        Fn::Sub: complens-${Stage}-domain-provisioning
+      DefinitionUri: ../../step-functions/domain-provisioning.asl.json
+      DefinitionSubstitutions:
+        DomainProvisionerFunctionArn:
+          Fn::GetAtt:
+          - DomainProvisionerFunction
+          - Arn
+      Policies:
+      - LambdaInvokePolicy:
+          FunctionName:
+            Ref: DomainProvisionerFunction
+      Tags:
+        Service: complens
+        Stage:
+          Ref: Stage
+  PublicPagesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: complens-${Stage}-public-pages
+      Handler: public_pages.handler
+      CodeUri: PublicPagesFunction
+      Description: Public pages and form submissions (no auth)
+      Environment:
+        Variables:
+          API_URL:
+            Fn::If:
+            - CustomDomainEnabled
+            - Fn::Sub: https://api.${DomainName}
+            - Fn::Sub: https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: MainTable
+      - Statement:
+        - Effect: Allow
+          Action:
+          - events:PutEvents
+          Resource:
+            Fn::GetAtt:
+            - WorkflowEventBus
+            - Arn
+      Events:
+        GetPage:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /public/pages/{slug}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        GetForm:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /public/forms/{form_id}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        SubmitPageForm:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /public/submit/page/{page_id}
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        SubmitForm:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /public/submit/form/{form_id}
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        GetPageByDomain:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /public/domain/{domain}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+    Metadata:
+      SamResourceId: PublicPagesFunction
   WebSocketConnectFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -888,6 +1273,14 @@ Resources:
       Handler: message.handler
       CodeUri: WebSocketMessageFunction
       Description: WebSocket message handler
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: MainTable
+          CONNECTIONS_TABLE:
+            Ref: ConnectionsTable
+          CHAT_MODEL: us.anthropic.claude-3-sonnet-20240229-v1:0
       Policies:
       - DynamoDBCrudPolicy:
           TableName:
@@ -901,6 +1294,16 @@ Resources:
           - execute-api:ManageConnections
           Resource:
           - Fn::Sub: arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+      - Statement:
+        - Effect: Allow
+          Action:
+          - bedrock:InvokeModel
+          Resource: '*'
+      - Statement:
+        - Effect: Allow
+          Action:
+          - events:PutEvents
+          Resource: '*'
     Metadata:
       SamResourceId: WebSocketMessageFunction
   WebSocketMessagePermission:
@@ -1323,6 +1726,36 @@ Resources:
         - IsProd
         - 90
         - 14
+  PagesLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/complens-${Stage}-pages
+      RetentionInDays:
+        Fn::If:
+        - IsProd
+        - 90
+        - 14
+  FormsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/complens-${Stage}-forms
+      RetentionInDays:
+        Fn::If:
+        - IsProd
+        - 90
+        - 14
+  PublicPagesLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/complens-${Stage}-public-pages
+      RetentionInDays:
+        Fn::If:
+        - IsProd
+        - 90
+        - 14
   ApiCertificate:
     Type: AWS::CertificateManager::Certificate
     Condition: CreateCertificate
@@ -1478,6 +1911,7 @@ Resources:
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Condition: CustomDomainEnabled
+    DependsOn: FrontendDistribution
     Properties:
       Bucket:
         Ref: FrontendBucket
@@ -1495,6 +1929,50 @@ Resources:
             StringEquals:
               AWS:SourceArn:
                 Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+  AssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: complens-${Stage}-assets-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+        - AllowedHeaders:
+          - '*'
+          AllowedMethods:
+          - GET
+          - HEAD
+          AllowedOrigins:
+          - '*'
+          MaxAge: 3600
+      Tags:
+      - Key: Service
+        Value: complens
+      - Key: Stage
+        Value:
+          Ref: Stage
+  AssetsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: AssetsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: PublicReadAccess
+          Effect: Allow
+          Principal: '*'
+          Action: s3:GetObject
+          Resource:
+            Fn::Sub: ${AssetsBucket.Arn}/*
   FrontendOriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
     Condition: CustomDomainEnabled
@@ -1597,6 +2075,111 @@ Resources:
         DNSName:
           Fn::GetAtt:
           - FrontendDistribution
+          - DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
+  PagesDomainRouterFunction:
+    Type: AWS::CloudFront::Function
+    Condition: CustomDomainEnabled
+    Properties:
+      Name:
+        Fn::Sub: complens-${Stage}-pages-router
+      AutoPublish: true
+      FunctionCode: "function handler(event) {\n  var request = event.request;\n \
+        \ var host = request.headers.host ? request.headers.host.value : '';\n\n \
+        \ // Rewrite URI to include the domain for lookup\n  // /anything \u2192 /{domain}\n\
+        \  // The domain becomes the path for API Gateway routing\n  request.uri =\
+        \ '/' + host;\n\n  return request;\n}\n"
+      FunctionConfig:
+        Comment: Route requests based on Host header for custom domain pages
+        Runtime: cloudfront-js-2.0
+  PagesDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: CustomDomainEnabled
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment:
+          Fn::Sub: Complens ${Stage} Landing Pages (Custom Domains)
+        Aliases:
+        - Fn::Sub: pages.${DomainName}
+        ViewerCertificate:
+          AcmCertificateArn:
+            Fn::If:
+            - UseCertificateArn
+            - Ref: CertificateArn
+            - Ref: ApiCertificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+        - Id: ApiGatewayOrigin
+          DomainName:
+            Fn::Sub: ${RestApi}.execute-api.${AWS::Region}.amazonaws.com
+          OriginPath:
+            Fn::Sub: /${Stage}/public/domain
+          CustomOriginConfig:
+            HTTPSPort: 443
+            OriginProtocolPolicy: https-only
+            OriginSSLProtocols:
+            - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: ApiGatewayOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          CachedMethods:
+          - GET
+          - HEAD
+          Compress: true
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03
+          FunctionAssociations:
+          - EventType: viewer-request
+            FunctionARN:
+              Fn::GetAtt:
+              - PagesDomainRouterFunction
+              - FunctionMetadata.FunctionARN
+        PriceClass: PriceClass_100
+        HttpVersion: http2and3
+        IPV6Enabled: true
+      Tags:
+      - Key: Service
+        Value: complens
+      - Key: Stage
+        Value:
+          Ref: Stage
+  PagesDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CustomDomainEnabled
+    Properties:
+      HostedZoneId:
+        Ref: HostedZoneId
+      Name:
+        Fn::Sub: pages.${DomainName}
+      Type: A
+      AliasTarget:
+        DNSName:
+          Fn::GetAtt:
+          - PagesDistribution
+          - DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
+  PagesDnsRecordIPv6:
+    Type: AWS::Route53::RecordSet
+    Condition: CustomDomainEnabled
+    Properties:
+      HostedZoneId:
+        Ref: HostedZoneId
+      Name:
+        Fn::Sub: pages.${DomainName}
+      Type: AAAA
+      AliasTarget:
+        DNSName:
+          Fn::GetAtt:
+          - PagesDistribution
           - DomainName
         HostedZoneId: Z2FDTNDATAQYW2
         EvaluateTargetHealth: false
@@ -1742,3 +2325,30 @@ Outputs:
     Export:
       Name:
         Fn::Sub: ${AWS::StackName}-FrontendDistributionDomainName
+  PagesDistributionId:
+    Condition: CustomDomainEnabled
+    Description: Pages CloudFront Distribution ID (for custom domain landing pages)
+    Value:
+      Ref: PagesDistribution
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-PagesDistributionId
+  PagesDistributionDomainName:
+    Condition: CustomDomainEnabled
+    Description: Pages CloudFront Distribution Domain Name (CNAME target for custom
+      domains)
+    Value:
+      Fn::GetAtt:
+      - PagesDistribution
+      - DomainName
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-PagesDistributionDomainName
+  PagesCnameTarget:
+    Condition: CustomDomainEnabled
+    Description: CNAME target for custom domain pages
+    Value:
+      Fn::Sub: pages.${DomainName}
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-PagesCnameTarget

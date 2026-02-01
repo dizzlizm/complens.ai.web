@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2 } from 'lucide-react';
-import { useWorkflows, useCurrentWorkspace } from '../lib/hooks';
+import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2, AlertTriangle } from 'lucide-react';
+import { useWorkflows, useCurrentWorkspace, useDeleteWorkflow, type Workflow } from '../lib/hooks';
+import api from '../lib/api';
+import { useQueryClient } from '@tanstack/react-query';
+import { useToast } from '../components/Toast';
 
 // Format trigger type for display
 function formatTriggerType(triggerType: string): string {
@@ -36,8 +39,66 @@ function formatRelativeTime(dateString?: string): string {
 export default function Workflows() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+
+  const queryClient = useQueryClient();
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
-  const { data: workflows, isLoading, error } = useWorkflows(workspaceId || '');
+  const { data: workflows, isLoading, error, refetch } = useWorkflows(workspaceId || '');
+  const deleteWorkflow = useDeleteWorkflow(workspaceId || '');
+  const toast = useToast();
+
+  // Toggle workflow status (active <-> paused)
+  const handleToggleStatus = async (workflow: Workflow) => {
+    if (!workspaceId || togglingId) return;
+
+    const newStatus = workflow.status === 'active' ? 'paused' : 'active';
+    setTogglingId(workflow.id);
+
+    try {
+      await api.put(`/workspaces/${workspaceId}/workflows/${workflow.id}`, {
+        status: newStatus,
+      });
+      // Invalidate queries to refresh the list
+      queryClient.invalidateQueries({ queryKey: ['workflows', workspaceId] });
+      toast.success(`Workflow ${newStatus === 'active' ? 'activated' : 'paused'}`);
+    } catch (error) {
+      console.error('Failed to toggle workflow status:', error);
+      toast.error('Failed to update workflow status');
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
+  // Delete workflow with confirmation
+  const handleDelete = async (workflowId: string) => {
+    if (!confirm('Are you sure you want to delete this workflow? This action cannot be undone.')) {
+      return;
+    }
+
+    setDeletingId(workflowId);
+    setMenuOpenId(null);
+
+    try {
+      await deleteWorkflow.mutateAsync(workflowId);
+      toast.success('Workflow deleted successfully');
+    } catch (error) {
+      console.error('Failed to delete workflow:', error);
+      toast.error('Failed to delete workflow');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => setMenuOpenId(null);
+    if (menuOpenId) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [menuOpenId]);
 
   // Filter workflows
   const filteredWorkflows = workflows?.filter((wf) => {
@@ -94,8 +155,16 @@ export default function Workflows() {
 
       {/* Error state */}
       {error && (
-        <div className="card bg-red-50 border-red-200 text-red-800 p-4">
-          Failed to load workflows. Please try again.
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+          <AlertTriangle className="w-12 h-12 mx-auto text-red-400 mb-3" />
+          <h3 className="text-lg font-medium text-red-800 mb-1">Failed to load workflows</h3>
+          <p className="text-red-600 mb-4">Something went wrong while fetching your workflows.</p>
+          <button
+            onClick={() => refetch()}
+            className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+          >
+            Try Again
+          </button>
         </div>
       )}
 
@@ -114,7 +183,7 @@ export default function Workflows() {
 
       {/* Workflows list */}
       {!isLoading && !error && filteredWorkflows.length > 0 && (
-        <div className="card p-0 overflow-hidden">
+        <div className="card p-0 overflow-visible">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -180,18 +249,47 @@ export default function Workflows() {
                   <td className="px-6 py-4 text-right text-sm font-medium">
                     <div className="flex items-center justify-end gap-2">
                       <button
-                        className="p-1 text-gray-400 hover:text-gray-600"
-                        title={workflow.status === 'active' ? 'Pause' : 'Start'}
+                        onClick={() => handleToggleStatus(workflow)}
+                        disabled={togglingId === workflow.id || workflow.status === 'draft'}
+                        className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={workflow.status === 'active' ? 'Pause workflow' : workflow.status === 'draft' ? 'Publish to enable' : 'Activate workflow'}
                       >
-                        {workflow.status === 'active' ? (
+                        {togglingId === workflow.id ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : workflow.status === 'active' ? (
                           <Pause className="w-5 h-5" />
                         ) : (
                           <Play className="w-5 h-5" />
                         )}
                       </button>
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <MoreVertical className="w-5 h-5" />
-                      </button>
+                      <div className="relative">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMenuOpenId(menuOpenId === workflow.id ? null : workflow.id);
+                          }}
+                          className="p-1 text-gray-400 hover:text-gray-600"
+                        >
+                          <MoreVertical className="w-5 h-5" />
+                        </button>
+                        {menuOpenId === workflow.id && (
+                          <div className="absolute right-0 mt-1 w-36 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-50">
+                            <Link
+                              to={`/workflows/${workflow.id}`}
+                              className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                            >
+                              Edit
+                            </Link>
+                            <button
+                              onClick={() => handleDelete(workflow.id)}
+                              disabled={deletingId === workflow.id}
+                              className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              {deletingId === workflow.id ? 'Deleting...' : 'Delete'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </td>
                 </tr>

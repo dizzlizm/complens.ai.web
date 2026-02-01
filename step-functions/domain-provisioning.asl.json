@@ -1,0 +1,261 @@
+{
+  "Comment": "Domain provisioning workflow - handles async certificate validation and CloudFront setup",
+  "StartAt": "CheckCertificate",
+  "States": {
+    "CheckCertificate": {
+      "Type": "Task",
+      "Resource": "${DomainProvisionerFunctionArn}",
+      "Parameters": {
+        "task": "check_certificate",
+        "workspace_id.$": "$.workspace_id",
+        "domain.$": "$.domain",
+        "page_id.$": "$.page_id",
+        "certificate_arn.$": "$.certificate_arn"
+      },
+      "ResultPath": "$.cert_result",
+      "Next": "IsCertificateValidated",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed", "States.Timeout"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ProvisioningFailed"
+        }
+      ]
+    },
+
+    "IsCertificateValidated": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.cert_result.validated",
+          "BooleanEquals": true,
+          "Next": "CreateDistribution"
+        },
+        {
+          "Variable": "$.cert_result.status",
+          "StringEquals": "FAILED",
+          "Next": "ProvisioningFailed"
+        }
+      ],
+      "Default": "WaitForCertificate"
+    },
+
+    "WaitForCertificate": {
+      "Type": "Wait",
+      "Seconds": 300,
+      "Next": "CheckCertificateRetry"
+    },
+
+    "CheckCertificateRetry": {
+      "Type": "Task",
+      "Resource": "${DomainProvisionerFunctionArn}",
+      "Parameters": {
+        "task": "check_certificate",
+        "workspace_id.$": "$.workspace_id",
+        "domain.$": "$.domain",
+        "page_id.$": "$.page_id",
+        "certificate_arn.$": "$.certificate_arn"
+      },
+      "ResultPath": "$.cert_result",
+      "Next": "IsCertificateValidatedRetry",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "IncrementRetryCount"
+        }
+      ]
+    },
+
+    "IsCertificateValidatedRetry": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.cert_result.validated",
+          "BooleanEquals": true,
+          "Next": "CreateDistribution"
+        },
+        {
+          "Variable": "$.cert_result.status",
+          "StringEquals": "FAILED",
+          "Next": "ProvisioningFailed"
+        }
+      ],
+      "Default": "IncrementRetryCount"
+    },
+
+    "IncrementRetryCount": {
+      "Type": "Pass",
+      "Parameters": {
+        "workspace_id.$": "$.workspace_id",
+        "domain.$": "$.domain",
+        "page_id.$": "$.page_id",
+        "certificate_arn.$": "$.certificate_arn",
+        "retry_count.$": "States.MathAdd($.retry_count, 1)"
+      },
+      "ResultPath": "$",
+      "Next": "CheckRetryLimit"
+    },
+
+    "CheckRetryLimit": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.retry_count",
+          "NumericGreaterThan": 288,
+          "Comment": "288 retries * 5 min = 24 hours max wait",
+          "Next": "ValidationTimeout"
+        }
+      ],
+      "Default": "WaitForCertificate"
+    },
+
+    "ValidationTimeout": {
+      "Type": "Pass",
+      "Result": {
+        "error": "Certificate validation timed out after 24 hours"
+      },
+      "ResultPath": "$.error",
+      "Next": "ProvisioningFailed"
+    },
+
+    "CreateDistribution": {
+      "Type": "Task",
+      "Resource": "${DomainProvisionerFunctionArn}",
+      "Parameters": {
+        "task": "create_distribution",
+        "workspace_id.$": "$.workspace_id",
+        "domain.$": "$.domain",
+        "page_id.$": "$.page_id",
+        "certificate_arn.$": "$.certificate_arn"
+      },
+      "ResultPath": "$.dist_result",
+      "Next": "IsDistributionCreated",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ProvisioningFailed"
+        }
+      ]
+    },
+
+    "IsDistributionCreated": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.dist_result.success",
+          "BooleanEquals": true,
+          "Next": "WaitForDistribution"
+        }
+      ],
+      "Default": "ProvisioningFailed"
+    },
+
+    "WaitForDistribution": {
+      "Type": "Wait",
+      "Seconds": 120,
+      "Next": "CheckDistribution"
+    },
+
+    "CheckDistribution": {
+      "Type": "Task",
+      "Resource": "${DomainProvisionerFunctionArn}",
+      "Parameters": {
+        "task": "check_distribution",
+        "workspace_id.$": "$.workspace_id",
+        "domain.$": "$.domain",
+        "page_id.$": "$.page_id"
+      },
+      "ResultPath": "$.dist_status",
+      "Next": "IsDistributionDeployed",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ProvisioningFailed"
+        }
+      ]
+    },
+
+    "IsDistributionDeployed": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.dist_status.deployed",
+          "BooleanEquals": true,
+          "Next": "ActivateDomain"
+        }
+      ],
+      "Default": "WaitForDistribution"
+    },
+
+    "ActivateDomain": {
+      "Type": "Task",
+      "Resource": "${DomainProvisionerFunctionArn}",
+      "Parameters": {
+        "task": "activate_domain",
+        "workspace_id.$": "$.workspace_id",
+        "domain.$": "$.domain",
+        "page_id.$": "$.page_id"
+      },
+      "ResultPath": "$.activation_result",
+      "Next": "ProvisioningComplete",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ProvisioningFailed"
+        }
+      ]
+    },
+
+    "ProvisioningComplete": {
+      "Type": "Succeed"
+    },
+
+    "ProvisioningFailed": {
+      "Type": "Task",
+      "Resource": "${DomainProvisionerFunctionArn}",
+      "Parameters": {
+        "task": "mark_failed",
+        "workspace_id.$": "$.workspace_id",
+        "domain.$": "$.domain",
+        "error.$": "$.error"
+      },
+      "End": true
+    }
+  }
+}

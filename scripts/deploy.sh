@@ -2,14 +2,32 @@
 set -e
 
 # Complens.ai Full Deployment Script
-# Usage: ./scripts/deploy.sh [stage]
+# Usage: ./scripts/deploy.sh [stage] [--force]
 # Example: ./scripts/deploy.sh dev
+# Example: ./scripts/deploy.sh dev --force
 
-STAGE="${1:-dev}"
+# Parse arguments
+STAGE="dev"
+FORCE_BUILD=false
+
+for arg in "$@"; do
+    case $arg in
+        --force|-f)
+            FORCE_BUILD=true
+            ;;
+        *)
+            STAGE="$arg"
+            ;;
+    esac
+done
+
 STACK_NAME="complens-${STAGE}"
 
 echo "============================================"
 echo "Complens.ai Deployment - Stage: ${STAGE}"
+if [ "$FORCE_BUILD" = true ]; then
+    echo "Mode: FORCE REBUILD (no cache)"
+fi
 echo "============================================"
 echo ""
 
@@ -62,7 +80,17 @@ check_prerequisites() {
 # Build SAM application
 build_backend() {
     log_step "Building SAM application..."
-    sam build --cached --parallel
+
+    if [ "$FORCE_BUILD" = true ]; then
+        log_info "Force build requested - clearing caches..."
+        rm -rf .aws-sam/
+        # Also rebuild the shared layer
+        make build-layer
+        sam build --parallel
+    else
+        sam build --cached --parallel
+    fi
+
     log_info "Backend build complete!"
 }
 
@@ -127,6 +155,18 @@ get_stack_outputs() {
         --query "Stacks[0].Outputs[?OutputKey=='FrontendUrl'].OutputValue" \
         --output text 2>/dev/null)
 
+    WS_URL=$(aws cloudformation describe-stacks \
+        --stack-name "${STACK_NAME}" \
+        --query "Stacks[0].Outputs[?OutputKey=='WebSocketCustomUrl'].OutputValue" \
+        --output text 2>/dev/null)
+
+    if [ -z "$WS_URL" ] || [ "$WS_URL" = "None" ]; then
+        WS_URL=$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='WebSocketUrl'].OutputValue" \
+            --output text 2>/dev/null)
+    fi
+
     log_info "Stack outputs retrieved!"
 }
 
@@ -165,6 +205,7 @@ generate_frontend_env() {
     echo "VITE_COGNITO_USER_POOL_ID=${USER_POOL_ID}" > web/.env.local
     echo "VITE_COGNITO_CLIENT_ID=${CLIENT_ID}" >> web/.env.local
     echo "VITE_API_URL=${API_URL}" >> web/.env.local
+    echo "VITE_WS_URL=${WS_URL}" >> web/.env.local
 
     # Verify file was created
     if [ ! -f "web/.env.local" ]; then
@@ -183,7 +224,12 @@ generate_frontend_env() {
         exit 1
     fi
 
-    log_info "Environment file verified!"
+    if ! grep -q "VITE_WS_URL=" web/.env.local; then
+        log_error "web/.env.local does not contain VITE_WS_URL!"
+        exit 1
+    fi
+
+    log_info "Environment file verified (includes WebSocket URL)!"
 }
 
 # Install frontend dependencies
@@ -235,6 +281,7 @@ print_summary() {
     echo "Endpoints:"
     echo "  Frontend:  ${FRONTEND_URL:-'N/A (custom domain not enabled)'}"
     echo "  API:       ${API_URL}"
+    echo "  WebSocket: ${WS_URL:-'N/A'}"
     echo ""
     echo "Cognito:"
     echo "  User Pool ID: ${USER_POOL_ID}"

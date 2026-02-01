@@ -132,34 +132,38 @@ Custom domains are optional and controlled via parameters:
 ## Workflow Node Types
 
 **Triggers (start the flow):**
-- `trigger_form_submitted` - Form submission
+- `trigger_form_submitted` - Form submission ✅
+- `trigger_chat_started` - Visitor opens chat ✅ (EventBridge)
+- `trigger_chat_message` - Visitor sends message ✅ (keyword filter support)
+- `trigger_page_visit` - Visitor lands on page ✅ (UTM capture)
 - `trigger_appointment_booked` - Calendar booking
-- `trigger_tag_added` - Contact tagged
-- `trigger_sms_received` - Inbound SMS
+- `trigger_tag_added` - Contact tagged ✅
+- `trigger_sms_received` - Inbound SMS ✅ (needs Twilio credentials)
 - `trigger_email_received` - Inbound email
-- `trigger_webhook` - External webhook
+- `trigger_webhook` - External webhook ✅
 - `trigger_schedule` - Cron-based trigger
+- `trigger_segment_event` - Segment track event ✅ (wildcard matching)
 
 **Actions (do something):**
-- `action_send_sms` - Send text message
-- `action_send_email` - Send email
-- `action_ai_respond` - AI generates and sends response
-- `action_update_contact` - Update contact fields/tags
-- `action_wait` - Delay for duration
-- `action_webhook` - Call external API
+- `action_send_sms` - Send text message ✅ (Twilio integrated)
+- `action_send_email` - Send email ✅ (SES integrated)
+- `action_ai_respond` - AI generates and sends response ✅ (Bedrock + SMS/Email)
+- `action_update_contact` - Update contact fields/tags ✅
+- `action_wait` - Delay for duration ✅ (Step Functions)
+- `action_webhook` - Call external API ✅
 - `action_create_task` - Create internal task
 
 **Logic (control flow):**
-- `logic_branch` - If/else based on conditions
-- `logic_ab_split` - Random percentage split
-- `logic_filter` - Continue only if conditions met
-- `logic_goal` - End flow when condition achieved
+- `logic_branch` - If/else based on conditions ✅
+- `logic_ab_split` - Random percentage split ✅
+- `logic_filter` - Continue only if conditions met ✅
+- `logic_goal` - End flow when condition achieved ✅
 
-**AI (intelligence):**
-- `ai_decision` - AI chooses next path
-- `ai_generate` - AI creates content
-- `ai_analyze` - Sentiment, intent analysis
-- `ai_conversation` - Multi-turn chat handler
+**AI (intelligence) - All use Bedrock:**
+- `ai_decision` - AI chooses next path ✅
+- `ai_generate` - AI creates content ✅
+- `ai_analyze` - Sentiment, intent analysis ✅
+- `ai_conversation` - Multi-turn chat handler ✅
 
 ## Environment Variables
 
@@ -201,6 +205,25 @@ Required in Lambda:
 - `POST /workspaces/{ws_id}/contacts/{c_id}/conversations` - Create conversation
 - `GET /conversations/{id}/messages` - List messages
 - `POST /conversations/{id}/messages` - Send message
+
+### Pages
+- `GET /workspaces/{ws_id}/pages` - List pages
+- `POST /workspaces/{ws_id}/pages` - Create page
+- `POST /workspaces/{ws_id}/pages/generate` - AI-generate page from source content
+- `GET /workspaces/{ws_id}/pages/{id}` - Get page
+- `PUT /workspaces/{ws_id}/pages/{id}` - Update page
+- `DELETE /workspaces/{ws_id}/pages/{id}` - Delete page
+
+### Forms
+- `GET /workspaces/{ws_id}/forms` - List forms
+- `POST /workspaces/{ws_id}/forms` - Create form
+- `GET /workspaces/{ws_id}/forms/{id}` - Get form
+- `PUT /workspaces/{ws_id}/forms/{id}` - Update form
+- `DELETE /workspaces/{ws_id}/forms/{id}` - Delete form
+
+### Public Endpoints (No Auth Required)
+- `GET /public/pages/{slug}?ws={workspace_id}` - Get public page
+- `POST /public/pages/{page_id}/forms/{form_id}` - Submit form
 
 ## Coding Standards
 
@@ -315,23 +338,96 @@ sam deploy --config-env dev --parameter-overrides \
 - Code is ready (`EmailService`, `action_send_email`)
 
 ### Technical Debt
-- [ ] Pydantic deprecation warnings (json_encoders, class-based config)
+- [x] Pydantic v2 ConfigDict migration (WorkflowNode done, base model updated)
 - [ ] External ID lookup for Segment contacts uses scan (needs GSI for scale)
 - [ ] No integration tests for handlers yet
 - [ ] Step Functions state machine tests missing
 
 ### Priority Order
-1. **Phase 4: Frontend** ← Current priority (unblocks Twilio verification)
-2. **Phase 3: AI Features** (can run in parallel with frontend)
-3. Complete Twilio/Segment setup after frontend deployed
-4. Phase 5: Polish
+1. **Phase 4.5: Client-Facing Pages** ✅ Complete
+2. **Phase 3: AI Features** ✅ Workflow nodes complete (AI generation from NL pending)
+3. **Lead Generation Triggers** ✅ Chat, page visit, form triggers with EventBridge
+4. **Custom Domain for Pages** ← In Progress (user domains → landing pages)
+5. Complete Twilio/Segment setup with working demo
+6. Phase 5: Polish (billing, templates, analytics)
 
 ---
 
-### Phase 3: AI Features
-- [ ] Full Bedrock integration for AI nodes
+### Phase 4.5: Client-Facing Pages ✅ Complete
+
+**Backend:**
+- [x] Page model (`models/page.py`) with ChatConfig, status, slug, form_ids
+- [x] Form model (`models/form.py`) with FormField, FormSubmission
+- [x] Page repository (`repositories/page.py`) with slug/domain lookups
+- [x] Form repository (`repositories/form.py`) with submission tracking
+- [x] Admin API (`handlers/api/pages.py`, `handlers/api/forms.py`)
+- [x] Public API (`handlers/api/public_pages.py`) - no auth required
+- [x] EventBridge integration for form submission workflow triggers
+- [x] SAM template updated with new Lambda functions
+
+**AI Page Generation (Template + AI Hybrid):**
+- [x] `POST /workspaces/{ws}/pages/generate` - AI generates page content
+- [x] Takes ANY source content (resume, business description, product info, etc.)
+- [x] Uses Bedrock Claude Haiku 4.5 (`us.anthropic.claude-haiku-4-5-20251001-v1:0`)
+- [x] **Template-based approach**: AI generates text copy, templates provide beautiful HTML
+- [x] Three premium templates: `professional`, `bold`, `minimal`
+- [x] **Simplified 3-section design**: Hero (full-screen) → Features (3 cards) → CTA (conversion)
+- [x] Modern CSS effects: gradients, blur, animations, responsive typography
+- [x] Templates in `src/layers/shared/python/complens/services/page_templates.py`
+- [x] Tailwind safelist in `web/tailwind.config.js` for dynamic HTML classes
+- [x] Auto-creates lead capture form (email, name, message fields)
+- [x] Configures AI chat persona based on page context
+- [x] SEO meta title and description
+
+**WebSocket Chat (Public AI Chat):**
+- [x] `public_chat` action in WebSocket message handler
+- [x] Bedrock Claude Sonnet integration for AI responses
+- [x] Page lookup to get AI persona and business context
+- [x] EventBridge events fired for `chat_message` (triggers workflows)
+- [x] `$default` WebSocket route for unmatched actions
+
+**Frontend:**
+- [x] Public page renderer (`pages/public/PublicPage.tsx`)
+- [x] AI chat widget (`components/public/ChatWidget.tsx`) with WebSocket real-time
+- [x] Form component (`components/public/PublicForm.tsx`)
+- [x] React Query hooks for public pages (`hooks/usePublicPage.ts`)
+- [x] Admin pages list (`pages/Pages.tsx`)
+- [x] Admin page editor (`pages/PageEditor.tsx`) with AI Generate button
+- [x] React Query hooks for admin (`hooks/usePages.ts`, `hooks/useForms.ts`)
+- [x] Sidebar navigation updated
+- [x] Dynamic CSS color classes for primary color theming
+
+**Public URL Pattern:**
+- `/p/{page-slug}?ws={workspace-id}` - Public page with forms and AI chat
+
+**Key Files:**
+- `src/layers/shared/python/complens/models/page.py` - Page & ChatConfig models
+- `src/layers/shared/python/complens/models/form.py` - Form & FormSubmission models
+- `src/handlers/api/pages.py` - Admin + AI generate endpoint
+- `src/handlers/api/public_pages.py` - Public endpoints (no auth)
+- `web/src/pages/public/PublicPage.tsx` - Public page renderer with dynamic theming
+- `web/src/components/public/ChatWidget.tsx` - WebSocket AI chat widget
+- `web/src/pages/PageEditor.tsx` - Admin page builder with AI generation
+
+---
+
+### Phase 3: AI Features ✅ Workflow Nodes Complete
+
+**Bedrock Integration (All workflow AI nodes implemented):**
+- [x] `ai_decision` - AI chooses between multiple options based on context
+- [x] `ai_generate` - AI creates content (text, JSON) with template support
+- [x] `ai_analyze` - Sentiment, intent, and custom analysis
+- [x] `ai_conversation` - Multi-turn chat with tool use support
+- [x] `action_ai_respond` - Generates AI response and sends via SMS/email
+
+**Model Configuration:**
+- Default model: `us.anthropic.claude-3-sonnet-20240229-v1:0`
+- Alternative: `us.anthropic.claude-haiku-4-5-20251001-v1:0` (faster, cheaper)
+- Uses Bedrock inference profiles (`us.anthropic.*`) for cross-region availability
+
+**Still TODO:**
 - [ ] AI workflow generation from natural language
-- [ ] Knowledge base integration
+- [ ] Knowledge base integration (Bedrock Knowledge Bases)
 
 ### Phase 4: Frontend ✅ Core Features Complete
 
@@ -384,11 +480,12 @@ sam deploy --config-env dev --parameter-overrides \
 **Node Configuration Panel:**
 - [x] Click any node to open config panel
 - [x] Type-specific configuration fields for all node types:
-  - Triggers: Form ID, Tag name, Webhook path, Cron schedule
+  - Triggers: Form ID, Tag name, Webhook path, Cron schedule, Page ID, Chat keyword
   - Actions: Email (to/subject/body), SMS (message), Wait (duration), Webhook (URL/method/headers/body), Update Contact (tags/fields)
   - Logic: If/Else (field/operator/value), Filter, Goal
   - AI: Respond (prompt/channel), Decision (prompt/options), Generate (prompt/output variable)
-- [x] Dynamic field types (text, textarea, number, select, checkbox)
+- [x] Dynamic field types (text, textarea, number, select, checkbox, dynamic_select)
+- [x] **Dynamic dropdowns from workspace data** - Forms, pages, workflows, tags, contact fields
 - [x] Template variable hints ({{contact.field}})
 - [x] Node label editing
 
@@ -397,8 +494,102 @@ sam deploy --config-env dev --parameter-overrides \
 - [x] Auto-saves before testing if unsaved changes
 - [x] Success/error result notifications
 
+**Recent Fixes (Jan 2026):**
+- [x] DynamoDB float/Decimal conversion in `base.py` (DynamoDB requires Decimal, not float)
+- [x] Pydantic v2 ConfigDict for WorkflowNode aliases (`type` ↔ `node_type`)
+- [x] Frontend/backend type alignment (removed unused `trigger_type`/`trigger_config` from requests)
+- [x] Proper node/edge validation error handling in workflow handlers
+- [x] Response serialization with `by_alias=True` for React Flow compatibility
+- [x] Enum/string status handling for workflows loaded from DynamoDB
+
 **Still TODO:**
-- [ ] Real-time WebSocket updates
+- [ ] Real-time WebSocket updates for workflow runs
+- [ ] Form builder UI in PageEditor (currently JSON-based)
+- [ ] Custom domain support for pages (in progress - see below)
+
+---
+
+### Custom Domain for Landing Pages ✅ Implemented
+
+Allow users to point their own domains (e.g., `itsross.com`) to their landing pages.
+
+**Architecture:**
+```
+User's domain (itsross.com)
+    ↓ CNAME
+pages.dev.complens.ai (CloudFront)
+    ↓ CloudFront Function (viewer-request)
+    - Extracts Host header
+    - Rewrites URI to /{domain}
+    ↓
+API Gateway /public/domain/{domain}
+    ↓ Lambda
+    - Looks up page by domain (GSI2)
+    - Renders full HTML page
+    - Returns with proper Content-Type
+```
+
+**Infrastructure (template.yaml):**
+- [x] `PagesDomainRouterFunction` - CloudFront Function to extract Host header
+- [x] `PagesDistribution` - CloudFront distribution for custom domains
+- [x] `PagesDnsRecord` - Route 53 A record for pages.{domain}
+- [x] `GET /public/domain/{domain}` - API endpoint returning rendered HTML
+
+**Backend (src/):**
+- [x] `render_full_page()` in `page_templates.py` - Renders complete HTML with chat widget
+- [x] `get_page_by_domain()` in `public_pages.py` - Looks up page by domain
+- [x] GSI2 for domain lookup: `PK=PAGE_DOMAIN#{domain}` (already in Page model)
+
+**Frontend (web/):**
+- [x] Domain tab in PageEditor with custom domain input
+- [x] DNS configuration instructions with copy-able values
+- [x] Status indicator (Pending DNS/Configured)
+
+**User Setup (DNS):**
+```
+1. In Complens.ai:
+   - Go to Pages → Edit your page
+   - Click "Domain" tab
+   - Enter your custom domain (e.g., yourdomain.com)
+   - Save
+
+2. At your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.):
+   - Go to DNS settings for your domain
+   - Add CNAME record:
+     Type: CNAME
+     Name: @ (or www)
+     Value: pages.dev.complens.ai
+     TTL: 3600
+
+3. Wait 5-30 minutes for DNS propagation
+   - Your page is now live at https://yourdomain.com
+```
+
+**Technical Notes:**
+- CloudFront Function extracts Host header and rewrites URI to include domain
+- Lambda renders full HTML with embedded chat widget and form handling
+- CDN caching disabled for dynamic content (CachingDisabled policy)
+- For true custom domains (not subdomains), SSL cert must be added manually to CloudFront
+
+**For Adding Custom Domains to Production:**
+```bash
+# 1. Request ACM certificate in us-east-1
+aws acm request-certificate \
+  --domain-name customerdomain.com \
+  --validation-method DNS \
+  --region us-east-1
+
+# 2. Add DNS validation record (customer does this)
+# 3. Add domain as CloudFront alias
+aws cloudfront update-distribution \
+  --id <PAGES_DISTRIBUTION_ID> \
+  --distribution-config <config-with-new-alias>
+```
+
+**Outputs (when CustomDomainEnabled):**
+- `PagesCnameTarget` - CNAME target for custom domains (pages.dev.complens.ai)
+- `PagesDistributionId` - CloudFront distribution ID for custom domains
+- `PagesDistributionDomainName` - CloudFront domain name
 
 ### Phase 5: Polish
 - [ ] Stripe billing integration

@@ -1,4 +1,4 @@
-import { Zap, GitBranch, Sparkles, Clock, Mail, MessageSquare, Webhook, Tag, Filter, Target, PlayCircle } from 'lucide-react';
+import { Zap, GitBranch, Sparkles, Clock, Mail, MessageSquare, Webhook, Tag, Filter, Target, PlayCircle, Eye, MessagesSquare } from 'lucide-react';
 
 interface NodeDefinition {
   type: 'trigger' | 'action' | 'logic' | 'ai';
@@ -9,7 +9,12 @@ interface NodeDefinition {
 }
 
 const triggers: NodeDefinition[] = [
+  // Lead generation
   { type: 'trigger', nodeType: 'trigger_form_submitted', label: 'Form Submitted', icon: <Zap className="w-4 h-4" />, description: 'When a form is submitted' },
+  { type: 'trigger', nodeType: 'trigger_chat_started', label: 'Chat Started', icon: <MessagesSquare className="w-4 h-4" />, description: 'When visitor opens chat' },
+  { type: 'trigger', nodeType: 'trigger_chat_message', label: 'Chat Message', icon: <MessageSquare className="w-4 h-4" />, description: 'When visitor sends message' },
+  { type: 'trigger', nodeType: 'trigger_page_visit', label: 'Page Visit', icon: <Eye className="w-4 h-4" />, description: 'When visitor lands on page' },
+  // Contact & integration
   { type: 'trigger', nodeType: 'trigger_tag_added', label: 'Tag Added', icon: <Tag className="w-4 h-4" />, description: 'When a tag is added to contact' },
   { type: 'trigger', nodeType: 'trigger_webhook', label: 'Webhook', icon: <Webhook className="w-4 h-4" />, description: 'External webhook trigger' },
   { type: 'trigger', nodeType: 'trigger_schedule', label: 'Schedule', icon: <Clock className="w-4 h-4" />, description: 'Run on a schedule' },

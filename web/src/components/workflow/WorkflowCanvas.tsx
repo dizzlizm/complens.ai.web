@@ -36,6 +36,7 @@ export interface WorkflowCanvasRef {
   setEdges: (edges: Edge[]) => void;
   updateNodeData: (nodeId: string, data: Record<string, unknown>) => void;
   getSelectedNode: () => Node | null;
+  getViewport: () => { x: number; y: number; zoom: number };
 }
 
 interface WorkflowCanvasProps {
@@ -64,7 +65,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
     const reactFlowWrapper = useRef<HTMLDivElement>(null);
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes || defaultNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges || []);
-    const { screenToFlowPosition } = useReactFlow();
+    const { screenToFlowPosition, getViewport } = useReactFlow();
 
     // Track selected node
     const selectedNodeRef = useRef<Node | null>(null);
@@ -100,7 +101,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
       setEdges: (newEdges: Edge[]) => setEdges(newEdges),
       updateNodeData,
       getSelectedNode,
-    }), [nodes, edges, setNodes, setEdges, updateNodeData, getSelectedNode]);
+      getViewport,
+    }), [nodes, edges, setNodes, setEdges, updateNodeData, getSelectedNode, getViewport]);
 
     // Notify parent of changes
     useEffect(() => {

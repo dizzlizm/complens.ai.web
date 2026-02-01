@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { Bell, Shield, CreditCard, Users, Building, Globe, Zap } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2 } from 'lucide-react';
+import { useCurrentWorkspace, useUpdateWorkspace } from '../lib/hooks';
 
 const settingsSections = [
   {
@@ -97,6 +98,48 @@ export default function Settings() {
 }
 
 function WorkspaceSettings() {
+  const { workspace, workspaceId, isLoading } = useCurrentWorkspace();
+  const updateWorkspace = useUpdateWorkspace(workspaceId || '');
+
+  const [name, setName] = useState('');
+  const [timezone, setTimezone] = useState('America/New_York');
+  const [hasChanges, setHasChanges] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+  // Load workspace data
+  useEffect(() => {
+    if (workspace) {
+      setName(workspace.name);
+      setTimezone(workspace.settings?.timezone || 'America/New_York');
+    }
+  }, [workspace]);
+
+  const handleSave = async () => {
+    if (!workspaceId) return;
+
+    setSaveStatus('saving');
+    try {
+      await updateWorkspace.mutateAsync({
+        name,
+        settings: { ...workspace?.settings, timezone },
+      });
+      setSaveStatus('saved');
+      setHasChanges(false);
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    } catch (error) {
+      console.error('Failed to save workspace:', error);
+      setSaveStatus('error');
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="card flex items-center justify-center py-12">
+        <Loader2 className="w-6 h-6 text-primary-600 animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div className="card">
       <h2 className="text-lg font-semibold text-gray-900 mb-4">Workspace Settings</h2>
@@ -105,7 +148,15 @@ function WorkspaceSettings() {
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Workspace Name
           </label>
-          <input type="text" className="input" defaultValue="My Workspace" />
+          <input
+            type="text"
+            className="input"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setHasChanges(true);
+            }}
+          />
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -113,8 +164,8 @@ function WorkspaceSettings() {
           </label>
           <input
             type="text"
-            className="input bg-gray-50"
-            defaultValue="ws_123456789"
+            className="input bg-gray-50 font-mono text-sm"
+            value={workspaceId || ''}
             disabled
           />
         </div>
@@ -122,16 +173,36 @@ function WorkspaceSettings() {
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Timezone
           </label>
-          <select className="input">
-            <option>America/New_York (EST)</option>
-            <option>America/Chicago (CST)</option>
-            <option>America/Denver (MST)</option>
-            <option>America/Los_Angeles (PST)</option>
-            <option>UTC</option>
+          <select
+            className="input"
+            value={timezone}
+            onChange={(e) => {
+              setTimezone(e.target.value);
+              setHasChanges(true);
+            }}
+          >
+            <option value="America/New_York">America/New_York (EST)</option>
+            <option value="America/Chicago">America/Chicago (CST)</option>
+            <option value="America/Denver">America/Denver (MST)</option>
+            <option value="America/Los_Angeles">America/Los_Angeles (PST)</option>
+            <option value="UTC">UTC</option>
           </select>
         </div>
-        <div className="pt-4">
-          <button className="btn btn-primary">Save Changes</button>
+        <div className="pt-4 flex items-center gap-3">
+          <button
+            onClick={handleSave}
+            disabled={!hasChanges || saveStatus === 'saving'}
+            className="btn btn-primary inline-flex items-center gap-2"
+          >
+            {saveStatus === 'saving' && <Loader2 className="w-4 h-4 animate-spin" />}
+            {saveStatus === 'saving' ? 'Saving...' : 'Save Changes'}
+          </button>
+          {saveStatus === 'saved' && (
+            <span className="text-sm text-green-600">Changes saved!</span>
+          )}
+          {saveStatus === 'error' && (
+            <span className="text-sm text-red-600">Failed to save</span>
+          )}
         </div>
       </div>
     </div>

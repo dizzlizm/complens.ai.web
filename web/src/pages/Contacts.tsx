@@ -1,6 +1,8 @@
-import { useState } from 'react';
-import { Plus, Search, Upload, MoreVertical, Mail, Phone, Loader2, Users } from 'lucide-react';
-import { useContacts, useCurrentWorkspace, type Contact } from '../lib/hooks';
+import { useState, useEffect } from 'react';
+import { Plus, Search, Upload, MoreVertical, Mail, Phone, Loader2, Users, Trash2, AlertTriangle } from 'lucide-react';
+import { useInfiniteContacts, useCurrentWorkspace, useCreateContact, useDeleteContact, type Contact, type CreateContactInput } from '../lib/hooks';
+import Modal, { ModalFooter } from '../components/ui/Modal';
+import { useToast } from '../components/Toast';
 
 // Format relative time
 function formatRelativeTime(dateString?: string): string {
@@ -47,13 +49,112 @@ function getDisplayName(contact: Contact): string {
   return 'Unknown Contact';
 }
 
+// Empty form state
+const emptyForm: CreateContactInput = {
+  email: '',
+  phone: '',
+  first_name: '',
+  last_name: '',
+  tags: [],
+};
+
 export default function Contacts() {
   const [searchQuery, setSearchQuery] = useState('');
   const [tagFilter, setTagFilter] = useState<string>('all');
-  const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
-  const { data, isLoading, error } = useContacts(workspaceId || '');
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [formData, setFormData] = useState<CreateContactInput>(emptyForm);
+  const [tagInput, setTagInput] = useState('');
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const contacts = data?.contacts || [];
+  const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
+  const {
+    data,
+    isLoading,
+    error,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteContacts(workspaceId || '');
+  const createContact = useCreateContact(workspaceId || '');
+  const deleteContact = useDeleteContact(workspaceId || '');
+  const toast = useToast();
+
+  // Flatten all pages of contacts
+  const contacts = data?.pages.flatMap((page) => page.contacts) || [];
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => setMenuOpenId(null);
+    if (menuOpenId) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [menuOpenId]);
+
+  // Handle form field changes
+  const handleFieldChange = (field: keyof CreateContactInput, value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  // Add a tag
+  const handleAddTag = () => {
+    const tag = tagInput.trim();
+    if (tag && !formData.tags?.includes(tag)) {
+      setFormData((prev) => ({ ...prev, tags: [...(prev.tags || []), tag] }));
+      setTagInput('');
+    }
+  };
+
+  // Remove a tag
+  const handleRemoveTag = (tag: string) => {
+    setFormData((prev) => ({ ...prev, tags: prev.tags?.filter((t) => t !== tag) }));
+  };
+
+  // Submit the form
+  const handleSubmit = async () => {
+    // Validate: need at least email or phone
+    if (!formData.email && !formData.phone) {
+      toast.warning('Please provide an email or phone number');
+      return;
+    }
+
+    try {
+      await createContact.mutateAsync(formData);
+      setIsAddModalOpen(false);
+      setFormData(emptyForm);
+      toast.success('Contact created successfully');
+    } catch (error) {
+      console.error('Failed to create contact:', error);
+      toast.error('Failed to create contact. Please try again.');
+    }
+  };
+
+  // Delete contact
+  const handleDelete = async (contactId: string) => {
+    if (!confirm('Are you sure you want to delete this contact?')) return;
+
+    setDeletingId(contactId);
+    setMenuOpenId(null);
+
+    try {
+      await deleteContact.mutateAsync(contactId);
+      toast.success('Contact deleted');
+    } catch (error) {
+      console.error('Failed to delete contact:', error);
+      toast.error('Failed to delete contact');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // Open add modal
+  const openAddModal = () => {
+    setFormData(emptyForm);
+    setTagInput('');
+    setIsAddModalOpen(true);
+  };
 
   // Get unique tags from all contacts
   const allTags = Array.from(new Set(contacts.flatMap(c => c.tags || [])));
@@ -79,11 +180,11 @@ export default function Contacts() {
           <p className="mt-1 text-gray-500">Manage your contact list and segments</p>
         </div>
         <div className="flex gap-2">
-          <button className="btn btn-secondary inline-flex items-center gap-2">
+          <button className="btn btn-secondary inline-flex items-center gap-2" disabled>
             <Upload className="w-5 h-5" />
             Import
           </button>
-          <button className="btn btn-primary inline-flex items-center gap-2">
+          <button onClick={openAddModal} className="btn btn-primary inline-flex items-center gap-2">
             <Plus className="w-5 h-5" />
             Add Contact
           </button>
@@ -123,8 +224,16 @@ export default function Contacts() {
 
       {/* Error state */}
       {error && (
-        <div className="card bg-red-50 border-red-200 text-red-800 p-4">
-          Failed to load contacts. Please try again.
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+          <AlertTriangle className="w-12 h-12 mx-auto text-red-400 mb-3" />
+          <h3 className="text-lg font-medium text-red-800 mb-1">Failed to load contacts</h3>
+          <p className="text-red-600 mb-4">Something went wrong while fetching your contacts.</p>
+          <button
+            onClick={() => refetch()}
+            className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+          >
+            Try Again
+          </button>
         </div>
       )}
 
@@ -134,7 +243,7 @@ export default function Contacts() {
           <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">No contacts yet</h3>
           <p className="text-gray-500 mb-4">Add your first contact to get started.</p>
-          <button className="btn btn-primary inline-flex items-center gap-2">
+          <button onClick={openAddModal} className="btn btn-primary inline-flex items-center gap-2">
             <Plus className="w-5 h-5" />
             Add Contact
           </button>
@@ -144,7 +253,7 @@ export default function Contacts() {
       {/* Contacts list */}
       {!isLoading && !isLoadingWorkspace && !error && filteredContacts.length > 0 && (
         <>
-          <div className="card p-0 overflow-hidden">
+          <div className="card p-0 overflow-visible">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
@@ -214,9 +323,32 @@ export default function Contacts() {
                       {formatRelativeTime(contact.created_at)}
                     </td>
                     <td className="px-6 py-4 text-right text-sm font-medium">
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <MoreVertical className="w-5 h-5" />
-                      </button>
+                      <div className="relative">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMenuOpenId(menuOpenId === contact.id ? null : contact.id);
+                          }}
+                          className="p-1 text-gray-400 hover:text-gray-600"
+                        >
+                          {deletingId === contact.id ? (
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : (
+                            <MoreVertical className="w-5 h-5" />
+                          )}
+                        </button>
+                        {menuOpenId === contact.id && (
+                          <div className="absolute right-0 mt-1 w-32 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-50">
+                            <button
+                              onClick={() => handleDelete(contact.id)}
+                              className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -228,13 +360,136 @@ export default function Contacts() {
           <div className="flex items-center justify-between">
             <p className="text-sm text-gray-500">
               Showing {filteredContacts.length} of {contacts.length} contacts
+              {hasNextPage && ' (more available)'}
             </p>
-            {data?.next_cursor && (
-              <button className="btn btn-secondary">Load More</button>
+            {hasNextPage && (
+              <button
+                onClick={() => fetchNextPage()}
+                disabled={isFetchingNextPage}
+                className="btn btn-secondary inline-flex items-center gap-2"
+              >
+                {isFetchingNextPage && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isFetchingNextPage ? 'Loading...' : 'Load More'}
+              </button>
             )}
           </div>
         </>
       )}
+
+      {/* Add Contact Modal */}
+      <Modal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        title="Add Contact"
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>
+              <input
+                type="text"
+                value={formData.first_name || ''}
+                onChange={(e) => handleFieldChange('first_name', e.target.value)}
+                className="input"
+                placeholder="John"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
+              <input
+                type="text"
+                value={formData.last_name || ''}
+                onChange={(e) => handleFieldChange('last_name', e.target.value)}
+                className="input"
+                placeholder="Doe"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Email <span className="text-gray-400">(required if no phone)</span>
+            </label>
+            <input
+              type="email"
+              value={formData.email || ''}
+              onChange={(e) => handleFieldChange('email', e.target.value)}
+              className="input"
+              placeholder="john@example.com"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Phone <span className="text-gray-400">(required if no email)</span>
+            </label>
+            <input
+              type="tel"
+              value={formData.phone || ''}
+              onChange={(e) => handleFieldChange('phone', e.target.value)}
+              className="input"
+              placeholder="+1 555 123 4567"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Tags</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddTag())}
+                className="input flex-1"
+                placeholder="Type a tag and press Enter"
+              />
+              <button
+                type="button"
+                onClick={handleAddTag}
+                className="btn btn-secondary"
+              >
+                Add
+              </button>
+            </div>
+            {formData.tags && formData.tags.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {formData.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-sm bg-primary-100 text-primary-700"
+                  >
+                    {tag}
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTag(tag)}
+                      className="hover:text-primary-900"
+                    >
+                      &times;
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <ModalFooter>
+          <button
+            onClick={() => setIsAddModalOpen(false)}
+            className="btn btn-secondary"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={createContact.isPending}
+            className="btn btn-primary"
+          >
+            {createContact.isPending ? 'Creating...' : 'Create Contact'}
+          </button>
+        </ModalFooter>
+      </Modal>
     </div>
   );
 }

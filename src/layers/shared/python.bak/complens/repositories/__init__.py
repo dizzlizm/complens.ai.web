@@ -1,0 +1,20 @@
+"""Repository classes for DynamoDB data access."""
+
+from complens.repositories.base import BaseRepository
+from complens.repositories.contact import ContactRepository
+from complens.repositories.conversation import ConversationRepository
+from complens.repositories.form import FormRepository, FormSubmissionRepository
+from complens.repositories.page import PageRepository
+from complens.repositories.workflow import WorkflowRepository
+from complens.repositories.workspace import WorkspaceRepository
+
+__all__ = [
+    "BaseRepository",
+    "ContactRepository",
+    "ConversationRepository",
+    "FormRepository",
+    "FormSubmissionRepository",
+    "PageRepository",
+    "WorkflowRepository",
+    "WorkspaceRepository",
+]

@@ -65,18 +65,22 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
 def list_workspaces(repo: WorkspaceRepository, auth) -> dict:
     """List workspaces the user has access to."""
+    workspaces = []
+
     # Get workspaces by user's agency
     if auth.agency_id:
         workspaces = repo.get_by_agency(auth.agency_id)
-    elif auth.workspace_ids:
-        # Fetch workspaces by IDs
-        workspaces = []
+
+    # Also check workspaces where user_id is the agency (for users without explicit agency)
+    if not workspaces and auth.user_id:
+        workspaces = repo.get_by_agency(auth.user_id)
+
+    # Also fetch workspaces by explicit workspace IDs if available
+    if auth.workspace_ids:
         for ws_id in auth.workspace_ids:
             ws = repo.get_by_id(ws_id)
-            if ws:
+            if ws and ws not in workspaces:
                 workspaces.append(ws)
-    else:
-        workspaces = []
 
     return success({
         "items": [w.model_dump(mode="json") for w in workspaces],
@@ -94,8 +98,11 @@ def get_workspace(repo: WorkspaceRepository, workspace_id: str) -> dict:
 
 def create_workspace(repo: WorkspaceRepository, auth, event: dict) -> dict:
     """Create a new workspace."""
-    if not auth.agency_id:
-        return error("Agency ID required to create workspace", 400)
+    # If user doesn't have an agency, use their user_id as the agency
+    # This allows single users to create workspaces without explicit agency setup
+    agency_id = auth.agency_id or auth.user_id
+    if not agency_id:
+        return error("Could not determine agency ID", 400)
 
     try:
         body = json.loads(event.get("body", "{}"))
@@ -110,7 +117,7 @@ def create_workspace(repo: WorkspaceRepository, auth, event: dict) -> dict:
 
     # Create workspace
     workspace = Workspace(
-        agency_id=auth.agency_id,
+        agency_id=agency_id,
         name=request.name,
         slug=request.slug,
         settings=request.settings,
@@ -119,7 +126,7 @@ def create_workspace(repo: WorkspaceRepository, auth, event: dict) -> dict:
 
     workspace = repo.create_workspace(workspace)
 
-    logger.info("Workspace created", workspace_id=workspace.id, agency_id=auth.agency_id)
+    logger.info("Workspace created", workspace_id=workspace.id, agency_id=agency_id)
 
     return created(workspace.model_dump(mode="json"))
 

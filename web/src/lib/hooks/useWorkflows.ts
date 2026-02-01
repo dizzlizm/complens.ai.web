@@ -16,8 +16,8 @@ export interface WorkflowEdge {
   id: string;
   source: string;
   target: string;
-  sourceHandle?: string;
-  targetHandle?: string;
+  source_handle?: string;
+  target_handle?: string;
 }
 
 export interface Workflow {
@@ -36,17 +36,28 @@ export interface Workflow {
   last_run_at?: string;
 }
 
+// CreateWorkflowInput - matches backend CreateWorkflowRequest exactly
+// Backend fields: name, description, nodes, edges, viewport, settings
+// Note: trigger_type/trigger_config are NOT backend fields - they're derived from the trigger node
 export interface CreateWorkflowInput {
   name: string;
   description?: string;
-  trigger_type: string;
-  trigger_config?: Record<string, unknown>;
   nodes?: WorkflowNode[];
   edges?: WorkflowEdge[];
+  viewport?: { x: number; y: number; zoom: number };
+  settings?: Record<string, unknown>;
 }
 
-export interface UpdateWorkflowInput extends Partial<CreateWorkflowInput> {
+// UpdateWorkflowInput - matches backend UpdateWorkflowRequest exactly
+export interface UpdateWorkflowInput {
+  name?: string;
+  description?: string;
   status?: 'draft' | 'active' | 'paused' | 'archived';
+  nodes?: WorkflowNode[];
+  edges?: WorkflowEdge[];
+  viewport?: { x: number; y: number; zoom: number };
+  trigger_config?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
 }
 
 // Fetch all workflows for a workspace
@@ -54,10 +65,10 @@ export function useWorkflows(workspaceId: string) {
   return useQuery({
     queryKey: ['workflows', workspaceId],
     queryFn: async () => {
-      const { data } = await api.get<{ workflows: Workflow[] }>(
+      const { data } = await api.get<{ items: Workflow[] }>(
         `/workspaces/${workspaceId}/workflows`
       );
-      return data.workflows;
+      return data.items;
     },
     enabled: !!workspaceId,
   });

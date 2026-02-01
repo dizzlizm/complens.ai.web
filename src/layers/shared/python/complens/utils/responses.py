@@ -1,18 +1,44 @@
 """API response helper functions."""
 
 import json
+import os
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel as PydanticBaseModel
 
-# CORS headers for all responses
-CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
-    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-    "Content-Type": "application/json",
-}
+# Get allowed CORS origin from environment
+# Defaults to dev.complens.ai, localhost allowed in dev
+_ALLOWED_ORIGIN = os.environ.get("CORS_ALLOWED_ORIGIN", "https://dev.complens.ai")
+_STAGE = os.environ.get("STAGE", "dev")
+
+
+def _get_cors_origin(request_origin: str | None = None) -> str:
+    """Get the appropriate CORS origin for the response.
+
+    In dev, also allows localhost for local development.
+    """
+    # In dev, allow localhost origins for local development
+    if _STAGE == "dev" and request_origin:
+        if request_origin.startswith("http://localhost:"):
+            return request_origin
+
+    return _ALLOWED_ORIGIN
+
+
+def get_cors_headers(request_origin: str | None = None) -> dict:
+    """Get CORS headers with the appropriate origin."""
+    return {
+        "Access-Control-Allow-Origin": _get_cors_origin(request_origin),
+        "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
+        "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        "Access-Control-Allow-Credentials": "true",
+        "Content-Type": "application/json",
+    }
+
+
+# Default CORS headers (backwards compatible)
+CORS_HEADERS = get_cors_headers()
 
 
 def _json_serializer(obj: Any) -> Any:

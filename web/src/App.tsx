@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './lib/auth';
+import { ToastProvider } from './components/Toast';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './layouts/AppLayout';
 import AuthLayout from './layouts/AuthLayout';
@@ -14,13 +15,21 @@ import Dashboard from './pages/Dashboard';
 import Workflows from './pages/Workflows';
 import WorkflowEditor from './pages/WorkflowEditor';
 import Contacts from './pages/Contacts';
+import Pages from './pages/Pages';
+import PageEditor from './pages/PageEditor';
+import Forms from './pages/Forms';
+import FormEditor from './pages/FormEditor';
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
+
+// Public pages (no auth)
+import PublicPage from './pages/public/PublicPage';
 
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <ToastProvider>
         <Routes>
           {/* Auth routes */}
           <Route element={<AuthLayout />}>
@@ -42,13 +51,21 @@ function App() {
             <Route path="/workflows" element={<Workflows />} />
             <Route path="/workflows/:id" element={<WorkflowEditor />} />
             <Route path="/contacts" element={<Contacts />} />
+            <Route path="/pages" element={<Pages />} />
+            <Route path="/pages/:id" element={<PageEditor />} />
+            <Route path="/forms" element={<Forms />} />
+            <Route path="/forms/:id" element={<FormEditor />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/profile" element={<Profile />} />
           </Route>
 
+          {/* Public pages (no auth required) */}
+          <Route path="/p/:pageSlug" element={<PublicPage />} />
+
           {/* Catch-all redirect */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
+        </ToastProvider>
       </AuthProvider>
     </BrowserRouter>
   );
