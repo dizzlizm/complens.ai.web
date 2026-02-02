@@ -40,6 +40,9 @@ import DividerBlock from './blocks/DividerBlock';
 import PricingBlock from './blocks/PricingBlock';
 import VideoBlock from './blocks/VideoBlock';
 import ChatBlock from './blocks/ChatBlock';
+import GalleryBlock from './blocks/GalleryBlock';
+import SliderBlock from './blocks/SliderBlock';
+import LogoCloudBlock from './blocks/LogoCloudBlock';
 
 // Form data for the form block selector
 interface FormInfo {
@@ -422,6 +425,12 @@ export default function PageBuilderCanvas({
         return <VideoBlock {...props} />;
       case 'chat':
         return <ChatBlock {...props} />;
+      case 'gallery':
+        return <GalleryBlock {...props} />;
+      case 'slider':
+        return <SliderBlock {...props} />;
+      case 'logo-cloud':
+        return <LogoCloudBlock {...props} />;
       default:
         return (
           <div className="p-8 bg-gray-100 text-gray-500 text-center">

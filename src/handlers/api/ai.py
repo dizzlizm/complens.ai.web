@@ -6,6 +6,7 @@ Provides endpoints for:
 - Block content improvement
 - Image generation
 - Workflow generation from natural language
+- Page synthesis (unified synthesis engine)
 """
 
 import base64
@@ -24,9 +25,12 @@ from complens.models.business_profile import (
     UpdateBusinessProfileRequest,
     ONBOARDING_QUESTIONS,
 )
+from complens.models.synthesis import SynthesizePageRequest
 from complens.repositories.business_profile import BusinessProfileRepository
 from complens.services import ai_service
+from complens.services.synthesis_engine import SynthesisEngine
 from complens.utils.auth import get_auth_context, require_workspace_access
+from complens.utils.exceptions import ForbiddenError
 from complens.utils.responses import created, error, not_found, success, validation_error
 
 logger = structlog.get_logger()
@@ -56,6 +60,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         POST   /workspaces/{workspace_id}/ai/generate-workflow - Generate workflow from NL
         POST   /workspaces/{workspace_id}/ai/generate-page-content - Generate page content from description
         POST   /workspaces/{workspace_id}/ai/refine-page-content - Refine generated content with feedback
+        POST   /workspaces/{workspace_id}/ai/synthesize-page - Unified synthesis engine for complete page
     """
     try:
         http_method = event.get("httpMethod", "").upper()
@@ -96,9 +101,13 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return generate_page_content(workspace_id, event)
         elif "/ai/refine-page-content" in path and http_method == "POST":
             return refine_page_content(workspace_id, event)
+        elif "/ai/synthesize-page" in path and http_method == "POST":
+            return synthesize_page(workspace_id, event)
         else:
             return error("Not found", 404)
 
+    except ForbiddenError as e:
+        return error(e.message, 403, error_code="FORBIDDEN")
     except ValueError as e:
         return error(str(e), 400)
     except Exception as e:
@@ -548,3 +557,66 @@ def refine_page_content(workspace_id: str, event: dict) -> dict:
     except Exception as e:
         logger.error("Page content refinement failed", error=str(e))
         return error(f"Content refinement failed: {str(e)}", 500)
+
+
+def synthesize_page(workspace_id: str, event: dict) -> dict:
+    """Synthesize a complete page using the unified synthesis engine.
+
+    This is the main endpoint for intelligent page generation. It uses a
+    multi-stage pipeline to create cohesive, high-conversion landing pages:
+
+    1. Intent Analysis - Understand what kind of page is needed
+    2. Content Assessment - Score available content quality
+    3. Block Planning - Decide which blocks to include/exclude
+    4. Design System - Generate industry-aware colors and styling
+    5. Content Synthesis - Single AI call for cross-block coherence
+    6. Block Configuration - Build validated PageBlock list
+
+    Request body:
+        description: Business/page description (required)
+        intent_hints: Optional hints like ['lead-gen', 'portfolio']
+        style_preference: Optional style like 'professional', 'bold'
+        page_id: Existing page ID for update mode
+        include_form: Whether to include form (default: True)
+        include_chat: Whether to include chat (default: True)
+
+    Returns:
+        SynthesisResult with blocks, form_config, workflow_config, metadata
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+        request = SynthesizePageRequest.model_validate(body)
+    except PydanticValidationError as e:
+        return validation_error([
+            {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
+            for err in e.errors()
+        ])
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    try:
+        engine = SynthesisEngine()
+        result = engine.synthesize(
+            workspace_id=workspace_id,
+            description=request.description,
+            page_id=request.page_id,
+            intent_hints=request.intent_hints,
+            style_preference=request.style_preference,
+            include_form=request.include_form,
+            include_chat=request.include_chat,
+            block_types=request.block_types,
+        )
+
+        logger.info(
+            "Page synthesized",
+            workspace_id=workspace_id,
+            synthesis_id=result.synthesis_id,
+            blocks_count=len(result.blocks),
+            excluded_count=len(result.metadata.blocks_excluded),
+        )
+
+        return success(result.model_dump(mode="json"))
+
+    except Exception as e:
+        logger.error("Page synthesis failed", error=str(e))
+        return error(f"Page synthesis failed: {str(e)}", 500)

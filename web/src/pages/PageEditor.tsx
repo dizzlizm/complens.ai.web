@@ -20,7 +20,7 @@ import {
 } from '../lib/hooks/useAI';
 import { useToast } from '../components/Toast';
 import FormBuilder from '../components/FormBuilder';
-import { PageBuilderCanvas, PageBlock, AgenticPageBuilder } from '../components/page-builder';
+import { PageBlock, AgenticPageBuilder, ContentTabV2 } from '../components/page-builder';
 import { Plus, Trash2, GitBranch, ExternalLink, Sparkles, Loader2 } from 'lucide-react';
 
 // Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
@@ -521,80 +521,23 @@ export default function PageEditor() {
       {/* Tab Content */}
       <div className={activeTab === 'content' ? '' : 'bg-white rounded-lg shadow p-6'}>
         {activeTab === 'content' && (
-          <div className="space-y-4">
-            {/* Page metadata bar */}
-            <div className="bg-white rounded-lg shadow p-4">
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Page Name
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.name || ''}
-                    onChange={(e) => handleChange('name', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    URL Slug
-                  </label>
-                  <div className="flex items-center">
-                    <span className="text-gray-500 text-sm mr-1">/p/</span>
-                    <input
-                      type="text"
-                      value={formData.slug || ''}
-                      onChange={(e) =>
-                        handleChange('slug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))
-                      }
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Primary Color
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={formData.primary_color || '#6366f1'}
-                      onChange={(e) => handleChange('primary_color', e.target.value)}
-                      className="w-10 h-9 rounded cursor-pointer border-0"
-                    />
-                    <input
-                      type="text"
-                      value={formData.primary_color || '#6366f1'}
-                      onChange={(e) => handleChange('primary_color', e.target.value)}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Visual Page Builder */}
-            <PageBuilderCanvas
-              blocks={blocks}
-              onChange={handleBlocksChange}
-              forms={pageForms?.map((f: Form) => ({ id: f.id, name: f.name })) || []}
-              pageHeadline={formData.headline}
-              pageSubheadline={formData.subheadline}
-              workspaceId={workspaceId}
-              pageId={pageId}
-            />
-
-            {/* Legacy content info */}
-            {formData.body_content && blocks.length === 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                <p className="text-sm text-amber-800">
-                  <strong>Note:</strong> This page has legacy HTML content. Add blocks above to use the visual builder.
-                  Legacy content will still be rendered on the public page until you switch to blocks.
-                </p>
-              </div>
-            )}
-          </div>
+          <ContentTabV2
+            blocks={blocks}
+            onChange={handleBlocksChange}
+            forms={pageForms?.map((f: Form) => ({ id: f.id, name: f.name })) || []}
+            pageHeadline={formData.headline}
+            pageSubheadline={formData.subheadline}
+            workspaceId={workspaceId}
+            pageId={pageId}
+            profileScore={profile?.profile_score || 0}
+            onGoToProfile={() => setActiveTab('profile')}
+            pageName={formData.name}
+            pageSlug={formData.slug}
+            primaryColor={formData.primary_color}
+            onPageNameChange={(name) => handleChange('name', name)}
+            onPageSlugChange={(slug) => handleChange('slug', slug)}
+            onPrimaryColorChange={(color) => handleChange('primary_color', color)}
+          />
         )}
 
         {activeTab === 'profile' && (
@@ -1218,6 +1161,7 @@ export default function PageEditor() {
           onComplete={handleAIGeneratedBlocks}
           onClose={() => setShowAIGenerator(false)}
           pageId={pageId}
+          useSynthesisEngine={true}
         />
       )}
     </div>

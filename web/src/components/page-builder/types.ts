@@ -23,7 +23,10 @@ export type BlockType =
   | 'video'
   | 'stats'
   | 'divider'
-  | 'chat';
+  | 'chat'
+  | 'gallery'
+  | 'slider'
+  | 'logo-cloud';
 
 export type BlockConfig =
   | HeroConfig
@@ -38,7 +41,10 @@ export type BlockConfig =
   | VideoConfig
   | StatsConfig
   | DividerConfig
-  | ChatConfig;
+  | ChatConfig
+  | GalleryConfig
+  | SliderConfig
+  | LogoCloudConfig;
 
 // Hero Block
 export interface HeroConfig {
@@ -172,6 +178,52 @@ export interface ChatConfig {
   placeholder: string;
   position: 'inline' | 'floating';
   primaryColor: string;
+}
+
+// Gallery Block
+export interface GalleryImage {
+  url: string;
+  alt: string;
+  caption?: string;
+}
+
+export interface GalleryConfig {
+  title: string;
+  images: GalleryImage[];
+  columns: 2 | 3 | 4;
+  showCaptions: boolean;
+  enableLightbox: boolean;
+}
+
+// Slider Block
+export interface SliderSlide {
+  imageUrl: string;
+  headline?: string;
+  description?: string;
+  buttonText?: string;
+  buttonLink?: string;
+}
+
+export interface SliderConfig {
+  slides: SliderSlide[];
+  autoplay: boolean;
+  autoplayInterval: number;
+  showDots: boolean;
+  showArrows: boolean;
+}
+
+// Logo Cloud Block
+export interface LogoItem {
+  name: string;
+  url: string;
+  link?: string;
+}
+
+export interface LogoCloudConfig {
+  title: string;
+  subtitle?: string;
+  logos: LogoItem[];
+  grayscale: boolean;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -371,6 +423,44 @@ export const BLOCK_TYPES: BlockTypeInfo[] = [
       position: 'inline',
       primaryColor: '#6366f1',
     } as ChatConfig,
+  },
+  {
+    type: 'gallery',
+    label: 'Gallery',
+    icon: 'images',
+    description: 'Multi-image grid with lightbox',
+    defaultConfig: {
+      title: 'Gallery',
+      images: [],
+      columns: 3,
+      showCaptions: true,
+      enableLightbox: true,
+    } as GalleryConfig,
+  },
+  {
+    type: 'slider',
+    label: 'Slider',
+    icon: 'play',
+    description: 'Image/content carousel',
+    defaultConfig: {
+      slides: [],
+      autoplay: true,
+      autoplayInterval: 5000,
+      showDots: true,
+      showArrows: true,
+    } as SliderConfig,
+  },
+  {
+    type: 'logo-cloud',
+    label: 'Logo Cloud',
+    icon: 'building-2',
+    description: 'Client/partner logos',
+    defaultConfig: {
+      title: 'Trusted By',
+      subtitle: '',
+      logos: [],
+      grayscale: true,
+    } as LogoCloudConfig,
   },
 ];
 

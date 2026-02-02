@@ -221,6 +221,7 @@ export interface SynthesizePageInput {
   page_id?: string;
   include_form?: boolean;
   include_chat?: boolean;
+  block_types?: string[];  // Only generate these block types
 }
 
 export interface PageIntent {
