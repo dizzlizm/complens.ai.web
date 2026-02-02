@@ -162,8 +162,17 @@ def get_public_page(slug: str, workspace_id: str | None) -> dict:
     # Return page without sensitive fields
     page_data = page.model_dump(mode="json")
 
-    # Remove internal fields
-    for field in ["workspace_id"]:
+    # Remove internal/sensitive fields from public response
+    sensitive_fields = [
+        "workspace_id",
+        "created_at",
+        "updated_at",
+        "view_count",
+        "form_submission_count",
+        "chat_session_count",
+        "custom_css",  # Don't expose raw CSS in API response (rendered in HTML)
+    ]
+    for field in sensitive_fields:
         page_data.pop(field, None)
 
     return success(page_data)
@@ -446,6 +455,71 @@ def _get_origin(event: dict) -> str | None:
     return None
 
 
+def _validate_origin(origin: str | None, page=None, form=None) -> bool:
+    """Validate that the request origin is allowed.
+
+    Allows:
+    - Requests with no origin (same-origin or non-browser)
+    - Requests from complens.ai domains
+    - Requests from the page's subdomain
+    - Requests from the page's custom domain
+    - Localhost for development
+
+    Args:
+        origin: The Origin header value
+        page: Page object (if available) for domain validation
+        form: Form object (if available) for workspace validation
+
+    Returns:
+        True if origin is allowed, False otherwise
+    """
+    # No origin header = same-origin request or non-browser client
+    if not origin:
+        return True
+
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(origin.lower())
+        host = parsed.netloc or parsed.path
+
+        # Allow complens.ai and its subdomains
+        if host.endswith(".complens.ai") or host == "complens.ai":
+            return True
+
+        # Allow localhost for development
+        if host.startswith("localhost") or host.startswith("127.0.0.1"):
+            stage = os.environ.get("STAGE", "dev")
+            return stage in ("dev", "local", "test")
+
+        # If we have a page, check its custom domain and subdomain
+        if page:
+            if page.custom_domain and host == page.custom_domain.lower():
+                return True
+            if page.subdomain:
+                # Check various complens.ai subdomain formats
+                stage = os.environ.get("STAGE", "dev")
+                allowed_hosts = [
+                    f"{page.subdomain}.complens.ai",
+                    f"{page.subdomain}.{stage}.complens.ai",
+                ]
+                if host in allowed_hosts:
+                    return True
+
+        # Origin doesn't match any allowed source
+        logger.warning(
+            "Origin validation failed",
+            origin=origin,
+            host=host,
+            page_subdomain=getattr(page, "subdomain", None),
+            page_custom_domain=getattr(page, "custom_domain", None),
+        )
+        return False
+
+    except Exception as e:
+        logger.warning("Origin parsing failed", origin=origin, error=str(e))
+        return False
+
+
 def submit_page_form(page_id: str, event: dict) -> dict:
     """Submit a form from a page.
 
@@ -494,6 +568,16 @@ def submit_page_form(page_id: str, event: dict) -> dict:
     page = page_repo.get_by_id(workspace_id, page_id)
     if not page:
         return public_error(f"Page with ID '{page_id}' not found", origin, 404, "NOT_FOUND")
+
+    # Validate origin to prevent CSRF
+    if not _validate_origin(origin, page=page):
+        logger.warning(
+            "Form submission blocked - invalid origin",
+            origin=origin,
+            page_id=page_id,
+            client_ip=client_ip,
+        )
+        return public_error("Request origin not allowed", origin, 403, "FORBIDDEN")
 
     # Verify workspace consistency
     if page.workspace_id != workspace_id:
@@ -564,6 +648,22 @@ def submit_form(form_id: str, event: dict) -> dict:
     form = form_repo.get_by_id(workspace_id, form_id)
     if not form:
         return public_error(f"Form with ID '{form_id}' not found", origin, 404, "NOT_FOUND")
+
+    # Get page if form has page_id for origin validation
+    page = None
+    if form.page_id:
+        page_repo = PageRepository()
+        page = page_repo.get_by_id(workspace_id, form.page_id)
+
+    # Validate origin to prevent CSRF
+    if not _validate_origin(origin, page=page, form=form):
+        logger.warning(
+            "Form submission blocked - invalid origin",
+            origin=origin,
+            form_id=form_id,
+            client_ip=client_ip,
+        )
+        return public_error("Request origin not allowed", origin, 403, "FORBIDDEN")
 
     # Process the submission
     return _process_form_submission(

@@ -3,6 +3,7 @@
 import re
 from enum import Enum
 from typing import ClassVar
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from pydantic import BaseModel as PydanticBaseModel, Field, field_validator
@@ -11,6 +12,21 @@ from complens.models.base import BaseModel
 
 # Hex color validation pattern
 HEX_COLOR_PATTERN = re.compile(r'^#[0-9A-Fa-f]{6}$')
+
+# Domain validation pattern (basic domain format)
+DOMAIN_PATTERN = re.compile(r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$')
+
+# Dangerous CSS patterns to block
+DANGEROUS_CSS_PATTERNS = [
+    re.compile(r'@import', re.IGNORECASE),
+    re.compile(r'expression\s*\(', re.IGNORECASE),
+    re.compile(r'javascript:', re.IGNORECASE),
+    re.compile(r'behavior:', re.IGNORECASE),
+    re.compile(r'-moz-binding', re.IGNORECASE),
+    re.compile(r'url\s*\(\s*["\']?\s*data:', re.IGNORECASE),
+    re.compile(r'</style', re.IGNORECASE),  # Prevent style tag escape
+    re.compile(r'<script', re.IGNORECASE),  # Prevent script injection
+]
 
 # Subdomain validation pattern (lowercase alphanumeric and hyphens, 3-63 chars)
 SUBDOMAIN_PATTERN = re.compile(r'^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$')
@@ -42,15 +58,27 @@ class ChatConfig(PydanticBaseModel):
     enabled: bool = Field(default=True, description="Whether chat is enabled")
     position: str = Field(default="bottom-right", description="Widget position")
     initial_message: str | None = Field(
-        None, description="AI's opening message when chat opens"
+        None, max_length=1000, description="AI's opening message when chat opens"
     )
     ai_persona: str | None = Field(
-        None, description="Custom AI persona/instructions for this page"
+        None, max_length=5000, description="Custom AI persona/instructions for this page"
     )
     business_context: dict = Field(
         default_factory=dict,
         description="Business context passed to AI (name, description, tone)",
     )
+
+    @field_validator("initial_message", "ai_persona")
+    @classmethod
+    def sanitize_text_fields(cls, v: str | None) -> str | None:
+        """Sanitize text fields to prevent script injection."""
+        if v is None:
+            return None
+        # Remove script tags and event handlers
+        import html
+        # Escape HTML entities to prevent XSS
+        v = html.escape(v, quote=True)
+        return v
 
 
 class PageBlock(PydanticBaseModel):
@@ -113,11 +141,17 @@ class Page(BaseModel):
 
     # Content blocks (new visual builder format)
     blocks: list[PageBlock] = Field(
-        default_factory=list, description="Content blocks for visual page builder"
+        default_factory=list,
+        max_length=100,  # Prevent abuse with excessive blocks
+        description="Content blocks for visual page builder",
     )
 
     # Forms embedded on this page (legacy, kept for backwards compatibility)
-    form_ids: list[str] = Field(default_factory=list, description="Form IDs to display")
+    form_ids: list[str] = Field(
+        default_factory=list,
+        max_length=20,  # Reasonable limit for forms per page
+        description="Form IDs to display",
+    )
 
     # Chat configuration
     chat_config: ChatConfig = Field(
@@ -135,6 +169,18 @@ class Page(BaseModel):
         """Validate hex color format."""
         if not HEX_COLOR_PATTERN.match(v):
             return "#6366f1"  # Return default if invalid
+        return v
+
+    @field_validator("custom_css")
+    @classmethod
+    def sanitize_custom_css(cls, v: str | None) -> str | None:
+        """Sanitize custom CSS to prevent XSS and injection attacks."""
+        if v is None:
+            return None
+        # Check for dangerous patterns
+        for pattern in DANGEROUS_CSS_PATTERNS:
+            if pattern.search(v):
+                raise ValueError(f"CSS contains disallowed pattern: {pattern.pattern}")
         return v
 
     # SEO
@@ -155,6 +201,31 @@ class Page(BaseModel):
 
     # Custom domain (future)
     custom_domain: str | None = Field(None, description="Custom domain for this page")
+
+    @field_validator("custom_domain")
+    @classmethod
+    def validate_custom_domain(cls, v: str | None) -> str | None:
+        """Validate custom domain format."""
+        if v is None or v == "":
+            return None
+        v = v.lower().strip()
+        # Remove protocol if present
+        if v.startswith("http://") or v.startswith("https://"):
+            try:
+                parsed = urlparse(v)
+                v = parsed.netloc or parsed.path
+            except Exception:
+                raise ValueError("Invalid domain format")
+        # Remove trailing slashes and paths
+        v = v.split("/")[0]
+        # Validate domain format
+        if not DOMAIN_PATTERN.match(v):
+            raise ValueError("Invalid domain format. Use format: example.com")
+        # Block localhost and private domains
+        blocked_domains = ["localhost", "127.0.0.1", "0.0.0.0", "internal", "local"]
+        if any(v == blocked or v.endswith(f".{blocked}") for blocked in blocked_domains):
+            raise ValueError("This domain is not allowed")
+        return v
 
     @field_validator("subdomain")
     @classmethod
@@ -262,16 +333,54 @@ class UpdatePageRequest(PydanticBaseModel):
     subheadline: str | None = Field(None, max_length=1000)
     hero_image_url: str | None = None
     body_content: str | None = None
-    blocks: list[PageBlockRequest] | None = None
-    form_ids: list[str] | None = None
+    blocks: list[PageBlockRequest] | None = Field(None, max_length=100)
+    form_ids: list[str] | None = Field(None, max_length=20)
     chat_config: ChatConfig | None = None
     primary_color: str | None = None
     theme: dict | None = None
-    custom_css: str | None = None
+    custom_css: str | None = Field(None, max_length=50000)
     meta_title: str | None = None
     meta_description: str | None = None
     subdomain: str | None = Field(None, max_length=63)
     custom_domain: str | None = None
+
+    @field_validator("custom_css")
+    @classmethod
+    def sanitize_custom_css(cls, v: str | None) -> str | None:
+        """Sanitize custom CSS to prevent XSS and injection attacks."""
+        if v is None:
+            return None
+        # Check for dangerous patterns
+        for pattern in DANGEROUS_CSS_PATTERNS:
+            if pattern.search(v):
+                raise ValueError(f"CSS contains disallowed pattern")
+        return v
+
+    @field_validator("custom_domain")
+    @classmethod
+    def validate_custom_domain(cls, v: str | None) -> str | None:
+        """Validate custom domain format."""
+        if v is None or v == "":
+            return None
+        v = v.lower().strip()
+        # Remove protocol if present
+        if v.startswith("http://") or v.startswith("https://"):
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(v)
+                v = parsed.netloc or parsed.path
+            except Exception:
+                raise ValueError("Invalid domain format")
+        # Remove trailing slashes and paths
+        v = v.split("/")[0]
+        # Validate domain format
+        if not DOMAIN_PATTERN.match(v):
+            raise ValueError("Invalid domain format. Use format: example.com")
+        # Block localhost and private domains
+        blocked_domains = ["localhost", "127.0.0.1", "0.0.0.0", "internal", "local"]
+        if any(v == blocked or v.endswith(f".{blocked}") for blocked in blocked_domains):
+            raise ValueError("This domain is not allowed")
+        return v
 
     @field_validator("subdomain")
     @classmethod

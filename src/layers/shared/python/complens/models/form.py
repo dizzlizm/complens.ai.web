@@ -1,11 +1,16 @@
 """Form model for lead capture forms."""
 
+import re
 from enum import Enum
 from typing import ClassVar
+from urllib.parse import urlparse
 
-from pydantic import BaseModel as PydanticBaseModel, Field
+from pydantic import BaseModel as PydanticBaseModel, Field, field_validator
 
 from complens.models.base import BaseModel
+
+# URL validation pattern for redirect URLs
+URL_PATTERN = re.compile(r'^https?://', re.IGNORECASE)
 
 
 class FormFieldType(str, Enum):
@@ -66,7 +71,11 @@ class Form(BaseModel):
     description: str | None = Field(None, max_length=500, description="Form description")
 
     # Form fields
-    fields: list[FormField] = Field(default_factory=list, description="Form fields")
+    fields: list[FormField] = Field(
+        default_factory=list,
+        max_length=50,  # Reasonable limit for form fields
+        description="Form fields",
+    )
 
     # Submit behavior
     submit_button_text: str = Field(default="Submit", max_length=50)
@@ -76,15 +85,47 @@ class Form(BaseModel):
         description="Message shown after successful submission",
     )
     redirect_url: str | None = Field(
-        None, description="URL to redirect after submission"
+        None,
+        max_length=2000,
+        description="URL to redirect after submission",
     )
+
+    @field_validator("redirect_url")
+    @classmethod
+    def validate_redirect_url(cls, v: str | None) -> str | None:
+        """Validate redirect URL to prevent open redirect vulnerabilities."""
+        if v is None or v == "":
+            return None
+        v = v.strip()
+        # Must be absolute URL with http/https
+        if not URL_PATTERN.match(v):
+            raise ValueError("Redirect URL must be an absolute URL starting with http:// or https://")
+        try:
+            parsed = urlparse(v)
+            # Block javascript: protocol attempts
+            if parsed.scheme.lower() not in ("http", "https"):
+                raise ValueError("Only HTTP and HTTPS URLs are allowed")
+            # Block localhost and internal IPs
+            blocked_hosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1"]
+            if parsed.netloc.split(":")[0] in blocked_hosts:
+                raise ValueError("Redirect to localhost is not allowed")
+            # Block private IP ranges (basic check)
+            if parsed.netloc.startswith("10.") or parsed.netloc.startswith("192.168.") or parsed.netloc.startswith("172."):
+                raise ValueError("Redirect to private IP ranges is not allowed")
+        except ValueError:
+            raise
+        except Exception:
+            raise ValueError("Invalid redirect URL")
+        return v
 
     # Contact creation settings
     create_contact: bool = Field(
         default=True, description="Create or update contact on submission"
     )
     add_tags: list[str] = Field(
-        default_factory=list, description="Tags to add to created contact"
+        default_factory=list,
+        max_length=20,  # Reasonable limit for tags
+        description="Tags to add to created contact",
     )
 
     # Workflow trigger
@@ -186,15 +227,43 @@ class CreateFormRequest(PydanticBaseModel):
 
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(None, max_length=500)
-    fields: list[FormField] = Field(default_factory=list)
-    submit_button_text: str = "Submit"
-    success_message: str = "Thank you for your submission!"
-    redirect_url: str | None = None
+    fields: list[FormField] = Field(default_factory=list, max_length=50)
+    submit_button_text: str = Field(default="Submit", max_length=50)
+    success_message: str = Field(default="Thank you for your submission!", max_length=500)
+    redirect_url: str | None = Field(None, max_length=2000)
     create_contact: bool = True
-    add_tags: list[str] = Field(default_factory=list)
+    add_tags: list[str] = Field(default_factory=list, max_length=20)
     trigger_workflow: bool = True
     honeypot_enabled: bool = True
     # page_id is set from path parameter in nested endpoints, not from request body
+
+    @field_validator("redirect_url")
+    @classmethod
+    def validate_redirect_url(cls, v: str | None) -> str | None:
+        """Validate redirect URL to prevent open redirect vulnerabilities."""
+        if v is None or v == "":
+            return None
+        v = v.strip()
+        # Must be absolute URL with http/https
+        if not URL_PATTERN.match(v):
+            raise ValueError("Redirect URL must be an absolute URL starting with http:// or https://")
+        try:
+            parsed = urlparse(v)
+            # Block javascript: protocol attempts
+            if parsed.scheme.lower() not in ("http", "https"):
+                raise ValueError("Only HTTP and HTTPS URLs are allowed")
+            # Block localhost and internal IPs
+            blocked_hosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1"]
+            if parsed.netloc.split(":")[0] in blocked_hosts:
+                raise ValueError("Redirect to localhost is not allowed")
+            # Block private IP ranges (basic check)
+            if parsed.netloc.startswith("10.") or parsed.netloc.startswith("192.168.") or parsed.netloc.startswith("172."):
+                raise ValueError("Redirect to private IP ranges is not allowed")
+        except ValueError:
+            raise
+        except Exception:
+            raise ValueError("Invalid redirect URL")
+        return v
 
 
 class UpdateFormRequest(PydanticBaseModel):
@@ -202,15 +271,43 @@ class UpdateFormRequest(PydanticBaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = Field(None, max_length=500)
-    fields: list[FormField] | None = None
-    submit_button_text: str | None = None
-    success_message: str | None = None
-    redirect_url: str | None = None
+    fields: list[FormField] | None = Field(None, max_length=50)
+    submit_button_text: str | None = Field(None, max_length=50)
+    success_message: str | None = Field(None, max_length=500)
+    redirect_url: str | None = Field(None, max_length=2000)
     create_contact: bool | None = None
-    add_tags: list[str] | None = None
+    add_tags: list[str] | None = Field(None, max_length=20)
     trigger_workflow: bool | None = None
     honeypot_enabled: bool | None = None
     recaptcha_enabled: bool | None = None
+
+    @field_validator("redirect_url")
+    @classmethod
+    def validate_redirect_url(cls, v: str | None) -> str | None:
+        """Validate redirect URL to prevent open redirect vulnerabilities."""
+        if v is None or v == "":
+            return None
+        v = v.strip()
+        # Must be absolute URL with http/https
+        if not URL_PATTERN.match(v):
+            raise ValueError("Redirect URL must be an absolute URL starting with http:// or https://")
+        try:
+            parsed = urlparse(v)
+            # Block javascript: protocol attempts
+            if parsed.scheme.lower() not in ("http", "https"):
+                raise ValueError("Only HTTP and HTTPS URLs are allowed")
+            # Block localhost and internal IPs
+            blocked_hosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1"]
+            if parsed.netloc.split(":")[0] in blocked_hosts:
+                raise ValueError("Redirect to localhost is not allowed")
+            # Block private IP ranges (basic check)
+            if parsed.netloc.startswith("10.") or parsed.netloc.startswith("192.168.") or parsed.netloc.startswith("172."):
+                raise ValueError("Redirect to private IP ranges is not allowed")
+        except ValueError:
+            raise
+        except Exception:
+            raise ValueError("Invalid redirect URL")
+        return v
 
 
 class SubmitFormRequest(PydanticBaseModel):
