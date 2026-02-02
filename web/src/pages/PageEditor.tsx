@@ -18,7 +18,7 @@ import {
 } from '../lib/hooks/useAI';
 import { useToast } from '../components/Toast';
 import FormBuilder from '../components/FormBuilder';
-import { PageBuilderCanvas, PageBlock, AIBlockGenerator } from '../components/page-builder';
+import { PageBuilderCanvas, PageBlock, AgenticPageBuilder } from '../components/page-builder';
 import { Plus, Trash2, GitBranch, ExternalLink, Sparkles, Loader2 } from 'lucide-react';
 
 // Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
@@ -97,9 +97,8 @@ export default function PageEditor() {
   const [hasChanges, setHasChanges] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-  // AI Generate modal state - using unified block generator
+  // AI Generate modal state - using agentic chat-based builder
   const [showAIGenerator, setShowAIGenerator] = useState(false);
-  const [isAIGenerating, setIsAIGenerating] = useState(false);
 
   // Blocks state for the visual builder
   const [blocks, setBlocks] = useState<PageBlock[]>([]);
@@ -253,7 +252,7 @@ export default function PageEditor() {
     }
   };
 
-  // Handle AI-generated blocks from the unified block generator
+  // Handle AI-generated blocks from the agentic page builder
   const handleAIGeneratedBlocks = (newBlocks: PageBlock[]) => {
     // Replace all blocks with generated ones
     setBlocks(newBlocks.map((b, i) => ({ ...b, order: i })));
@@ -264,7 +263,6 @@ export default function PageEditor() {
     }));
     setHasChanges(true);
     setShowAIGenerator(false);
-    setIsAIGenerating(false);
     toast.success('Page built with AI! Review and save your changes.');
   };
 
@@ -1140,12 +1138,12 @@ export default function PageEditor() {
         )}
       </div>
 
-      {/* AI Block Generator Modal - unified for both header and canvas */}
+      {/* AI Page Builder Modal - agentic chat-based builder */}
       {showAIGenerator && (
-        <AIBlockGenerator
+        <AgenticPageBuilder
           onGenerate={handleAIGeneratedBlocks}
           onClose={() => setShowAIGenerator(false)}
-          isGenerating={isAIGenerating}
+          pageId={pageId}
         />
       )}
     </div>
