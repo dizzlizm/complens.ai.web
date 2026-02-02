@@ -14,6 +14,7 @@ import {
 import { useState } from 'react';
 
 // Navigation items - Forms removed (now managed inside Page Editor)
+// AI Profile also removed - profiles are now per-page
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Workflows', href: '/workflows', icon: GitBranch },

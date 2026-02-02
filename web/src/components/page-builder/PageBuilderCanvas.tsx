@@ -59,6 +59,8 @@ interface PageBuilderCanvasProps {
   blocks: PageBlock[];
   onChange: (blocks: PageBlock[]) => void;
   forms?: FormInfo[];
+  pageHeadline?: string;
+  pageSubheadline?: string;
 }
 
 // Droppable Canvas Zone component
@@ -116,7 +118,15 @@ export default function PageBuilderCanvas({
   blocks,
   onChange,
   forms = [],
+  pageHeadline,
+  pageSubheadline,
 }: PageBuilderCanvasProps) {
+  // Build page context for AI
+  const pageContext = {
+    headline: pageHeadline,
+    subheadline: pageSubheadline,
+    other_blocks: blocks.map(b => b.type),
+  };
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
   const [isOverCanvas, setIsOverCanvas] = useState(false);
@@ -407,6 +417,7 @@ export default function PageBuilderCanvas({
             onWidthChange={handleWidthChange}
             onClose={() => setSelectedBlockId(null)}
             forms={forms}
+            pageContext={pageContext}
           />
         )}
       </div>

@@ -14,7 +14,7 @@ Complens.ai is an AI-native marketing automation platform (GoHighLevel competito
 | Compute | AWS Lambda |
 | API | API Gateway REST + WebSocket API |
 | Auth | Amazon Cognito |
-| AI | Amazon Bedrock (Claude) |
+| AI | Amazon Bedrock (Claude + Stability AI) |
 | Workflow Engine | AWS Step Functions |
 | Validation | Pydantic v2 |
 | Testing | pytest with moto |
@@ -128,6 +128,7 @@ Custom domains are optional and controlled via parameters:
 | Workflow | `WS#{ws_id}` | `WF#{wf_id}` | `WS#{ws_id}#WF_STATUS` | `{status}#{wf_id}` |
 | WorkflowRun | `WF#{wf_id}` | `RUN#{run_id}` | `CONTACT#{contact_id}` | `RUN#{created_at}` |
 | WorkflowStep | `RUN#{run_id}` | `STEP#{sequence}#{id}` | - | - |
+| BusinessProfile | `WS#{ws_id}` | `PROFILE#AI` | - | - |
 
 ## Workflow Node Types
 
@@ -228,6 +229,17 @@ Required in Lambda:
 
 ### Subdomain Management
 - `GET /workspaces/{ws_id}/pages/check-subdomain?subdomain={sub}` - Check availability
+
+### AI Operations
+- `GET /workspaces/{ws_id}/ai/profile` - Get business profile
+- `PUT /workspaces/{ws_id}/ai/profile` - Update business profile
+- `POST /workspaces/{ws_id}/ai/analyze-content` - Extract info from pasted content
+- `GET /workspaces/{ws_id}/ai/onboarding/question` - Get next onboarding question
+- `POST /workspaces/{ws_id}/ai/onboarding/answer` - Submit onboarding answer
+- `POST /workspaces/{ws_id}/ai/improve-block` - Improve block content with AI
+- `POST /workspaces/{ws_id}/ai/generate-blocks` - Generate page blocks from description
+- `POST /workspaces/{ws_id}/ai/generate-image` - Generate image from prompt (Stability AI)
+- `POST /workspaces/{ws_id}/ai/generate-workflow` - Generate workflow from natural language
 
 ## Coding Standards
 
@@ -347,6 +359,37 @@ sam deploy --config-env dev --parameter-overrides \
 - [ ] No integration tests for handlers yet
 - [ ] Step Functions state machine tests missing
 
+### Recent Changes (Feb 2026)
+
+**Auto-create workspace for new users:**
+- Workspaces API (`src/handlers/api/workspaces.py`) now auto-creates a default workspace when a user calls GET /workspaces and has none
+- Workspace is owned by the user (`agency_id = user_id`)
+- Named "{email username}'s Workspace"
+
+**Page-specific AI Profiles:**
+- AI profiles are now per-page, not global
+- `BusinessProfile` model has `page_id` field
+- Profile stored with key `PAGE#{page_id}#PROFILE`
+- `useBusinessProfile(workspaceId, pageId)` hook supports page-specific profiles
+- AI Profile tab added to PageEditor
+
+**Key files modified:**
+- `src/layers/shared/python/complens/models/business_profile.py` - Added `page_id` field
+- `src/layers/shared/python/complens/repositories/business_profile.py` - Fixed to use base class methods
+- `src/handlers/api/ai.py` - Pass `page_id` to all functions
+- `src/handlers/api/workspaces.py` - Auto-create workspace on list
+- `web/src/lib/hooks/useAI.ts` - Page-specific profile support
+- `web/src/pages/PageEditor.tsx` - Added AI Profile tab
+
+### Current Issues (Investigating)
+
+**Pages API returning 400:**
+- GET /workspaces/{ws}/pages returning 400 Bad Request
+- Lambda executes successfully (no errors in logs)
+- Authorizer appears to work
+- Possibly auth context not being passed correctly to handler
+- Added logging to pages handler to debug
+
 ### Priority Order
 1. **Phase 4.5: Client-Facing Pages** ✅ Complete
 2. **Phase 3: AI Features** ✅ Workflow nodes complete (AI generation from NL pending)
@@ -415,7 +458,7 @@ sam deploy --config-env dev --parameter-overrides \
 
 ---
 
-### Phase 3: AI Features ✅ Workflow Nodes Complete
+### Phase 3: AI Features ✅ Complete
 
 **Bedrock Integration (All workflow AI nodes implemented):**
 - [x] `ai_decision` - AI chooses between multiple options based on context
@@ -425,13 +468,66 @@ sam deploy --config-env dev --parameter-overrides \
 - [x] `action_ai_respond` - Generates AI response and sends via SMS/email
 
 **Model Configuration:**
-- Default model: `us.anthropic.claude-3-sonnet-20240229-v1:0`
-- Alternative: `us.anthropic.claude-haiku-4-5-20251001-v1:0` (faster, cheaper)
-- Uses Bedrock inference profiles (`us.anthropic.*`) for cross-region availability
+- Default model: `anthropic.claude-3-sonnet-20240229-v1:0` (Claude 3 Sonnet)
+- Fast model: `us.anthropic.claude-haiku-4-5-20251001-v1:0` (Claude 4.5 Haiku - requires inference profile)
+- Image generation: `amazon.titan-image-generator-v2:0` (Amazon Titan - 512 char prompt limit)
+- Uses Bedrock inference profiles (`us.anthropic.*`) for newer Claude models
+
+**Business Profile System (AI Context):**
+The AI now has persistent context about each user's business, stored in DynamoDB and used across all AI operations.
+
+- [x] `BusinessProfile` model with industry, business type, brand voice, products, team, testimonials
+- [x] AI-driven onboarding flow with dynamic questions
+- [x] Content analysis/extraction from pasted text (resumes, websites, docs)
+- [x] Profile completeness score calculation
+- [x] `get_ai_context()` method generates formatted context for AI prompts
+
+**Per-Block AI Tools:**
+Every content block in the page builder has AI improvement tools:
+
+- [x] "AI" button with improvement options (better, shorter, expand, professional, casual, persuasive)
+- [x] Quick improve (wand icon) for one-click enhancement
+- [x] Regenerate (refresh icon) for fresh perspective
+- [x] Image generation (for hero, image blocks) using Stability AI
+- [x] Custom instruction input for specific changes
+
+**AI Image Generation:**
+- [x] Amazon Titan Image Generator v2 integration via Bedrock
+- [x] Generate images from text prompts (512 character limit - auto-truncated)
+- [x] Configurable size (1024x1024 default) and quality settings
+- [x] Used in hero backgrounds and image blocks
+- [x] Graceful fallback with helpful error when model not enabled
+
+**AI Workflow Generation:**
+- [x] Generate workflows from natural language descriptions
+- [x] Analyzes description to identify triggers, actions, and logic
+- [x] Creates proper node connections and configurations
+- [x] Outputs React Flow compatible format
+
+**Key Files:**
+- `src/layers/shared/python/complens/models/business_profile.py` - Business profile model
+- `src/layers/shared/python/complens/services/ai_service.py` - Central AI service
+- `src/handlers/api/ai.py` - AI API endpoints
+- `web/src/lib/hooks/useAI.ts` - React Query hooks for AI operations
+- `web/src/pages/BusinessProfile.tsx` - Business profile UI with onboarding
+- `web/src/components/page-builder/BlockAIToolbar.tsx` - Per-block AI tools
+
+**API Endpoints (AI):**
+```
+GET  /workspaces/{ws}/ai/profile              - Get business profile
+PUT  /workspaces/{ws}/ai/profile              - Update business profile
+POST /workspaces/{ws}/ai/analyze-content      - Extract info from pasted content
+GET  /workspaces/{ws}/ai/onboarding/question  - Get next onboarding question
+POST /workspaces/{ws}/ai/onboarding/answer    - Submit onboarding answer
+POST /workspaces/{ws}/ai/improve-block        - Improve block content
+POST /workspaces/{ws}/ai/generate-blocks      - Generate page blocks from description
+POST /workspaces/{ws}/ai/generate-image       - Generate image from prompt
+POST /workspaces/{ws}/ai/generate-workflow    - Generate workflow from description
+```
 
 **Still TODO:**
-- [ ] AI workflow generation from natural language
 - [ ] Knowledge base integration (Bedrock Knowledge Bases)
+- [ ] AI-powered analytics and recommendations
 
 ### Phase 4: Frontend ✅ Core Features Complete
 
@@ -514,10 +610,30 @@ sam deploy --config-env dev --parameter-overrides \
 - [x] **GSI3 support in base repository** - Fixed query method to handle GSI3 for subdomain lookups
 - [x] **Subdomain validation fix** - Allow empty string in UpdatePageRequest to clear subdomain
 - [x] **Form loading for public pages** - Support both legacy (form_ids) and new (page_id) methods
+- [x] **Unified AI page generator** - Header "AI Generate" button now uses same block generator as canvas
+- [x] **CloudFront cache invalidation** - Pages invalidate CDN cache on update for immediate visibility
+- [x] **Smart AI content extraction** - Resume/portfolio content detection with experience, skills, stats extraction
+- [x] **BusinessProfile SK pattern fix** - Changed SK from `PAGE#{page_id}#PROFILE` to `PROFILE#PAGE#{page_id}` to avoid DynamoDB query conflicts with pages
+- [x] **Enum/string handling in BusinessProfile** - Fixed `'str' object has no attribute 'value'` errors when loading from DynamoDB
+- [x] **Image generation model update** - Migrated from deprecated SDXL 1.0 to Amazon Titan Image Generator v2
+- [x] **Titan prompt length fix** - Added 512 character truncation for image prompts
+- [x] **Visual block builder** - Complete drag-and-drop page builder with 12+ block types
+- [x] **Client-side block rendering** - `PublicBlockRenderer.tsx` for React public page preview
+- [x] **Server-side block rendering** - `render_blocks_html()` for subdomain/custom domain pages
+- [x] **WebSocket chat permissions** - Added `execute-api:Invoke` action and additional ARN for PostToConnection
+- [x] **WebSocket page lookup fix** - Removed `Limit=1` from DynamoDB scan in `_find_page_by_id()` which was causing "Page not found" errors
+- [x] **Hero block image display fix** - Added `backgroundType: 'image'` when generating images for hero blocks
+- [x] **Profile keystroke reload fix** - Added local state + onBlur handlers instead of mutating on every keystroke
+- [x] **Profile 400 error fix** - Added `_sanitize_extracted_profile()` to fix AI extraction type mismatches + auto-reset for corrupted profiles
+- [x] **Chat widget JavaScript escaping** - Added `_escape_js_string()` for safe chat_initial_message interpolation
+- [x] **Chat widget error handling** - Added comprehensive console logging for debugging
+- [x] **WebSocket custom domain fix** - Fixed endpoint URL for custom domains (don't include stage in path)
+- [x] **ChatConfig Pydantic handling** - Fixed `'ChatConfig' object has no attribute 'get'` by handling Pydantic model properly
 
 **Still TODO:**
 - [ ] Real-time WebSocket updates for workflow runs
-- [ ] Custom domain support for pages (in progress - see below)
+- [ ] Connect workflows to SES for email automation
+- [ ] Complete Twilio SMS integration (pending business verification)
 
 ---
 
@@ -743,12 +859,14 @@ Replaced the technical tab-based page editor with a user-friendly drag-and-drop 
 
 **AI Page Generation:**
 - "Build with AI" button on empty canvas
-- "AI Generate" button when blocks exist
-- Detects page type from description (SaaS, portfolio, coming soon, service, etc.)
-- Extracts product names, pricing tiers, features from description
-- Generates contextual headlines, subheadlines, FAQ, testimonials
+- "AI Generate" button in header (unified with canvas generator)
+- Detects page type from description (resume, SaaS, portfolio, coming soon, service, product)
+- Extracts names, titles, years of experience, technologies from resumes
+- Extracts product names, pricing tiers, features from descriptions
+- Generates contextual headlines, subheadlines, FAQ, testimonials, stats
 - Style options: Professional, Bold, Minimal, Playful
 - Options to include form and/or chat blocks
+- **Replaces existing blocks** when generating (clears old content)
 
 **Data Model:**
 ```python
@@ -775,6 +893,28 @@ class PageBlock(PydanticBaseModel):
 - `@dnd-kit/core` - Drag and drop
 - `@dnd-kit/sortable` - Sortable lists
 - `@dnd-kit/utilities` - CSS transform utilities
+
+---
+
+### CDN Cache Invalidation ✅ Implemented
+
+When pages are updated or published, CloudFront cache is automatically invalidated so visitors see the latest content immediately.
+
+**How it Works:**
+1. Page is saved via `PUT /workspaces/{ws}/pages/{page_id}`
+2. Backend calls `invalidate_page_cache()` if subdomain or custom domain is set
+3. Service looks up CloudFront distribution IDs from CloudFormation stack outputs
+4. Creates invalidation for relevant paths on the appropriate distribution
+
+**Key Files:**
+- `src/layers/shared/python/complens/services/cdn_service.py` - CDN invalidation service
+- `src/handlers/api/pages.py` - Calls invalidation after page update
+
+**Permissions Required:**
+- `cloudfront:CreateInvalidation` - Create cache invalidations
+- `cloudformation:DescribeStacks` - Look up distribution IDs from stack outputs
+
+**Note:** Cache invalidations are fire-and-forget. If invalidation fails, the page save still succeeds and the cache will expire naturally (5 minutes TTL).
 
 ---
 

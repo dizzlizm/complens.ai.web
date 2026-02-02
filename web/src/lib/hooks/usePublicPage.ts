@@ -3,6 +3,14 @@ import publicApi from '../publicApi';
 import type { ChatConfig } from './usePages';
 import type { FormField } from './useForms';
 
+export interface PublicPageBlock {
+  id: string;
+  type: string;
+  config: Record<string, unknown>;
+  order: number;
+  width?: number;
+}
+
 export interface PublicPage {
   id: string;
   name: string;
@@ -12,6 +20,7 @@ export interface PublicPage {
   subheadline: string | null;
   hero_image_url: string | null;
   body_content: string | null;
+  blocks: PublicPageBlock[] | null;
   form_ids: string[];
   chat_config: ChatConfig;
   primary_color: string;

@@ -37,6 +37,7 @@ from complens.models.workflow_node import WorkflowNode
 from complens.repositories.form import FormRepository
 from complens.repositories.page import PageRepository
 from complens.repositories.workflow import WorkflowRepository
+from complens.services.cdn_service import invalidate_page_cache
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
@@ -92,6 +93,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         page_id = path_params.get("page_id")
         form_id = path_params.get("form_id")
         workflow_id = path_params.get("workflow_id")
+
+        logger.info("Pages request", method=http_method, path=path, workspace_id=workspace_id, page_id=page_id)
 
         # Get auth context and verify access
         auth = get_auth_context(event)
@@ -339,6 +342,29 @@ def update_page(
 
     # Save
     page = repo.update_page(page)
+
+    # Invalidate CDN cache if page has subdomain or custom domain
+    if page.subdomain or page.custom_domain:
+        try:
+            invalidation_result = invalidate_page_cache(
+                subdomain=page.subdomain,
+                custom_domain=page.custom_domain,
+                page_id=page_id,
+            )
+            logger.info(
+                "CDN cache invalidated",
+                page_id=page_id,
+                subdomain=page.subdomain,
+                custom_domain=page.custom_domain,
+                result=invalidation_result,
+            )
+        except Exception as e:
+            # Log but don't fail the request - cache will expire naturally
+            logger.warning(
+                "Failed to invalidate CDN cache",
+                page_id=page_id,
+                error=str(e),
+            )
 
     # Serialize for response
     response_data = page.model_dump(mode="json")

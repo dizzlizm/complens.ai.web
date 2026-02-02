@@ -22,6 +22,7 @@ import {
   PricingTier,
   StatItem,
 } from './types';
+import BlockAIToolbar from './BlockAIToolbar';
 
 interface BlockConfigPanelProps {
   block: PageBlock;
@@ -29,7 +30,18 @@ interface BlockConfigPanelProps {
   onWidthChange?: (width: 1 | 2 | 3 | 4) => void;
   onClose: () => void;
   forms?: Array<{ id: string; name: string }>;
+  pageContext?: {
+    headline?: string;
+    subheadline?: string;
+    other_blocks?: string[];
+  };
 }
+
+// Blocks that support image generation
+const IMAGE_BLOCKS: Record<string, string> = {
+  hero: 'backgroundImage',
+  image: 'url',
+};
 
 export default function BlockConfigPanel({
   block,
@@ -37,8 +49,11 @@ export default function BlockConfigPanel({
   onWidthChange,
   onClose,
   forms = [],
+  pageContext,
 }: BlockConfigPanelProps) {
   const typeInfo = getBlockTypeInfo(block.type);
+  const supportsImage = block.type in IMAGE_BLOCKS;
+  const imageField = IMAGE_BLOCKS[block.type];
 
   const updateConfig = (updates: Record<string, unknown>) => {
     onConfigChange({ ...block.config, ...updates });
@@ -93,6 +108,22 @@ export default function BlockConfigPanel({
         >
           <X className="w-5 h-5" />
         </button>
+      </div>
+
+      {/* AI Tools */}
+      <div className="p-4 border-b border-gray-200">
+        <label className="block text-sm font-medium text-gray-700 mb-2">AI Tools</label>
+        <BlockAIToolbar
+          blockType={block.type}
+          config={block.config}
+          onConfigChange={onConfigChange}
+          pageContext={pageContext}
+          supportsImage={supportsImage}
+          imageField={imageField}
+        />
+        <p className="text-xs text-gray-400 mt-2">
+          Use AI to improve content or generate images
+        </p>
       </div>
 
       {/* Width Selector */}

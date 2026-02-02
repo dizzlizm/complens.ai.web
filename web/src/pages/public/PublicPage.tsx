@@ -3,6 +3,8 @@ import DOMPurify from 'dompurify';
 import { usePublicPage } from '../../lib/hooks/usePublicPage';
 import PublicForm from '../../components/public/PublicForm';
 import ChatWidget from '../../components/public/ChatWidget';
+import PublicBlockRenderer from '../../components/public/PublicBlockRenderer';
+import type { PageBlock } from '../../components/page-builder/types';
 
 // Configure DOMPurify to allow safe HTML for rich landing pages
 DOMPurify.addHook('uponSanitizeElement', (_node, data) => {
@@ -104,6 +106,9 @@ export default function PublicPage() {
   // Sanitize color - fallback to default if invalid
   const safeColor = isValidHexColor(page.primary_color) ? page.primary_color : '#6366f1';
 
+  // Check if page has blocks (new visual builder format)
+  const hasBlocks = page.blocks && Array.isArray(page.blocks) && page.blocks.length > 0;
+
   // Check if body_content has rich HTML (sections, divs with classes)
   const hasRichContent = page.body_content && (
     page.body_content.includes('<section') ||
@@ -175,13 +180,23 @@ export default function PublicPage() {
       {/* Custom CSS injection - sanitized */}
       {page.custom_css && <style>{sanitizeCSS(page.custom_css)}</style>}
 
-      {/* If rich HTML content, render it full-width; otherwise use simple hero + content */}
-      {hasRichContent ? (
+      {/* Render content based on format: blocks > rich HTML > simple content */}
+      {hasBlocks ? (
+        // New visual builder format - render blocks
+        <PublicBlockRenderer
+          blocks={page.blocks as PageBlock[]}
+          primaryColor={safeColor}
+          workspaceId={workspaceId}
+          pageId={page.id}
+        />
+      ) : hasRichContent ? (
+        // Legacy rich HTML content
         <div
           className="page-content"
           dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(page.body_content || '', SANITIZE_CONFIG) }}
         />
       ) : (
+        // Simple fallback layout
         <>
           {/* Simple Hero Section for non-rich content */}
           <section
@@ -216,8 +231,8 @@ export default function PublicPage() {
         </>
       )}
 
-      {/* Forms Section */}
-      {page.form_ids.length > 0 && (
+      {/* Forms Section - only render if NOT using blocks (blocks have forms embedded) */}
+      {!hasBlocks && page.form_ids && page.form_ids.length > 0 && (
         <section className="py-12 px-4 bg-gray-50">
           <div className="max-w-xl mx-auto">
             {page.form_ids.map((formId) => (

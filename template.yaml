@@ -80,7 +80,7 @@ Globals:
         AI_QUEUE_URL: !Ref AIProcessingQueue
         WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
         EVENT_BUS_NAME: !Sub "complens-${Stage}-workflow-events"
-        WEBSOCKET_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+        WEBSOCKET_ENDPOINT: !If [CustomDomainEnabled, !Sub "wss://ws.${DomainName}", !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"]
         # CORS configuration - restrict to frontend origin
         CORS_ALLOWED_ORIGIN: !If
           - IsProd
@@ -831,6 +831,8 @@ Resources:
       Environment:
         Variables:
           ASSETS_BUCKET: !Ref AssetsBucket
+          # Distribution IDs are fetched from SSM at runtime or left empty
+          # They will be populated after deployment via a custom resource or manually
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
@@ -841,6 +843,16 @@ Resources:
               Action:
                 - bedrock:InvokeModel
               Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cloudfront:CreateInvalidation
+              Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cloudformation:DescribeStacks
+              Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/complens-${Stage}/*"
       Events:
         List:
           Type: Api
@@ -996,6 +1008,90 @@ Resources:
             Method: GET
 
   # ============================================
+  # AI Service (Business Profile, Content Generation, Image Generation)
+  # ============================================
+  AIFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-ai"
+      Handler: ai.handler
+      CodeUri: src/handlers/api/
+      Description: AI-powered content generation and business profile management
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          ASSETS_BUCKET: !Ref AssetsBucket
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - S3CrudPolicy:
+            BucketName: !Ref AssetsBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        # Business Profile
+        GetProfile:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/profile
+            Method: GET
+        UpdateProfile:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/profile
+            Method: PUT
+        AnalyzeContent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/profile/analyze
+            Method: POST
+        # AI Onboarding
+        OnboardingQuestion:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/onboarding/question
+            Method: GET
+        OnboardingAnswer:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/onboarding/answer
+            Method: POST
+        # AI Generation
+        ImproveBlock:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/improve-block
+            Method: POST
+        GenerateBlocks:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/generate-blocks
+            Method: POST
+        GenerateImage:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/generate-image
+            Method: POST
+        GenerateWorkflow:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/generate-workflow
+            Method: POST
+
+  # ============================================
   # Custom Domain Management
   # ============================================
   DomainsFunction:
@@ -1111,6 +1207,7 @@ Resources:
       Environment:
         Variables:
           API_URL: !If [CustomDomainEnabled, !Sub "https://api.${DomainName}", !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"]
+          WEBSOCKET_ENDPOINT: !If [CustomDomainEnabled, !Sub "wss://ws.${DomainName}", !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"]
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
@@ -1232,8 +1329,10 @@ Resources:
             - Effect: Allow
               Action:
                 - execute-api:ManageConnections
+                - execute-api:Invoke
               Resource:
                 - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+                - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*/POST/@connections/*"
         - Statement:
             - Effect: Allow
               Action:

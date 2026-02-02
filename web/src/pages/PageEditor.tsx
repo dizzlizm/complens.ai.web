@@ -1,20 +1,28 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { usePage, useUpdatePage, useGeneratePage, checkSubdomainAvailability, type UpdatePageInput, type ChatConfig, type GeneratePageInput } from '../lib/hooks/usePages';
+import { usePage, useUpdatePage, checkSubdomainAvailability, type UpdatePageInput, type ChatConfig } from '../lib/hooks/usePages';
 import { usePageForms, useCreatePageForm, useDeletePageForm, type Form, type FormField } from '../lib/hooks/useForms';
 import { usePageWorkflows, useDeletePageWorkflow } from '../lib/hooks/useWorkflows';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import { useDomains, useCreateDomain, useDeleteDomain, getDomainStatusInfo } from '../lib/hooks/useDomains';
+import {
+  useBusinessProfile,
+  useUpdateBusinessProfile,
+  useAnalyzeContent,
+  INDUSTRY_OPTIONS,
+  BUSINESS_TYPE_OPTIONS,
+  BRAND_VOICE_OPTIONS,
+} from '../lib/hooks/useAI';
 import { useToast } from '../components/Toast';
 import FormBuilder from '../components/FormBuilder';
-import { PageBuilderCanvas, PageBlock } from '../components/page-builder';
-import { Plus, Trash2, GitBranch, ExternalLink } from 'lucide-react';
+import { PageBuilderCanvas, PageBlock, AIBlockGenerator } from '../components/page-builder';
+import { Plus, Trash2, GitBranch, ExternalLink, Sparkles, Loader2 } from 'lucide-react';
 
 // Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.dev.complens.ai';
 const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '');
 
-type Tab = 'content' | 'forms' | 'workflows' | 'chat' | 'design' | 'seo' | 'domain';
+type Tab = 'content' | 'forms' | 'workflows' | 'chat' | 'design' | 'seo' | 'domain' | 'profile';
 
 export default function PageEditor() {
   const { id: pageId } = useParams<{ id: string }>();
@@ -30,20 +38,64 @@ export default function PageEditor() {
   const deleteForm = useDeletePageForm(workspaceId || '', pageId || '');
   const deleteWorkflow = useDeletePageWorkflow(workspaceId || '', pageId || '');
 
+  // AI Profile hooks - page-specific
+  const { data: profile, isLoading: profileLoading } = useBusinessProfile(workspaceId, pageId);
+  const updateProfile = useUpdateBusinessProfile(workspaceId || '', pageId);
+  const analyzeContent = useAnalyzeContent(workspaceId || '');
+
+  // Content analysis state
+  const [showContentInput, setShowContentInput] = useState(false);
+  const [pastedContent, setPastedContent] = useState('');
+
+  // Local profile state to avoid API calls on every keystroke
+  const [profileForm, setProfileForm] = useState({
+    business_name: '',
+    tagline: '',
+    description: '',
+    industry: '',
+    business_type: '',
+    brand_voice: '',
+    target_audience: '',
+    unique_value_proposition: '',
+    achievements: [] as string[],
+  });
+  const [profileInitialized, setProfileInitialized] = useState(false);
+
+  // Initialize profile form when profile data loads
+  useEffect(() => {
+    if (profile && !profileInitialized) {
+      setProfileForm({
+        business_name: profile.business_name || '',
+        tagline: profile.tagline || '',
+        description: profile.description || '',
+        industry: profile.industry || '',
+        business_type: profile.business_type || '',
+        brand_voice: profile.brand_voice || '',
+        target_audience: profile.target_audience || '',
+        unique_value_proposition: profile.unique_value_proposition || '',
+        achievements: profile.achievements || [],
+      });
+      setProfileInitialized(true);
+    }
+  }, [profile, profileInitialized]);
+
+  // Reset profileInitialized when pageId changes
+  useEffect(() => {
+    setProfileInitialized(false);
+  }, [pageId]);
+
+  // Save profile field on blur (only if value changed)
+  const handleProfileBlur = (field: string, value: string | string[]) => {
+    updateProfile.mutate({ [field]: value });
+  };
+
   const [activeTab, setActiveTab] = useState<Tab>('content');
   const [formData, setFormData] = useState<UpdatePageInput>({});
   const [hasChanges, setHasChanges] = useState(false);
 
-  // AI Generate modal state
-  const [showAIModal, setShowAIModal] = useState(false);
-  const [aiInput, setAIInput] = useState<GeneratePageInput>({
-    source_content: '',
-    template: 'professional',
-    target_audience: '',
-    call_to_action: '',
-    create_form: true,
-  });
-  const generatePage = useGeneratePage(workspaceId || '');
+  // AI Generate modal state - using unified block generator
+  const [showAIGenerator, setShowAIGenerator] = useState(false);
+  const [isAIGenerating, setIsAIGenerating] = useState(false);
 
   // Blocks state for the visual builder
   const [blocks, setBlocks] = useState<PageBlock[]>([]);
@@ -51,12 +103,6 @@ export default function PageEditor() {
   // Initialize form data when page loads
   useEffect(() => {
     if (page) {
-      console.log('[PageEditor] Page data received:', {
-        id: page.id,
-        name: page.name,
-        blocks: page.blocks,
-        blockCount: page.blocks?.length ?? 0,
-      });
       setFormData({
         name: page.name,
         slug: page.slug,
@@ -74,10 +120,8 @@ export default function PageEditor() {
         subdomain: page.subdomain || '',
         custom_domain: page.custom_domain || '',
       });
-      // Initialize blocks from page data - cast to PageBlock[] to match component types
-      const pageBlocks = (page.blocks || []) as PageBlock[];
-      console.log('[PageEditor] Setting blocks:', pageBlocks);
-      setBlocks(pageBlocks);
+      // Initialize blocks from page data
+      setBlocks((page.blocks || []) as PageBlock[]);
     }
   }, [page]);
 
@@ -102,22 +146,14 @@ export default function PageEditor() {
 
   const handleSave = async () => {
     try {
-      const payload = {
+      await updatePage.mutateAsync({
         ...formData,
         blocks: blocks,
-      };
-      console.log('[PageEditor] Saving page with payload:', {
-        ...payload,
-        blockCount: blocks.length,
-        blocks: blocks.map(b => ({ id: b.id, type: b.type, order: b.order, width: b.width })),
       });
-      const result = await updatePage.mutateAsync(payload);
-      console.log('[PageEditor] Save result:', result);
       setHasChanges(false);
       toast.success('Page saved successfully');
     } catch (err: any) {
       console.error('Failed to save page:', err);
-      // Extract detailed error message from API response
       const errorMessage = err?.response?.data?.message
         || err?.response?.data?.errors?.map((e: any) => `${e.field}: ${e.message}`).join(', ')
         || err?.message
@@ -150,43 +186,19 @@ export default function PageEditor() {
     }
   };
 
-  const handleAIGenerate = async () => {
-    if (!aiInput.source_content.trim()) return;
-
-    try {
-      const generated = await generatePage.mutateAsync(aiInput);
-
-      // Apply generated content to form
-      setFormData((prev) => ({
-        ...prev,
-        name: generated.name,
-        slug: generated.slug,
-        headline: generated.headline,
-        subheadline: generated.subheadline || '',
-        body_content: generated.body_content,
-        primary_color: generated.primary_color,
-        hero_image_url: generated.hero_image_url || prev.hero_image_url || '',
-        meta_title: generated.meta_title || '',
-        meta_description: generated.meta_description || '',
-        // Auto-attach generated form
-        form_ids: generated.form_ids || prev.form_ids || [],
-        chat_config: {
-          ...prev.chat_config,
-          enabled: true,
-          position: 'bottom-right',
-          initial_message: generated.chat_config.initial_message || prev.chat_config?.initial_message || null,
-          ai_persona: generated.chat_config.ai_persona || prev.chat_config?.ai_persona || null,
-        } as ChatConfig,
-      }));
-
-      setHasChanges(true);
-      setShowAIModal(false);
-      setAIInput({ source_content: '', template: 'professional', target_audience: '', call_to_action: '', create_form: true });
-      toast.success('Page content generated! Review and save your changes.');
-    } catch (err) {
-      console.error('AI generation failed:', err);
-      toast.error('AI generation failed. Please try again.');
-    }
+  // Handle AI-generated blocks from the unified block generator
+  const handleAIGeneratedBlocks = (newBlocks: PageBlock[]) => {
+    // Replace all blocks with generated ones
+    setBlocks(newBlocks.map((b, i) => ({ ...b, order: i })));
+    // Clear legacy body_content since we're using blocks now
+    setFormData((prev) => ({
+      ...prev,
+      body_content: '',
+    }));
+    setHasChanges(true);
+    setShowAIGenerator(false);
+    setIsAIGenerating(false);
+    toast.success('Page built with AI! Review and save your changes.');
   };
 
   // Form builder state
@@ -272,6 +284,7 @@ export default function PageEditor() {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'content', label: 'Content' },
+    { id: 'profile', label: 'AI Profile' },
     { id: 'forms', label: `Forms${pageForms?.length ? ` (${pageForms.length})` : ''}` },
     { id: 'workflows', label: `Workflows${pageWorkflows?.length ? ` (${pageWorkflows.length})` : ''}` },
     { id: 'chat', label: 'Chat' },
@@ -300,7 +313,7 @@ export default function PageEditor() {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setShowAIModal(true)}
+            onClick={() => setShowAIGenerator(true)}
             className="px-4 py-2 border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 flex items-center gap-2"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -417,6 +430,8 @@ export default function PageEditor() {
               blocks={blocks}
               onChange={handleBlocksChange}
               forms={pageForms?.map((f: Form) => ({ id: f.id, name: f.name })) || []}
+              pageHeadline={formData.headline}
+              pageSubheadline={formData.subheadline}
             />
 
             {/* Legacy content info */}
@@ -426,6 +441,265 @@ export default function PageEditor() {
                   <strong>Note:</strong> This page has legacy HTML content. Add blocks above to use the visual builder.
                   Legacy content will still be rendered on the public page until you switch to blocks.
                 </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'profile' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">AI Profile</h3>
+                <p className="text-sm text-gray-600">
+                  Tell AI about this page's context to generate better content
+                </p>
+              </div>
+              {profile && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-500">Profile Score:</span>
+                  <span className="text-lg font-bold text-indigo-600">{profile.profile_score}%</span>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Import */}
+            <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl p-4 border border-purple-100">
+              <button
+                onClick={() => setShowContentInput(!showContentInput)}
+                className="flex items-center gap-3 w-full text-left"
+              >
+                <div className="p-2 bg-purple-100 rounded-lg">
+                  <Sparkles className="w-5 h-5 text-purple-600" />
+                </div>
+                <div className="flex-1">
+                  <p className="font-medium text-gray-900">Import from Content</p>
+                  <p className="text-sm text-gray-600">
+                    Paste your website, resume, or doc and AI will extract info
+                  </p>
+                </div>
+              </button>
+
+              {showContentInput && (
+                <div className="mt-4 space-y-3">
+                  <textarea
+                    value={pastedContent}
+                    onChange={(e) => setPastedContent(e.target.value)}
+                    placeholder="Paste your content here..."
+                    rows={6}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                  <div className="flex justify-end gap-3">
+                    <button
+                      onClick={() => {
+                        setShowContentInput(false);
+                        setPastedContent('');
+                      }}
+                      className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!pastedContent.trim()) return;
+                        try {
+                          const result = await analyzeContent.mutateAsync({
+                            content: pastedContent,
+                            auto_update: true,
+                            page_id: pageId,
+                          });
+                          setPastedContent('');
+                          setShowContentInput(false);
+
+                          // Update local form with extracted values so user sees them immediately
+                          if (result.profile) {
+                            setProfileForm({
+                              business_name: result.profile.business_name || '',
+                              tagline: result.profile.tagline || '',
+                              description: result.profile.description || '',
+                              industry: result.profile.industry || '',
+                              business_type: result.profile.business_type || '',
+                              brand_voice: result.profile.brand_voice || '',
+                              target_audience: result.profile.target_audience || '',
+                              unique_value_proposition: result.profile.unique_value_proposition || '',
+                              achievements: result.profile.achievements || [],
+                            });
+                          }
+
+                          toast.success(`Extracted ${Object.keys(result.extracted).length} fields from your content!`);
+                        } catch (err) {
+                          toast.error('Failed to analyze content');
+                        }
+                      }}
+                      disabled={!pastedContent.trim() || analyzeContent.isPending}
+                      className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {analyzeContent.isPending ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Analyzing...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          Extract Info
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Profile Form */}
+            {profileLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Basic Info */}
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Business/Person Name
+                    </label>
+                    <input
+                      type="text"
+                      value={profileForm.business_name}
+                      onChange={(e) => setProfileForm({ ...profileForm, business_name: e.target.value })}
+                      onBlur={(e) => handleProfileBlur('business_name', e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Your business or your name"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Tagline
+                    </label>
+                    <input
+                      type="text"
+                      value={profileForm.tagline}
+                      onChange={(e) => setProfileForm({ ...profileForm, tagline: e.target.value })}
+                      onBlur={(e) => handleProfileBlur('tagline', e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="A short memorable phrase"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Description
+                  </label>
+                  <textarea
+                    value={profileForm.description}
+                    onChange={(e) => setProfileForm({ ...profileForm, description: e.target.value })}
+                    onBlur={(e) => handleProfileBlur('description', e.target.value)}
+                    rows={3}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="What does this page represent? What are you offering?"
+                  />
+                </div>
+
+                <div className="grid md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Industry
+                    </label>
+                    <select
+                      value={profileForm.industry || 'other'}
+                      onChange={(e) => {
+                        setProfileForm({ ...profileForm, industry: e.target.value });
+                        updateProfile.mutate({ industry: e.target.value });
+                      }}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      {INDUSTRY_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Business Type
+                    </label>
+                    <select
+                      value={profileForm.business_type || 'other'}
+                      onChange={(e) => {
+                        setProfileForm({ ...profileForm, business_type: e.target.value });
+                        updateProfile.mutate({ business_type: e.target.value });
+                      }}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      {BUSINESS_TYPE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Brand Voice
+                    </label>
+                    <select
+                      value={profileForm.brand_voice || 'professional'}
+                      onChange={(e) => {
+                        setProfileForm({ ...profileForm, brand_voice: e.target.value });
+                        updateProfile.mutate({ brand_voice: e.target.value });
+                      }}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      {BRAND_VOICE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Target Audience
+                  </label>
+                  <textarea
+                    value={profileForm.target_audience}
+                    onChange={(e) => setProfileForm({ ...profileForm, target_audience: e.target.value })}
+                    onBlur={(e) => handleProfileBlur('target_audience', e.target.value)}
+                    rows={2}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="Who is this page for? Describe your ideal visitor."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Unique Value Proposition
+                  </label>
+                  <textarea
+                    value={profileForm.unique_value_proposition}
+                    onChange={(e) => setProfileForm({ ...profileForm, unique_value_proposition: e.target.value })}
+                    onBlur={(e) => handleProfileBlur('unique_value_proposition', e.target.value)}
+                    rows={2}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="What makes you different? Why should visitors choose you?"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Achievements & Social Proof
+                  </label>
+                  <textarea
+                    value={profileForm.achievements.join('\n')}
+                    onChange={(e) => setProfileForm({
+                      ...profileForm,
+                      achievements: e.target.value.split('\n')
+                    })}
+                    onBlur={(e) => handleProfileBlur('achievements', e.target.value.split('\n').filter(a => a.trim()))}
+                    rows={3}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="One per line: awards, metrics, notable clients, years of experience..."
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -779,183 +1053,13 @@ export default function PageEditor() {
         )}
       </div>
 
-      {/* AI Generate Modal */}
-      {showAIModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-purple-100 rounded-lg">
-                    <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-semibold text-gray-900">AI Page Generator</h2>
-                    <p className="text-sm text-gray-500">Paste any content and let AI create your landing page</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setShowAIModal(false)}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Source Content <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  value={aiInput.source_content}
-                  onChange={(e) => setAIInput((prev) => ({ ...prev, source_content: e.target.value }))}
-                  placeholder="Paste your resume, business description, product info, service offerings, event details, or any content you want to turn into a landing page..."
-                  rows={10}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  The AI will analyze this content and generate headlines, copy, and structure for your page.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Choose Template
-                </label>
-                <div className="grid grid-cols-3 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setAIInput((prev) => ({ ...prev, template: 'professional' }))}
-                    className={`p-4 rounded-xl border-2 text-left transition-all ${
-                      aiInput.template === 'professional'
-                        ? 'border-indigo-500 bg-indigo-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 mb-2" />
-                    <div className="font-medium text-gray-900">Professional</div>
-                    <div className="text-xs text-gray-500">Clean & modern</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAIInput((prev) => ({ ...prev, template: 'bold' }))}
-                    className={`p-4 rounded-xl border-2 text-left transition-all ${
-                      aiInput.template === 'bold'
-                        ? 'border-amber-500 bg-amber-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-red-500 mb-2" />
-                    <div className="font-medium text-gray-900">Bold</div>
-                    <div className="text-xs text-gray-500">High impact</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAIInput((prev) => ({ ...prev, template: 'minimal' }))}
-                    className={`p-4 rounded-xl border-2 text-left transition-all ${
-                      aiInput.template === 'minimal'
-                        ? 'border-sky-500 bg-sky-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-400 to-sky-600 mb-2" />
-                    <div className="font-medium text-gray-900">Minimal</div>
-                    <div className="text-xs text-gray-500">Simple & elegant</div>
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Target Audience
-                  </label>
-                  <input
-                    type="text"
-                    value={aiInput.target_audience || ''}
-                    onChange={(e) => setAIInput((prev) => ({ ...prev, target_audience: e.target.value }))}
-                    placeholder="e.g., Small business owners, Tech recruiters"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Primary Call to Action
-                  </label>
-                  <input
-                    type="text"
-                    value={aiInput.call_to_action || ''}
-                    onChange={(e) => setAIInput((prev) => ({ ...prev, call_to_action: e.target.value }))}
-                    placeholder="e.g., Book a call, Get started"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 pt-2">
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={aiInput.create_form !== false}
-                    onChange={(e) => setAIInput((prev) => ({ ...prev, create_form: e.target.checked }))}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600" />
-                </label>
-                <div>
-                  <span className="text-sm font-medium text-gray-700">Create Lead Capture Form</span>
-                  <p className="text-xs text-gray-500">Auto-generate a contact form for collecting leads</p>
-                </div>
-              </div>
-
-            </div>
-
-            <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
-              <button
-                onClick={() => setShowAIModal(false)}
-                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAIGenerate}
-                disabled={!aiInput.source_content.trim() || generatePage.isPending}
-                className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
-              >
-                {generatePage.isPending ? (
-                  <>
-                    <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    Generate Page
-                  </>
-                )}
-              </button>
-            </div>
-
-            {generatePage.isError && (
-              <div className="px-6 pb-6">
-                <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm">
-                  Failed to generate page. Please try again.
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+      {/* AI Block Generator Modal - unified for both header and canvas */}
+      {showAIGenerator && (
+        <AIBlockGenerator
+          onGenerate={handleAIGeneratedBlocks}
+          onClose={() => setShowAIGenerator(false)}
+          isGenerating={isAIGenerating}
+        />
       )}
     </div>
   );

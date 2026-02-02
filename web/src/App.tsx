@@ -17,6 +17,7 @@ import WorkflowEditor from './pages/WorkflowEditor';
 import Contacts from './pages/Contacts';
 import Pages from './pages/Pages';
 import PageEditor from './pages/PageEditor';
+import BusinessProfile from './pages/BusinessProfile';
 // Forms removed - now managed inside Page Editor
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
@@ -53,6 +54,7 @@ function App() {
             <Route path="/pages" element={<Pages />} />
             <Route path="/pages/:id" element={<PageEditor />} />
             {/* Forms routes removed - forms are now managed inside Page Editor */}
+            <Route path="/business-profile" element={<BusinessProfile />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/profile" element={<Profile />} />
           </Route>

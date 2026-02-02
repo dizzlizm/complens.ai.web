@@ -97,17 +97,19 @@ export default function AIBlockGenerator({
           {/* Description input */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Describe Your Page
+              Describe Your Page (or paste your content)
             </label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Be specific! E.g., 'A landing page for TaskFlow, an AI-powered project management tool. Key features: smart task prioritization, team collaboration, time tracking. Target: startup teams. Include pricing tiers: Free, Pro ($12/mo), Enterprise.'"
-              rows={5}
+              placeholder="Paste a resume, business description, product info, or describe what you want. The more detail you provide, the better the result!
+
+Example: 'Steve Ross - Staff Systems Architect with 8+ years experience in cloud infrastructure, AI systems, and team leadership. Currently at TheRealReal building AI agent pipelines...'"
+              rows={6}
               className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-200 resize-none"
             />
             <p className="mt-2 text-xs text-gray-500">
-              Tip: Include your product name, key features, target audience, and any specific sections you want.
+              Tip: Paste a full resume, bio, or business description for best results!
             </p>
           </div>
 
@@ -147,7 +149,7 @@ export default function AIBlockGenerator({
                 onChange={(e) => setIncludeForm(e.target.checked)}
                 className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
               />
-              <span className="text-sm text-gray-700">Include lead capture form</span>
+              <span className="text-sm text-gray-700">Include contact form</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -208,37 +210,36 @@ function generateBlocksFromDescription(
 ): PageBlock[] {
   const blocks: PageBlock[] = [];
   const desc = description.toLowerCase();
-  const originalDesc = description;
 
-  // Generate a unique ID
+  // Generate unique IDs
   const genId = () => Math.random().toString(36).substring(2, 10);
-
-  // Extract product/company name from description
-  const productName = extractProductName(originalDesc);
 
   // Style-based colors
   const styleColors: Record<string, { primary: string; gradient: [string, string] }> = {
-    professional: { primary: '#4f46e5', gradient: ['#4f46e5', '#7c3aed'] },
-    bold: { primary: '#dc2626', gradient: ['#dc2626', '#f97316'] },
-    minimal: { primary: '#171717', gradient: ['#262626', '#404040'] },
-    playful: { primary: '#ec4899', gradient: ['#ec4899', '#8b5cf6'] },
+    professional: { primary: '#4f46e5', gradient: ['#1e1b4b', '#312e81'] },
+    bold: { primary: '#dc2626', gradient: ['#0f0f0f', '#1f1f1f'] },
+    minimal: { primary: '#171717', gradient: ['#fafafa', '#f5f5f5'] },
+    playful: { primary: '#ec4899', gradient: ['#831843', '#701a75'] },
   };
-
   const colors = styleColors[style] || styleColors.professional;
+  const isLightStyle = style === 'minimal';
 
-  // Determine page type from description
-  const pageType = detectPageType(desc);
+  // Detect content type
+  const contentType = detectContentType(description, desc);
 
-  // 1. HERO BLOCK (always)
+  // Extract key information based on content type
+  const extracted = extractContent(description, contentType);
+
+  // 1. HERO BLOCK
   blocks.push({
     id: genId(),
     type: 'hero',
     order: blocks.length,
     width: 4,
     config: {
-      headline: generateHeadline(originalDesc, productName, pageType),
-      subheadline: generateSubheadline(originalDesc, productName, pageType),
-      buttonText: generateCTA(desc, pageType),
+      headline: extracted.headline,
+      subheadline: extracted.subheadline,
+      buttonText: extracted.cta,
       buttonLink: '#contact',
       backgroundType: 'gradient',
       gradientFrom: colors.gradient[0],
@@ -248,25 +249,24 @@ function generateBlocksFromDescription(
     },
   });
 
-  // 2. FEATURES BLOCK (for most page types)
-  if (pageType !== 'coming-soon' && pageType !== 'about') {
-    const features = extractFeatures(originalDesc, pageType);
+  // 2. FEATURES/SKILLS/SERVICES BLOCK
+  if (extracted.features.length > 0) {
     blocks.push({
       id: genId(),
       type: 'features',
       order: blocks.length,
       width: 4,
       config: {
-        title: pageType === 'portfolio' ? 'What I Offer' : 'Key Features',
-        subtitle: generateFeaturesSubtitle(pageType, productName),
-        columns: 3,
-        items: features,
+        title: extracted.featuresTitle,
+        subtitle: extracted.featuresSubtitle,
+        columns: Math.min(extracted.features.length, 3) as 2 | 3 | 4,
+        items: extracted.features.slice(0, 6),
       },
     });
   }
 
-  // 3. STATS BLOCK (for credibility)
-  if (pageType === 'saas' || pageType === 'service' || pageType === 'product') {
+  // 3. STATS BLOCK (for professional/resume content)
+  if (extracted.stats.length > 0) {
     blocks.push({
       id: genId(),
       type: 'stats',
@@ -274,49 +274,58 @@ function generateBlocksFromDescription(
       width: 4,
       config: {
         title: '',
-        items: generateStats(desc, pageType),
+        items: extracted.stats,
       },
     });
   }
 
-  // 4. PRICING BLOCK (if mentioned or pricing page)
-  if (desc.includes('pricing') || desc.includes('price') || desc.includes('plan') ||
-      desc.includes('tier') || desc.includes('subscription') || desc.includes('/mo') ||
-      desc.includes('free') || pageType === 'pricing') {
+  // 4. EXPERIENCE/TESTIMONIALS BLOCK
+  if (extracted.experiences.length > 0 && contentType === 'resume') {
+    // For resume, show as text block with experience
     blocks.push({
       id: genId(),
-      type: 'pricing',
+      type: 'text',
       order: blocks.length,
       width: 4,
       config: {
-        title: 'Simple, Transparent Pricing',
-        subtitle: 'Choose the plan that works for you',
-        items: extractPricingTiers(originalDesc),
+        content: formatExperience(extracted.experiences),
+        alignment: 'left',
       },
     });
-  }
-
-  // 5. TESTIMONIALS BLOCK (if mentioned or for service pages)
-  if (desc.includes('testimonial') || desc.includes('review') || desc.includes('client') ||
-      pageType === 'service' || pageType === 'portfolio') {
+  } else if (contentType !== 'resume' && contentType !== 'coming-soon') {
+    // For other types, show testimonials
     blocks.push({
       id: genId(),
       type: 'testimonials',
       order: blocks.length,
       width: 4,
       config: {
-        title: pageType === 'portfolio' ? 'Client Feedback' : 'What Our Customers Say',
+        title: 'What People Say',
         items: [
-          { quote: `Working with ${productName || 'them'} has been an amazing experience. The results exceeded our expectations!`, author: 'Sarah Johnson', company: 'TechCorp', avatar: '' },
-          { quote: 'Professional, responsive, and delivers exceptional quality. Highly recommended!', author: 'Michael Chen', company: 'StartupXYZ', avatar: '' },
+          { quote: `Working with ${extracted.name || 'them'} was an excellent experience. Professional, responsive, and delivered outstanding results.`, author: 'Sarah Johnson', company: 'Tech Innovations', avatar: '' },
+          { quote: 'Exceeded our expectations in every way. Highly recommend!', author: 'Michael Chen', company: 'Growth Partners', avatar: '' },
         ],
       },
     });
   }
 
-  // 6. FAQ BLOCK (if mentioned)
-  if (desc.includes('faq') || desc.includes('question') || desc.includes('how does') ||
-      desc.includes('what is') || pageType === 'saas') {
+  // 5. PRICING BLOCK (if applicable)
+  if (extracted.pricing.length > 0) {
+    blocks.push({
+      id: genId(),
+      type: 'pricing',
+      order: blocks.length,
+      width: 4,
+      config: {
+        title: 'Pricing',
+        subtitle: 'Choose the right plan for you',
+        items: extracted.pricing,
+      },
+    });
+  }
+
+  // 6. FAQ BLOCK (for SaaS/service pages)
+  if (contentType === 'saas' || contentType === 'service') {
     blocks.push({
       id: genId(),
       type: 'faq',
@@ -324,26 +333,12 @@ function generateBlocksFromDescription(
       width: 4,
       config: {
         title: 'Frequently Asked Questions',
-        items: generateFAQ(productName, pageType),
+        items: generateContextualFAQ(extracted.name, contentType, extracted),
       },
     });
   }
 
-  // 7. ABOUT/TEXT BLOCK (for about pages or if portfolio)
-  if (pageType === 'about' || pageType === 'portfolio') {
-    blocks.push({
-      id: genId(),
-      type: 'text',
-      order: blocks.length,
-      width: 4,
-      config: {
-        content: generateAboutText(originalDesc, productName, pageType),
-        alignment: 'center',
-      },
-    });
-  }
-
-  // 8. FORM + CHAT (side by side or separate)
+  // 7. FORM + CHAT (side by side if both)
   if (includeForm && includeChat) {
     blocks.push({
       id: genId(),
@@ -352,10 +347,12 @@ function generateBlocksFromDescription(
       width: 2,
       config: {
         formId: '',
-        title: pageType === 'coming-soon' ? 'Get Early Access' : 'Get in Touch',
-        description: pageType === 'coming-soon'
-          ? 'Be the first to know when we launch.'
-          : `Have questions about ${productName || 'our services'}? We'd love to hear from you.`,
+        title: contentType === 'resume' ? 'Get in Touch' : contentType === 'coming-soon' ? 'Get Early Access' : 'Contact Me',
+        description: contentType === 'resume'
+          ? `Interested in working together? Let's connect.`
+          : contentType === 'coming-soon'
+            ? 'Be the first to know when we launch.'
+            : `Have questions? I'd love to hear from you.`,
       },
     });
     blocks.push({
@@ -364,8 +361,8 @@ function generateBlocksFromDescription(
       order: blocks.length,
       width: 2,
       config: {
-        title: 'Chat with Us',
-        subtitle: 'Get instant answers',
+        title: 'Quick Questions?',
+        subtitle: 'Chat with AI for instant answers',
         placeholder: 'Ask anything...',
         position: 'inline',
         primaryColor: colors.primary,
@@ -379,10 +376,10 @@ function generateBlocksFromDescription(
       width: 4,
       config: {
         formId: '',
-        title: pageType === 'coming-soon' ? 'Get Early Access' : 'Get Started Today',
-        description: pageType === 'coming-soon'
-          ? 'Enter your email to be notified when we launch.'
-          : `Ready to experience ${productName || 'what we offer'}? Fill out the form below.`,
+        title: contentType === 'resume' ? 'Let\'s Connect' : 'Get Started',
+        description: contentType === 'resume'
+          ? 'Reach out for opportunities, collaborations, or just to say hello.'
+          : 'Fill out the form and I\'ll get back to you shortly.',
       },
     });
   } else if (includeChat) {
@@ -393,7 +390,7 @@ function generateBlocksFromDescription(
       width: 4,
       config: {
         title: 'Have Questions?',
-        subtitle: `Chat with our AI about ${productName || 'anything'}`,
+        subtitle: 'Get instant answers',
         placeholder: 'Type your question...',
         position: 'inline',
         primaryColor: colors.primary,
@@ -401,299 +398,380 @@ function generateBlocksFromDescription(
     });
   }
 
-  // 9. FINAL CTA BLOCK
+  // 8. FINAL CTA
   blocks.push({
     id: genId(),
     type: 'cta',
     order: blocks.length,
     width: 4,
     config: {
-      headline: generateFinalCTAHeadline(pageType, productName),
-      description: generateFinalCTADescription(pageType, productName),
-      buttonText: generateCTA(desc, pageType),
+      headline: extracted.ctaHeadline,
+      description: extracted.ctaDescription,
+      buttonText: extracted.cta,
       buttonLink: '#contact',
       backgroundColor: colors.primary,
-      textColor: 'light',
+      textColor: isLightStyle ? 'dark' : 'light',
     },
   });
 
   return blocks;
 }
 
-// Helper functions for smart content extraction
+// Detect what type of content we're dealing with
+function detectContentType(_original: string, lower: string): string {
+  // Resume indicators
+  const resumeIndicators = [
+    'professional experience', 'work experience', 'employment', 'resume',
+    'curriculum vitae', 'cv', 'professional summary', 'career',
+    'years of experience', 'staff engineer', 'senior engineer', 'manager',
+    'director', 'architect', 'developer', 'designer',
+    '@', 'email', 'phone', 'linkedin'
+  ];
+  const resumeScore = resumeIndicators.filter(i => lower.includes(i)).length;
+  if (resumeScore >= 3 || (lower.includes('experience') && lower.includes('|'))) {
+    return 'resume';
+  }
 
-function extractProductName(description: string): string {
-  // Look for patterns like "for X" or "called X" or capitalized words
-  const forMatch = description.match(/(?:for|called|named|introducing)\s+([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+)?)/);
-  if (forMatch) return forMatch[1];
+  // Other content types
+  if (lower.includes('coming soon') || lower.includes('launching') || lower.includes('waitlist')) return 'coming-soon';
+  if (lower.includes('portfolio') || lower.includes('my work') || lower.includes('projects')) return 'portfolio';
+  if (lower.includes('saas') || lower.includes('software') || lower.includes('app') || lower.includes('platform')) return 'saas';
+  if (lower.includes('service') || lower.includes('agency') || lower.includes('consulting')) return 'service';
+  if (lower.includes('product') || lower.includes('shop') || lower.includes('buy')) return 'product';
+  if (lower.includes('pricing') || lower.includes('plans')) return 'pricing';
 
-  // Look for capitalized product names
-  const capsMatch = description.match(/\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b/);
-  if (capsMatch) return capsMatch[1];
-
-  // Look for quoted names
-  const quotedMatch = description.match(/["']([^"']+)["']/);
-  if (quotedMatch) return quotedMatch[1];
-
-  return '';
-}
-
-function detectPageType(desc: string): string {
-  if (desc.includes('coming soon') || desc.includes('launch') || desc.includes('waitlist')) return 'coming-soon';
-  if (desc.includes('portfolio') || desc.includes('freelanc') || desc.includes('my work')) return 'portfolio';
-  if (desc.includes('about') || desc.includes('our story') || desc.includes('who we are')) return 'about';
-  if (desc.includes('pricing') || desc.includes('plans')) return 'pricing';
-  if (desc.includes('saas') || desc.includes('software') || desc.includes('app') || desc.includes('platform') || desc.includes('tool')) return 'saas';
-  if (desc.includes('service') || desc.includes('agency') || desc.includes('consulting')) return 'service';
-  if (desc.includes('product') || desc.includes('shop') || desc.includes('buy')) return 'product';
   return 'general';
 }
 
-function generateHeadline(desc: string, productName: string, pageType: string): string {
-  if (pageType === 'coming-soon') {
-    return productName ? `${productName} is Coming Soon` : 'Something Amazing is Coming';
-  }
-  if (pageType === 'portfolio') {
-    return productName || 'Creative Solutions for Your Vision';
-  }
-  if (pageType === 'about') {
-    return productName ? `About ${productName}` : 'Our Story';
-  }
-
-  // Try to extract a compelling headline from the description
-  const words = desc.split(/[.,!?]/)[0].trim();
-  if (words.length > 10 && words.length < 80) {
-    // Capitalize first letter of each word for headline
-    return words.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-  }
-
-  if (productName) {
-    const descriptors = ['Transform', 'Elevate', 'Supercharge', 'Simplify', 'Revolutionize'];
-    const descriptor = descriptors[Math.floor(Math.random() * descriptors.length)];
-    return `${descriptor} Your Workflow with ${productName}`;
-  }
-
-  return 'The Smart Solution for Modern Teams';
+interface ExtractedContent {
+  name: string;
+  headline: string;
+  subheadline: string;
+  cta: string;
+  ctaHeadline: string;
+  ctaDescription: string;
+  featuresTitle: string;
+  featuresSubtitle: string;
+  features: Array<{ icon: string; title: string; description: string }>;
+  stats: Array<{ value: string; label: string }>;
+  experiences: Array<{ title: string; company: string; description: string }>;
+  pricing: Array<{ name: string; price: string; period: string; features: string[]; highlighted: boolean; buttonText: string; buttonLink: string }>;
 }
 
-function generateSubheadline(desc: string, productName: string, pageType: string): string {
-  if (pageType === 'coming-soon') {
-    return 'Be the first to know when we launch. Sign up for early access and exclusive updates.';
-  }
-  if (pageType === 'portfolio') {
-    return 'Bringing ideas to life through thoughtful design and innovative solutions.';
+function extractContent(description: string, contentType: string): ExtractedContent {
+  const lines = description.split('\n').filter(l => l.trim());
+  const lower = description.toLowerCase();
+
+  // Extract name (first capitalized word sequence or first line)
+  let name = '';
+  const nameMatch = description.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/m);
+  if (nameMatch) {
+    name = nameMatch[1];
+  } else if (lines[0] && lines[0].length < 50) {
+    name = lines[0].replace(/[|•\-–]/g, '').trim().split(/\s{2,}/)[0];
   }
 
-  // Try to extract description from after the first sentence
-  const sentences = desc.split(/[.!?]+/).filter(s => s.trim());
-  if (sentences.length > 1) {
-    const subheadline = sentences[1].trim();
-    if (subheadline.length > 20 && subheadline.length < 200) {
-      return subheadline.charAt(0).toUpperCase() + subheadline.slice(1);
+  // Extract title/role
+  let title = '';
+  const titlePatterns = [
+    /(?:staff|senior|lead|principal|chief|head|director|manager|vp|cto|ceo|cfo|coo)\s+[\w\s]+(?:engineer|architect|developer|designer|analyst|scientist|manager|director)/i,
+    /[\w\s]+(?:engineer|architect|developer|designer|analyst|scientist|consultant|specialist)/i,
+  ];
+  for (const pattern of titlePatterns) {
+    const match = description.match(pattern);
+    if (match) {
+      title = match[0].trim();
+      break;
     }
   }
 
-  return productName
-    ? `Discover how ${productName} can help you achieve more with less effort.`
-    : 'Powerful features, intuitive design, and results that speak for themselves.';
+  // Extract years of experience
+  let yearsExp = '';
+  const yearsMatch = description.match(/(\d+)\+?\s*years?\s*(?:of\s+)?experience/i);
+  if (yearsMatch) {
+    yearsExp = yearsMatch[1] + '+';
+  }
+
+  // Extract key skills/technologies
+  const techKeywords = [
+    'AWS', 'Azure', 'GCP', 'Python', 'JavaScript', 'TypeScript', 'React', 'Node.js',
+    'Docker', 'Kubernetes', 'AI', 'ML', 'Machine Learning', 'Cloud', 'DevOps',
+    'Infrastructure', 'Security', 'Data', 'Analytics', 'API', 'Microservices',
+    'Serverless', 'Lambda', 'DynamoDB', 'PostgreSQL', 'MongoDB', 'Redis',
+    'CI/CD', 'Terraform', 'CloudFormation', 'SAM', 'FastAPI', 'Django', 'Flask'
+  ];
+  const foundTech = techKeywords.filter(t => lower.includes(t.toLowerCase()));
+
+  // Extract achievements/metrics
+  const achievements: string[] = [];
+  const achievementPatterns = [
+    /achieved\s+\$?[\d,]+[KkMm]?\+?\s*(?:annual\s+)?(?:savings|revenue|growth)/gi,
+    /reduced\s+[\w\s]+by\s+\d+%/gi,
+    /improved\s+[\w\s]+by\s+\d+%/gi,
+    /\d+%\s+(?:reduction|improvement|growth|increase)/gi,
+    /\$[\d,]+[KkMm]?\+?\s*(?:savings|revenue)/gi,
+  ];
+  for (const pattern of achievementPatterns) {
+    const matches = description.match(pattern);
+    if (matches) {
+      achievements.push(...matches.slice(0, 2));
+    }
+  }
+
+  // Extract experience entries
+  const experiences: Array<{ title: string; company: string; description: string }> = [];
+  const expPattern = /([A-Z][\w\s,]+)\n([A-Z][\w\s]+)\s*\|\s*(\w+\s+\d{4})/g;
+  let expMatch;
+  while ((expMatch = expPattern.exec(description)) !== null) {
+    experiences.push({
+      title: expMatch[1].trim(),
+      company: expMatch[2].trim(),
+      description: '',
+    });
+  }
+
+  // Generate content based on type
+  if (contentType === 'resume') {
+    return {
+      name,
+      headline: name || 'Professional Portfolio',
+      subheadline: title
+        ? `${title}${yearsExp ? ` with ${yearsExp} years of experience` : ''}`
+        : 'Driving innovation and delivering results',
+      cta: 'Get in Touch',
+      ctaHeadline: `Let's Work Together`,
+      ctaDescription: 'Open to new opportunities and collaborations.',
+      featuresTitle: 'Core Expertise',
+      featuresSubtitle: 'Key skills and specializations',
+      features: generateSkillFeatures(foundTech, lower),
+      stats: generateResumeStats(yearsExp, achievements, lower),
+      experiences,
+      pricing: [],
+    };
+  }
+
+  if (contentType === 'coming-soon') {
+    return {
+      name: name || 'Something Amazing',
+      headline: `${name || 'Something Amazing'} is Coming`,
+      subheadline: 'We\'re working on something special. Be the first to know when we launch.',
+      cta: 'Notify Me',
+      ctaHeadline: 'Don\'t Miss Out',
+      ctaDescription: 'Join our waitlist for exclusive early access.',
+      featuresTitle: 'What to Expect',
+      featuresSubtitle: 'Here\'s a sneak peek',
+      features: [
+        { icon: 'zap', title: 'Lightning Fast', description: 'Built for speed and performance.' },
+        { icon: 'shield', title: 'Secure by Design', description: 'Your data\'s safety is our priority.' },
+        { icon: 'star', title: 'Beautiful Experience', description: 'Crafted with attention to every detail.' },
+      ],
+      stats: [],
+      experiences: [],
+      pricing: [],
+    };
+  }
+
+  // Default/general extraction
+  return {
+    name: name || extractProductName(description),
+    headline: generateSmartHeadline(description, name, contentType),
+    subheadline: generateSmartSubheadline(description, contentType),
+    cta: generateSmartCTA(lower, contentType),
+    ctaHeadline: `Ready to Get Started?`,
+    ctaDescription: `Take the next step and see what ${name || 'we'} can do for you.`,
+    featuresTitle: contentType === 'service' ? 'Our Services' : 'Key Features',
+    featuresSubtitle: contentType === 'service' ? 'How we can help' : 'Everything you need',
+    features: extractSmartFeatures(description, lower, contentType),
+    stats: [],
+    experiences: [],
+    pricing: extractPricingTiers(description),
+  };
 }
 
-function generateCTA(desc: string, pageType: string): string {
-  if (pageType === 'coming-soon') return 'Notify Me';
-  if (pageType === 'portfolio') return 'View My Work';
-  if (pageType === 'about') return 'Get in Touch';
-
-  if (desc.includes('trial')) return 'Start Free Trial';
-  if (desc.includes('demo')) return 'Request Demo';
-  if (desc.includes('free')) return 'Get Started Free';
-  if (desc.includes('book') || desc.includes('call')) return 'Book a Call';
-  if (desc.includes('contact')) return 'Contact Us';
-  if (desc.includes('signup') || desc.includes('sign up')) return 'Sign Up Now';
-
-  return 'Get Started';
-}
-
-function extractFeatures(desc: string, pageType: string): Array<{ icon: string; title: string; description: string }> {
+function generateSkillFeatures(tech: string[], lower: string): Array<{ icon: string; title: string; description: string }> {
   const features: Array<{ icon: string; title: string; description: string }> = [];
 
-  // Common feature keywords and their icons
-  const featureMap: Record<string, { icon: string; title: string; description: string }> = {
-    'ai': { icon: 'zap', title: 'AI-Powered', description: 'Leverage cutting-edge AI to automate and enhance your workflow.' },
-    'smart': { icon: 'zap', title: 'Smart Automation', description: 'Intelligent features that adapt to your needs and save time.' },
-    'fast': { icon: 'rocket', title: 'Lightning Fast', description: 'Optimized performance for blazing-fast results.' },
-    'speed': { icon: 'rocket', title: 'Built for Speed', description: 'Get things done in seconds, not hours.' },
-    'secure': { icon: 'shield', title: 'Enterprise Security', description: 'Bank-level encryption keeps your data safe.' },
-    'privacy': { icon: 'shield', title: 'Privacy First', description: 'Your data stays yours. Full control over your information.' },
-    'team': { icon: 'users', title: 'Team Collaboration', description: 'Work together seamlessly with your entire team.' },
-    'collaborat': { icon: 'users', title: 'Real-time Collaboration', description: 'Sync and collaborate with team members instantly.' },
-    'analytic': { icon: 'target', title: 'Deep Analytics', description: 'Get actionable insights from comprehensive data.' },
-    'track': { icon: 'target', title: 'Smart Tracking', description: 'Monitor progress and metrics in real-time.' },
-    'integrat': { icon: 'globe', title: 'Easy Integrations', description: 'Connect with the tools you already use.' },
-    'automat': { icon: 'zap', title: 'Automation', description: 'Automate repetitive tasks and focus on what matters.' },
-    'custom': { icon: 'star', title: 'Fully Customizable', description: 'Tailor everything to match your workflow.' },
-    'support': { icon: 'heart', title: '24/7 Support', description: 'Our team is always here to help you succeed.' },
-    'time': { icon: 'clock', title: 'Save Time', description: 'Streamline your process and reclaim your day.' },
-    'report': { icon: 'target', title: 'Rich Reports', description: 'Beautiful, actionable reports at your fingertips.' },
-  };
-
-  const descLower = desc.toLowerCase();
-
-  // Find mentioned features
-  for (const [keyword, feature] of Object.entries(featureMap)) {
-    if (descLower.includes(keyword) && features.length < 6) {
-      if (!features.some(f => f.icon === feature.icon)) {
-        features.push(feature);
-      }
-    }
+  // Map tech to feature categories
+  if (tech.some(t => ['AWS', 'Azure', 'GCP', 'Cloud'].includes(t)) || lower.includes('cloud')) {
+    features.push({ icon: 'cloud', title: 'Cloud Architecture', description: 'Designing and managing scalable cloud infrastructure across AWS, Azure, and GCP.' });
+  }
+  if (tech.some(t => ['AI', 'ML', 'Machine Learning'].includes(t)) || lower.includes('ai') || lower.includes('machine learning')) {
+    features.push({ icon: 'zap', title: 'AI & Automation', description: 'Building intelligent systems that automate workflows and drive efficiency.' });
+  }
+  if (tech.some(t => ['Docker', 'Kubernetes', 'DevOps', 'CI/CD'].includes(t)) || lower.includes('devops')) {
+    features.push({ icon: 'git-branch', title: 'DevOps & Infrastructure', description: 'Implementing CI/CD pipelines and container orchestration at scale.' });
+  }
+  if (lower.includes('team') || lower.includes('lead') || lower.includes('manage') || lower.includes('mentor')) {
+    features.push({ icon: 'users', title: 'Technical Leadership', description: 'Leading and mentoring engineering teams to deliver exceptional results.' });
+  }
+  if (lower.includes('security') || lower.includes('secure') || lower.includes('zero-trust')) {
+    features.push({ icon: 'shield', title: 'Security', description: 'Implementing enterprise-grade security and compliance measures.' });
+  }
+  if (lower.includes('cost') || lower.includes('optimization') || lower.includes('savings')) {
+    features.push({ icon: 'target', title: 'Cost Optimization', description: 'Driving significant savings through strategic resource optimization.' });
   }
 
-  // Fill with defaults based on page type
-  const defaults: Record<string, Array<{ icon: string; title: string; description: string }>> = {
-    saas: [
-      { icon: 'zap', title: 'Powerful Features', description: 'Everything you need in one platform.' },
-      { icon: 'shield', title: 'Secure & Reliable', description: 'Enterprise-grade security and 99.9% uptime.' },
-      { icon: 'heart', title: 'World-class Support', description: 'Help when you need it, from people who care.' },
-    ],
-    portfolio: [
-      { icon: 'star', title: 'Creative Vision', description: 'Unique designs tailored to your brand.' },
-      { icon: 'rocket', title: 'Fast Delivery', description: 'Quality work delivered on schedule.' },
-      { icon: 'heart', title: 'Client-Focused', description: 'Your success is my priority.' },
-    ],
-    service: [
-      { icon: 'star', title: 'Expert Team', description: 'Industry veterans dedicated to your success.' },
-      { icon: 'target', title: 'Proven Results', description: 'Track record of delivering outcomes.' },
-      { icon: 'users', title: 'Personalized Approach', description: 'Solutions tailored to your unique needs.' },
-    ],
-    general: [
-      { icon: 'zap', title: 'Easy to Use', description: 'Intuitive interface anyone can master.' },
-      { icon: 'shield', title: 'Reliable', description: 'Dependable performance you can trust.' },
-      { icon: 'star', title: 'Top Rated', description: 'Loved by thousands of customers.' },
-    ],
-  };
+  // Fill with defaults if needed
+  const defaults = [
+    { icon: 'star', title: 'Problem Solving', description: 'Tackling complex challenges with innovative solutions.' },
+    { icon: 'rocket', title: 'Fast Execution', description: 'Delivering results quickly without compromising quality.' },
+    { icon: 'heart', title: 'Collaboration', description: 'Building strong relationships across teams and stakeholders.' },
+  ];
 
-  const typeDefaults = defaults[pageType] || defaults.general;
-
-  while (features.length < 3) {
-    const def = typeDefaults[features.length];
-    if (def && !features.some(f => f.icon === def.icon)) {
+  while (features.length < 3 && defaults.length > 0) {
+    const def = defaults.shift()!;
+    if (!features.some(f => f.icon === def.icon)) {
       features.push(def);
-    } else {
-      break;
     }
   }
 
   return features.slice(0, 3);
 }
 
-function generateFeaturesSubtitle(pageType: string, productName: string): string {
-  if (pageType === 'portfolio') return 'Services designed to bring your vision to life';
-  if (pageType === 'service') return 'Why clients choose us';
-  return productName ? `Why ${productName} is the smart choice` : 'Everything you need to succeed';
+function generateResumeStats(yearsExp: string, _achievements: string[], lower: string): Array<{ value: string; label: string }> {
+  const stats: Array<{ value: string; label: string }> = [];
+
+  if (yearsExp) {
+    stats.push({ value: yearsExp, label: 'Years Experience' });
+  }
+
+  // Look for specific numbers
+  const savingsMatch = lower.match(/\$(\d+)[kK]\+?/);
+  if (savingsMatch) {
+    stats.push({ value: `$${savingsMatch[1]}K+`, label: 'Cost Savings' });
+  }
+
+  const percentMatch = lower.match(/(\d+)%/);
+  if (percentMatch && !stats.some(s => s.value.includes('%'))) {
+    stats.push({ value: `${percentMatch[1]}%`, label: 'Improvement' });
+  }
+
+  // Server/infrastructure count
+  const serverMatch = lower.match(/(\d+)\+?\s*servers?/);
+  if (serverMatch) {
+    stats.push({ value: `${serverMatch[1]}+`, label: 'Servers Managed' });
+  }
+
+  // Team size
+  const teamMatch = lower.match(/(\d+)[-\s]?person\s+team/);
+  if (teamMatch) {
+    stats.push({ value: teamMatch[1], label: 'Team Size' });
+  }
+
+  return stats.slice(0, 4);
 }
 
-function generateStats(desc: string, _pageType: string): Array<{ value: string; label: string }> {
-  const defaults = [
-    { value: '10K+', label: 'Happy Customers' },
-    { value: '99%', label: 'Satisfaction Rate' },
-    { value: '24/7', label: 'Support' },
-    { value: '50+', label: 'Countries' },
-  ];
+function extractProductName(description: string): string {
+  const forMatch = description.match(/(?:for|called|named|introducing)\s+([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+)?)/);
+  if (forMatch) return forMatch[1];
 
-  // Check for numbers in description
-  const numbers = desc.match(/\d+[KkMm+%]?/g);
-  if (numbers && numbers.length >= 2) {
-    return [
-      { value: numbers[0].toUpperCase(), label: 'Users' },
-      { value: numbers[1] || '99%', label: 'Satisfaction' },
-      { value: '24/7', label: 'Support' },
-      { value: numbers[2] || '50+', label: 'Countries' },
-    ];
-  }
-
-  return defaults;
-}
-
-function extractPricingTiers(desc: string): Array<{
-  name: string;
-  price: string;
-  period: string;
-  features: string[];
-  highlighted: boolean;
-  buttonText: string;
-  buttonLink: string;
-}> {
-  // Try to extract pricing from description
-  const priceMatches = desc.match(/\$\d+(?:\/mo(?:nth)?)?/gi);
-  const tierNames = desc.match(/(?:free|starter|basic|pro|premium|enterprise|business)/gi);
-
-  if (priceMatches && priceMatches.length >= 2) {
-    const tiers = [];
-    for (let i = 0; i < Math.min(priceMatches.length, 3); i++) {
-      const price = priceMatches[i];
-      const name = tierNames?.[i] || ['Starter', 'Pro', 'Enterprise'][i];
-      tiers.push({
-        name: name.charAt(0).toUpperCase() + name.slice(1).toLowerCase(),
-        price: price.replace(/\/mo(?:nth)?/i, ''),
-        period: '/month',
-        features: ['Core features', 'Email support', `${i + 1} user${i > 0 ? 's' : ''}`],
-        highlighted: i === 1,
-        buttonText: 'Get Started',
-        buttonLink: '#',
-      });
-    }
-    return tiers;
-  }
-
-  // Default pricing tiers
-  return [
-    { name: 'Starter', price: 'Free', period: '', features: ['Core features', 'Community support', '1 project'], highlighted: false, buttonText: 'Get Started', buttonLink: '#' },
-    { name: 'Pro', price: '$19', period: '/month', features: ['Everything in Starter', 'Priority support', 'Unlimited projects', 'Advanced analytics'], highlighted: true, buttonText: 'Start Free Trial', buttonLink: '#' },
-    { name: 'Enterprise', price: 'Custom', period: '', features: ['Everything in Pro', 'Dedicated support', 'Custom integrations', 'SLA guarantee'], highlighted: false, buttonText: 'Contact Sales', buttonLink: '#' },
-  ];
-}
-
-function generateFAQ(productName: string, pageType: string): Array<{ question: string; answer: string }> {
-  const name = productName || 'our product';
-
-  if (pageType === 'saas') {
-    return [
-      { question: `How does ${name} work?`, answer: `Simply sign up for a free account, and you'll be guided through a quick setup. Our intuitive interface makes it easy to get started in minutes.` },
-      { question: 'Is there a free trial?', answer: 'Yes! We offer a 14-day free trial with full access to all features. No credit card required.' },
-      { question: 'Can I cancel anytime?', answer: 'Absolutely. There are no long-term contracts or cancellation fees. Cancel anytime with just a few clicks.' },
-      { question: 'What kind of support do you offer?', answer: 'We offer email support for all plans, with priority support and dedicated account managers available on higher tiers.' },
-    ];
-  }
-
-  return [
-    { question: 'How do I get started?', answer: 'Simply reach out through our contact form or chat. We\'ll schedule a quick call to understand your needs and create a custom plan.' },
-    { question: 'What is your turnaround time?', answer: 'It depends on the project scope, but most projects are completed within 2-4 weeks. We\'ll provide a detailed timeline during our initial consultation.' },
-    { question: 'Do you offer revisions?', answer: 'Yes! We include revision rounds in all our packages to ensure you\'re completely satisfied with the final result.' },
-  ];
-}
-
-function generateAboutText(_desc: string, productName: string, pageType: string): string {
-  if (pageType === 'portfolio') {
-    return `I'm passionate about creating beautiful, functional designs that help businesses thrive. With years of experience and a keen eye for detail, I bring a unique perspective to every project.\n\nWhether you need a brand identity, website, or marketing materials, I'm here to turn your vision into reality.`;
-  }
-
-  if (pageType === 'about') {
-    return productName
-      ? `${productName} was founded with a simple mission: to make things better for our customers. We believe in the power of innovation, the importance of quality, and the value of putting people first.\n\nToday, we serve thousands of customers worldwide, and we're just getting started.`
-      : `We're a team of passionate individuals dedicated to making a difference. Our mission is simple: deliver exceptional value to our customers while building something we're proud of.`;
-  }
+  const capsMatch = description.match(/\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b/);
+  if (capsMatch) return capsMatch[1];
 
   return '';
 }
 
-function generateFinalCTAHeadline(pageType: string, productName: string): string {
-  if (pageType === 'coming-soon') return 'Don\'t Miss Out';
-  if (pageType === 'portfolio') return 'Ready to Start Your Project?';
-  if (productName) return `Ready to Try ${productName}?`;
-  return 'Ready to Get Started?';
+function generateSmartHeadline(desc: string, name: string, contentType: string): string {
+  const firstLine = desc.split('\n')[0].trim();
+  if (firstLine.length > 5 && firstLine.length < 60) {
+    return firstLine;
+  }
+
+  if (name) {
+    if (contentType === 'saas') return `${name}: Work Smarter, Not Harder`;
+    if (contentType === 'service') return `${name}: Results That Speak`;
+    return name;
+  }
+
+  return 'Transform How You Work';
 }
 
-function generateFinalCTADescription(pageType: string, productName: string): string {
-  if (pageType === 'coming-soon') return 'Join our waitlist and be the first to experience what we\'re building.';
-  if (pageType === 'portfolio') return 'Let\'s discuss your project and create something amazing together.';
-  return `Join thousands of satisfied customers who have already discovered the ${productName || 'difference'}.`;
+function generateSmartSubheadline(desc: string, contentType: string): string {
+  const sentences = desc.split(/[.!?]+/).filter(s => s.trim().length > 20);
+  if (sentences[1] && sentences[1].length < 150) {
+    return sentences[1].trim();
+  }
+
+  if (contentType === 'saas') return 'The all-in-one platform that helps teams do more with less.';
+  if (contentType === 'service') return 'We deliver results that matter, on time and on budget.';
+  return 'Powerful features designed to help you succeed.';
+}
+
+function generateSmartCTA(lower: string, contentType: string): string {
+  if (lower.includes('trial')) return 'Start Free Trial';
+  if (lower.includes('demo')) return 'Request Demo';
+  if (lower.includes('book') || lower.includes('call')) return 'Book a Call';
+  if (contentType === 'service') return 'Get a Quote';
+  return 'Get Started';
+}
+
+function extractSmartFeatures(_desc: string, lower: string, _contentType: string): Array<{ icon: string; title: string; description: string }> {
+  const features: Array<{ icon: string; title: string; description: string }> = [];
+
+  const featureMap: Record<string, { icon: string; title: string; description: string }> = {
+    'ai': { icon: 'zap', title: 'AI-Powered', description: 'Leverage cutting-edge AI to automate and enhance your workflow.' },
+    'fast': { icon: 'rocket', title: 'Lightning Fast', description: 'Optimized for speed so you can focus on what matters.' },
+    'secure': { icon: 'shield', title: 'Enterprise Security', description: 'Bank-level encryption keeps your data safe.' },
+    'team': { icon: 'users', title: 'Team Collaboration', description: 'Work together seamlessly with your entire team.' },
+    'analytic': { icon: 'target', title: 'Rich Analytics', description: 'Actionable insights from comprehensive data.' },
+    'integrat': { icon: 'globe', title: 'Easy Integrations', description: 'Connect with tools you already use.' },
+    'automat': { icon: 'zap', title: 'Automation', description: 'Automate repetitive tasks and save time.' },
+    'support': { icon: 'heart', title: '24/7 Support', description: 'Our team is always here to help.' },
+  };
+
+  for (const [keyword, feature] of Object.entries(featureMap)) {
+    if (lower.includes(keyword) && features.length < 3) {
+      features.push(feature);
+    }
+  }
+
+  const defaults = [
+    { icon: 'zap', title: 'Powerful', description: 'Everything you need in one place.' },
+    { icon: 'shield', title: 'Reliable', description: 'Dependable performance you can trust.' },
+    { icon: 'heart', title: 'Loved', description: 'Trusted by thousands of happy customers.' },
+  ];
+
+  while (features.length < 3) {
+    features.push(defaults[features.length]);
+  }
+
+  return features;
+}
+
+function extractPricingTiers(desc: string): Array<{ name: string; price: string; period: string; features: string[]; highlighted: boolean; buttonText: string; buttonLink: string }> {
+  const priceMatches = desc.match(/\$\d+(?:\/mo)?/gi);
+  if (!priceMatches || priceMatches.length < 2) return [];
+
+  return [
+    { name: 'Starter', price: 'Free', period: '', features: ['Core features', 'Community support'], highlighted: false, buttonText: 'Get Started', buttonLink: '#' },
+    { name: 'Pro', price: priceMatches[0].replace(/\/mo/i, ''), period: '/month', features: ['Everything in Starter', 'Priority support', 'Advanced features'], highlighted: true, buttonText: 'Start Trial', buttonLink: '#' },
+    { name: 'Enterprise', price: 'Custom', period: '', features: ['Everything in Pro', 'Dedicated support', 'Custom integrations'], highlighted: false, buttonText: 'Contact Us', buttonLink: '#' },
+  ];
+}
+
+function generateContextualFAQ(name: string, contentType: string, _extracted: ExtractedContent): Array<{ question: string; answer: string }> {
+  const productName = name || 'our solution';
+
+  if (contentType === 'saas') {
+    return [
+      { question: `How does ${productName} work?`, answer: 'Sign up for free, complete a quick setup, and you\'re ready to go. Our intuitive interface makes it easy to get started in minutes.' },
+      { question: 'Is there a free trial?', answer: 'Yes! We offer a 14-day free trial with full access to all features. No credit card required.' },
+      { question: 'Can I cancel anytime?', answer: 'Absolutely. No long-term contracts or cancellation fees. Cancel anytime.' },
+    ];
+  }
+
+  return [
+    { question: 'How do I get started?', answer: 'Reach out through our contact form or chat. We\'ll schedule a call to understand your needs.' },
+    { question: 'What is your turnaround time?', answer: 'Most projects complete within 2-4 weeks, depending on scope.' },
+  ];
+}
+
+function formatExperience(experiences: Array<{ title: string; company: string; description: string }>): string {
+  if (experiences.length === 0) return '';
+
+  let text = '## Professional Experience\n\n';
+  for (const exp of experiences.slice(0, 3)) {
+    text += `**${exp.title}**\n${exp.company}\n\n`;
+  }
+  return text;
 }

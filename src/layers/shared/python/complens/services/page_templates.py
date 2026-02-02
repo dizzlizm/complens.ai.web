@@ -732,6 +732,27 @@ def render_form_html(form: dict, workspace_id: str, primary_color: str = "#6366f
     </section>'''
 
 
+def _escape_js_string(s: str) -> str:
+    """Escape a string for safe inclusion in JavaScript single-quoted string.
+
+    Args:
+        s: String to escape.
+
+    Returns:
+        Escaped string safe for JS single quotes.
+    """
+    if not s:
+        return ""
+    # Escape backslashes first, then single quotes, then newlines
+    return (
+        s.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("</script>", "<\\/script>")  # Prevent script injection
+    )
+
+
 def render_full_page(
     page: dict,
     ws_url: str,
@@ -761,7 +782,7 @@ def render_full_page(
     workspace_id = page.get("workspace_id", "")
     chat_config = page.get("chat_config", {})
     chat_enabled = chat_config.get("enabled", True) if chat_config else True
-    chat_initial_message = chat_config.get("initial_message", "") if chat_config else ""
+    chat_initial_message = _escape_js_string(chat_config.get("initial_message", "") if chat_config else "")
     form_ids = page.get("form_ids", [])
     forms = forms or []
 
@@ -775,75 +796,121 @@ def render_full_page(
         chat_script = f"""
 <script>
 (function() {{
-  const WS_URL = '{ws_url}';
-  const PAGE_ID = '{page_id}';
-  let ws, visitorId = localStorage.getItem('complens_vid') || (function() {{
-    const id = 'v_' + Math.random().toString(36).substr(2, 9);
-    localStorage.setItem('complens_vid', id);
-    return id;
-  }})();
+  try {{
+    var WS_URL = '{ws_url}';
+    var PAGE_ID = '{page_id}';
+    var ws = null;
+    var visitorId = localStorage.getItem('complens_vid');
+    if (!visitorId) {{
+      visitorId = 'v_' + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem('complens_vid', visitorId);
+    }}
 
-  function createWidget() {{
-    const container = document.createElement('div');
-    container.id = 'complens-chat';
-    container.innerHTML = `
-      <div id="chat-bubble" onclick="window.toggleChat()" style="position:fixed;bottom:24px;right:24px;width:60px;height:60px;border-radius:50%;background:{primary_color};cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(0,0,0,0.2);z-index:9999;transition:transform 0.2s;">
-        <svg width="28" height="28" fill="white" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
-      </div>
-      <div id="chat-panel" style="display:none;position:fixed;bottom:96px;right:24px;width:380px;max-width:calc(100vw - 48px);height:500px;max-height:60vh;background:white;border-radius:16px;box-shadow:0 8px 40px rgba(0,0,0,0.2);z-index:9999;flex-direction:column;overflow:hidden;">
-        <div style="padding:16px 20px;background:{primary_color};color:white;font-weight:600;">Chat with us</div>
-        <div id="chat-messages" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;"></div>
-        <div style="padding:12px;border-top:1px solid #eee;display:flex;gap:8px;">
-          <input id="chat-input" type="text" placeholder="Type a message..." style="flex:1;padding:10px 14px;border:1px solid #ddd;border-radius:24px;outline:none;" onkeypress="if(event.key==='Enter')window.sendChat()">
-          <button onclick="window.sendChat()" style="padding:10px 20px;background:{primary_color};color:white;border:none;border-radius:24px;cursor:pointer;font-weight:500;">Send</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(container);
-  }}
+    function createWidget() {{
+      try {{
+        var container = document.createElement('div');
+        container.id = 'complens-chat';
+        container.innerHTML = '<div id="chat-bubble" style="position:fixed;bottom:24px;right:24px;width:60px;height:60px;border-radius:50%;background:{primary_color};cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(0,0,0,0.2);z-index:9999;transition:transform 0.2s;"><svg width="28" height="28" fill="white" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg></div><div id="chat-panel" style="display:none;position:fixed;bottom:96px;right:24px;width:380px;max-width:calc(100vw - 48px);height:500px;max-height:60vh;background:white;border-radius:16px;box-shadow:0 8px 40px rgba(0,0,0,0.2);z-index:9999;flex-direction:column;overflow:hidden;"><div style="padding:16px 20px;background:{primary_color};color:white;font-weight:600;">Chat with us</div><div id="chat-messages" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;"></div><div style="padding:12px;border-top:1px solid #eee;display:flex;gap:8px;"><input id="chat-input" type="text" placeholder="Type a message..." style="flex:1;padding:10px 14px;border:1px solid #ddd;border-radius:24px;outline:none;"><button id="chat-send-btn" style="padding:10px 20px;background:{primary_color};color:white;border:none;border-radius:24px;cursor:pointer;font-weight:500;">Send</button></div></div>';
+        document.body.appendChild(container);
 
-  window.toggleChat = function() {{
-    const panel = document.getElementById('chat-panel');
-    const isOpen = panel.style.display !== 'none';
-    panel.style.display = isOpen ? 'none' : 'flex';
-    if (!isOpen && !ws) connectWS();
-  }};
+        // Attach event listeners
+        document.getElementById('chat-bubble').addEventListener('click', function() {{ window.toggleChat(); }});
+        document.getElementById('chat-send-btn').addEventListener('click', function() {{ window.sendChat(); }});
+        document.getElementById('chat-input').addEventListener('keypress', function(e) {{
+          if (e.key === 'Enter') window.sendChat();
+        }});
 
-  function connectWS() {{
-    ws = new WebSocket(WS_URL + '?page_id=' + PAGE_ID + '&visitor_id=' + visitorId);
-    ws.onopen = function() {{
-      const initial = '{chat_initial_message}';
-      if (initial) addMessage(initial, 'bot');
+        console.log('[Complens Chat] Widget created successfully');
+      }} catch (err) {{
+        console.error('[Complens Chat] Error creating widget:', err);
+      }}
+    }}
+
+    window.toggleChat = function() {{
+      try {{
+        var panel = document.getElementById('chat-panel');
+        if (!panel) {{ console.error('[Complens Chat] Panel not found'); return; }}
+        var isOpen = panel.style.display !== 'none';
+        panel.style.display = isOpen ? 'none' : 'flex';
+        if (!isOpen && !ws) connectWS();
+      }} catch (err) {{
+        console.error('[Complens Chat] Error toggling chat:', err);
+      }}
     }};
-    ws.onmessage = function(e) {{
-      const data = JSON.parse(e.data);
-      if (data.action === 'ai_response') addMessage(data.message, 'bot');
+
+    function connectWS() {{
+      try {{
+        console.log('[Complens Chat] Connecting to', WS_URL);
+        ws = new WebSocket(WS_URL + '?page_id=' + PAGE_ID + '&visitor_id=' + visitorId);
+        ws.onopen = function() {{
+          console.log('[Complens Chat] Connected');
+          var initial = '{chat_initial_message}';
+          if (initial) addMessage(initial, 'bot');
+        }};
+        ws.onmessage = function(e) {{
+          try {{
+            var data = JSON.parse(e.data);
+            console.log('[Complens Chat] Message received:', data.action);
+            if (data.action === 'ai_response') addMessage(data.message, 'bot');
+          }} catch (err) {{
+            console.error('[Complens Chat] Error parsing message:', err);
+          }}
+        }};
+        ws.onerror = function(err) {{
+          console.error('[Complens Chat] WebSocket error:', err);
+        }};
+        ws.onclose = function(e) {{
+          console.log('[Complens Chat] Disconnected:', e.code, e.reason);
+          ws = null;
+        }};
+      }} catch (err) {{
+        console.error('[Complens Chat] Error connecting:', err);
+      }}
+    }}
+
+    window.sendChat = function() {{
+      try {{
+        var input = document.getElementById('chat-input');
+        if (!input) return;
+        var msg = input.value.trim();
+        if (!msg) return;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {{
+          console.log('[Complens Chat] WebSocket not ready, reconnecting...');
+          connectWS();
+          return;
+        }}
+        addMessage(msg, 'user');
+        ws.send(JSON.stringify({{ action: 'public_chat', page_id: PAGE_ID, message: msg, visitor_id: visitorId }}));
+        input.value = '';
+      }} catch (err) {{
+        console.error('[Complens Chat] Error sending:', err);
+      }}
     }};
-    ws.onclose = function() {{ ws = null; }};
+
+    function addMessage(text, type) {{
+      try {{
+        var container = document.getElementById('chat-messages');
+        if (!container) return;
+        var div = document.createElement('div');
+        div.style.cssText = type === 'user' ?
+          'align-self:flex-end;background:{primary_color};color:white;padding:10px 14px;border-radius:16px 16px 4px 16px;max-width:80%;word-wrap:break-word;' :
+          'align-self:flex-start;background:#f3f4f6;color:#1f2937;padding:10px 14px;border-radius:16px 16px 16px 4px;max-width:80%;word-wrap:break-word;';
+        div.textContent = text;
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+      }} catch (err) {{
+        console.error('[Complens Chat] Error adding message:', err);
+      }}
+    }}
+
+    if (document.readyState === 'loading') {{
+      document.addEventListener('DOMContentLoaded', createWidget);
+    }} else {{
+      createWidget();
+    }}
+  }} catch (err) {{
+    console.error('[Complens Chat] Initialization error:', err);
   }}
-
-  window.sendChat = function() {{
-    const input = document.getElementById('chat-input');
-    const msg = input.value.trim();
-    if (!msg || !ws) return;
-    addMessage(msg, 'user');
-    ws.send(JSON.stringify({{ action: 'public_chat', page_id: PAGE_ID, message: msg, visitor_id: visitorId }}));
-    input.value = '';
-  }};
-
-  function addMessage(text, type) {{
-    const container = document.getElementById('chat-messages');
-    const div = document.createElement('div');
-    div.style.cssText = type === 'user' ?
-      'align-self:flex-end;background:{primary_color};color:white;padding:10px 14px;border-radius:16px 16px 4px 16px;max-width:80%;' :
-      'align-self:flex-start;background:#f3f4f6;color:#1f2937;padding:10px 14px;border-radius:16px 16px 16px 4px;max-width:80%;';
-    div.textContent = text;
-    container.appendChild(div);
-    container.scrollTop = container.scrollHeight;
-  }}
-
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', createWidget);
-  else createWidget();
 }})();
 </script>"""
 

@@ -1,0 +1,363 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import api from '../api';
+
+// Business Profile types
+export interface Product {
+  name: string;
+  description: string;
+  price?: string;
+  features?: string[];
+  target_audience?: string;
+}
+
+export interface TeamMember {
+  name: string;
+  role: string;
+  bio?: string;
+  image_url?: string;
+}
+
+export interface Testimonial {
+  quote: string;
+  author_name: string;
+  author_title?: string;
+  company?: string;
+  image_url?: string;
+}
+
+export interface FAQ {
+  question: string;
+  answer: string;
+}
+
+export interface BusinessProfile {
+  id: string;
+  workspace_id: string;
+  page_id?: string;  // If set, this is a page-specific profile
+  business_name: string;
+  tagline: string;
+  description: string;
+  industry: string;
+  business_type: string;
+  target_audience: string;
+  ideal_customer: string;
+  customer_pain_points: string[];
+  unique_value_proposition: string;
+  key_benefits: string[];
+  differentiators: string[];
+  brand_voice: string;
+  brand_values: string[];
+  brand_personality: string;
+  products: Product[];
+  pricing_model: string;
+  testimonials: Testimonial[];
+  notable_clients: string[];
+  achievements: string[];
+  team_members: TeamMember[];
+  founder_story: string;
+  faqs: FAQ[];
+  keywords: string[];
+  contact_email: string;
+  phone: string;
+  address: string;
+  website: string;
+  social_links: Record<string, string>;
+  ai_notes: string;
+  conversation_history: Array<{ question: string; answer: string; timestamp: string }>;
+  onboarding_completed: boolean;
+  profile_score: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateProfileInput {
+  business_name?: string;
+  tagline?: string;
+  description?: string;
+  industry?: string;
+  business_type?: string;
+  target_audience?: string;
+  ideal_customer?: string;
+  customer_pain_points?: string[];
+  unique_value_proposition?: string;
+  key_benefits?: string[];
+  differentiators?: string[];
+  brand_voice?: string;
+  brand_values?: string[];
+  brand_personality?: string;
+  products?: Product[];
+  pricing_model?: string;
+  testimonials?: Testimonial[];
+  notable_clients?: string[];
+  achievements?: string[];
+  team_members?: TeamMember[];
+  founder_story?: string;
+  faqs?: FAQ[];
+  keywords?: string[];
+  contact_email?: string;
+  phone?: string;
+  address?: string;
+  website?: string;
+  social_links?: Record<string, string>;
+  ai_notes?: string;
+  onboarding_completed?: boolean;
+}
+
+// Onboarding types
+export interface OnboardingQuestion {
+  question: string;
+  field: string;
+  input_type: 'text' | 'textarea' | 'select';
+  options?: string[];
+  placeholder?: string;
+  is_complete: boolean;
+  progress: number;
+}
+
+// Block improvement types
+export interface ImproveBlockInput {
+  block_type: string;
+  config: Record<string, unknown>;
+  page_context?: {
+    headline?: string;
+    subheadline?: string;
+    other_blocks?: string[];
+  };
+  instruction?: string;
+  page_id?: string;  // Page-specific profile
+}
+
+// Block generation types
+export interface GenerateBlocksInput {
+  description: string;
+  style?: 'professional' | 'bold' | 'minimal' | 'playful';
+  include_form?: boolean;
+  include_chat?: boolean;
+  page_id?: string;  // Page-specific profile
+}
+
+// Image generation types
+export interface GenerateImageInput {
+  context?: string;
+  prompt?: string;
+  style?: string;
+  width?: number;
+  height?: number;
+}
+
+export interface GeneratedImage {
+  url: string;
+  prompt: string;
+}
+
+// Workflow generation types
+export interface GenerateWorkflowInput {
+  description: string;
+}
+
+export interface GeneratedWorkflow {
+  name: string;
+  description: string;
+  nodes: Array<{
+    id: string;
+    type: string;
+    label: string;
+    position: { x: number; y: number };
+    config: Record<string, unknown>;
+  }>;
+  edges: Array<{
+    id: string;
+    source: string;
+    target: string;
+  }>;
+}
+
+// ==================== HOOKS ====================
+
+// Fetch business profile (workspace-level or page-specific)
+export function useBusinessProfile(workspaceId: string | undefined, pageId?: string) {
+  return useQuery({
+    queryKey: ['businessProfile', workspaceId, pageId],
+    queryFn: async () => {
+      const params = pageId ? `?page_id=${pageId}` : '';
+      const { data } = await api.get<BusinessProfile>(
+        `/workspaces/${workspaceId}/ai/profile${params}`
+      );
+      return data;
+    },
+    enabled: !!workspaceId,
+  });
+}
+
+// Update business profile (workspace-level or page-specific)
+export function useUpdateBusinessProfile(workspaceId: string, pageId?: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: UpdateProfileInput) => {
+      const params = pageId ? `?page_id=${pageId}` : '';
+      const { data } = await api.put<BusinessProfile>(
+        `/workspaces/${workspaceId}/ai/profile${params}`,
+        input
+      );
+      return data;
+    },
+    onSuccess: (updatedProfile) => {
+      queryClient.setQueryData(['businessProfile', workspaceId, pageId], updatedProfile);
+    },
+  });
+}
+
+// Analyze content for profile extraction
+export function useAnalyzeContent(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: { content: string; auto_update?: boolean; page_id?: string }) => {
+      const { data } = await api.post<{
+        extracted: Partial<BusinessProfile>;
+        profile?: BusinessProfile;
+      }>(`/workspaces/${workspaceId}/ai/profile/analyze`, input);
+      return data;
+    },
+    onSuccess: (result, variables) => {
+      if (result.profile) {
+        queryClient.setQueryData(['businessProfile', workspaceId, variables.page_id], result.profile);
+      }
+    },
+  });
+}
+
+// Get onboarding question
+export function useOnboardingQuestion(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: ['onboardingQuestion', workspaceId],
+    queryFn: async () => {
+      const { data } = await api.get<OnboardingQuestion>(
+        `/workspaces/${workspaceId}/ai/onboarding/question`
+      );
+      return data;
+    },
+    enabled: !!workspaceId,
+    refetchOnWindowFocus: false,
+  });
+}
+
+// Submit onboarding answer
+export function useSubmitOnboardingAnswer(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: {
+      question: string;
+      answer: string;
+      field?: string;
+      mark_complete?: boolean;
+    }) => {
+      const { data } = await api.post<{
+        profile: BusinessProfile;
+        is_complete: boolean;
+      }>(`/workspaces/${workspaceId}/ai/onboarding/answer`, input);
+      return data;
+    },
+    onSuccess: (result) => {
+      queryClient.setQueryData(['businessProfile', workspaceId], result.profile);
+      // Invalidate to get next question
+      queryClient.invalidateQueries({ queryKey: ['onboardingQuestion', workspaceId] });
+    },
+  });
+}
+
+// Improve block content
+export function useImproveBlock(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: ImproveBlockInput) => {
+      const { data } = await api.post<{ config: Record<string, unknown> }>(
+        `/workspaces/${workspaceId}/ai/improve-block`,
+        input
+      );
+      return data.config;
+    },
+  });
+}
+
+// Generate blocks from description
+export function useGenerateBlocks(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: GenerateBlocksInput) => {
+      const { data } = await api.post<{ blocks: Array<Record<string, unknown>> }>(
+        `/workspaces/${workspaceId}/ai/generate-blocks`,
+        input
+      );
+      return data.blocks;
+    },
+  });
+}
+
+// Generate image
+export function useGenerateImage(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: GenerateImageInput) => {
+      const { data } = await api.post<GeneratedImage>(
+        `/workspaces/${workspaceId}/ai/generate-image`,
+        input
+      );
+      return data;
+    },
+  });
+}
+
+// Generate workflow from description
+export function useGenerateWorkflow(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: GenerateWorkflowInput) => {
+      const { data } = await api.post<{ workflow: GeneratedWorkflow }>(
+        `/workspaces/${workspaceId}/ai/generate-workflow`,
+        input
+      );
+      return data.workflow;
+    },
+  });
+}
+
+// Industry options for dropdowns
+export const INDUSTRY_OPTIONS = [
+  { value: 'technology', label: 'Technology' },
+  { value: 'ecommerce', label: 'E-commerce' },
+  { value: 'consulting', label: 'Consulting' },
+  { value: 'healthcare', label: 'Healthcare' },
+  { value: 'finance', label: 'Finance' },
+  { value: 'education', label: 'Education' },
+  { value: 'real_estate', label: 'Real Estate' },
+  { value: 'marketing', label: 'Marketing' },
+  { value: 'creative', label: 'Creative / Design' },
+  { value: 'professional_services', label: 'Professional Services' },
+  { value: 'retail', label: 'Retail' },
+  { value: 'hospitality', label: 'Hospitality' },
+  { value: 'nonprofit', label: 'Non-profit' },
+  { value: 'other', label: 'Other' },
+];
+
+export const BUSINESS_TYPE_OPTIONS = [
+  { value: 'saas', label: 'SaaS / Software' },
+  { value: 'agency', label: 'Agency' },
+  { value: 'freelancer', label: 'Freelancer' },
+  { value: 'ecommerce_store', label: 'E-commerce Store' },
+  { value: 'local_business', label: 'Local Business' },
+  { value: 'consultant', label: 'Consultant' },
+  { value: 'coach', label: 'Coach / Trainer' },
+  { value: 'creator', label: 'Creator / Influencer' },
+  { value: 'nonprofit', label: 'Non-profit' },
+  { value: 'other', label: 'Other' },
+];
+
+export const BRAND_VOICE_OPTIONS = [
+  { value: 'professional', label: 'Professional' },
+  { value: 'friendly', label: 'Friendly' },
+  { value: 'bold', label: 'Bold' },
+  { value: 'playful', label: 'Playful' },
+  { value: 'authoritative', label: 'Authoritative' },
+  { value: 'casual', label: 'Casual' },
+  { value: 'inspirational', label: 'Inspirational' },
+  { value: 'technical', label: 'Technical' },
+];
