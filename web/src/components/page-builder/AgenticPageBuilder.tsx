@@ -9,8 +9,10 @@ import {
   useGenerateImage,
   useGeneratePageContent,
   useRefinePageContent,
+  useCreateCompletePage,
   GeneratedPageContent,
   AutomationConfig,
+  CompletePageResult,
 } from '../../lib/hooks/useAI';
 import { useCurrentWorkspace } from '../../lib/hooks/useWorkspaces';
 
@@ -23,6 +25,7 @@ interface AgenticPageBuilderProps {
     automation: AutomationConfig;
     includeForm: boolean;
     includeChat: boolean;
+    createdPage?: CompletePageResult;
   }) => void;
   onClose: () => void;
   pageId?: string;
@@ -46,7 +49,7 @@ interface ChatOption {
   icon?: string;
 }
 
-type WizardPhase = 'discovery' | 'content' | 'design' | 'automation' | 'building' | 'review';
+type WizardPhase = 'discovery' | 'content' | 'design' | 'automation' | 'naming' | 'building' | 'review';
 type WizardStyle = 'professional' | 'bold' | 'minimal' | 'playful';
 
 interface ColorScheme {
@@ -61,6 +64,7 @@ const PHASE_INFO: Record<WizardPhase, { title: string; subtitle: string }> = {
   content: { title: 'Review your content', subtitle: 'Refine headlines, features, and more' },
   design: { title: 'Choose your style', subtitle: 'Pick colors and visual design' },
   automation: { title: 'Set up automation', subtitle: 'What happens when someone fills out your form?' },
+  naming: { title: 'Name your page', subtitle: 'Choose a name and subdomain' },
   building: { title: 'Building your page...', subtitle: 'Creating everything for you' },
   review: { title: 'Your page is ready!', subtitle: 'Review and publish' },
 };
@@ -103,6 +107,7 @@ export default function AgenticPageBuilder({
   const generateImage = useGenerateImage(workspaceId || '');
   const generatePageContent = useGeneratePageContent(workspaceId || '');
   const refinePageContent = useRefinePageContent(workspaceId || '');
+  const createCompletePage = useCreateCompletePage(workspaceId || '');
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -135,10 +140,23 @@ export default function AgenticPageBuilder({
     add_tags: ['lead', 'website'],
   });
 
+  // Page naming state
+  const [pageName, setPageName] = useState('');
+  const [pageSubdomain, setPageSubdomain] = useState('');
+
   // Building state
   const [generatedBlocks, setGeneratedBlocks] = useState<PageBlock[]>([]);
   const [heroImageUrl, setHeroImageUrl] = useState<string | null>(null);
   const [buildProgress, setBuildProgress] = useState(0);
+  const [createdPageResult, setCreatedPageResult] = useState<CompletePageResult | null>(null);
+
+  // Slug conflict state (for replace confirmation)
+  const [pendingSlugConflict, setPendingSlugConflict] = useState<{
+    slug: string;
+    heroUrl: string | null;
+    avatarUrls: string[];
+    contentWithImages: GeneratedPageContent;
+  } | null>(null);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -312,25 +330,9 @@ export default function AgenticPageBuilder({
         600
       );
 
-      // Show content review cards
       await addAssistantMessage(
-        'Review the headlines and content below. Click to edit, or tell me what to change:',
+        'Review the headlines and content below. Click to select your favorite headline, or tell me what to change. When you\'re happy, click "Next: Design" to continue.',
         undefined,
-        <ContentReviewCards
-          content={result}
-          selectedHeadline={selectedHeadline}
-          onSelectHeadline={setSelectedHeadline}
-          onRefine={(section, feedback) => refineContent(feedback, section)}
-        />,
-        800
-      );
-
-      await addAssistantMessage(
-        'Happy with the content? Let\'s pick a style!',
-        [
-          { value: 'next', label: '✅ Looks great!', description: 'Move to design' },
-          { value: 'refine', label: '✏️ Make changes', description: 'Tell me what to adjust' },
-        ],
         undefined,
         600
       );
@@ -363,25 +365,10 @@ export default function AgenticPageBuilder({
       setGeneratedContent(result);
 
       await addAssistantMessage(
-        'Content updated! How does it look now?',
+        'Content updated! Review the changes below. Tell me if you want more adjustments, or click "Next: Design" when ready.',
         undefined,
-        <ContentReviewCards
-          content={result}
-          selectedHeadline={selectedHeadline}
-          onSelectHeadline={setSelectedHeadline}
-          onRefine={(section, feedback) => refineContent(feedback, section)}
-        />,
+        undefined,
         600
-      );
-
-      await addAssistantMessage(
-        'Ready to move on?',
-        [
-          { value: 'next', label: '✅ Looks great!', description: 'Move to design' },
-          { value: 'refine', label: '✏️ More changes', description: 'Keep refining' },
-        ],
-        undefined,
-        400
       );
 
     } catch (err) {
@@ -400,36 +387,10 @@ export default function AgenticPageBuilder({
     setPhase('design');
 
     await addAssistantMessage(
-      '🎨 Let\'s pick your visual style! Choose one that matches your brand:',
+      '🎨 Let\'s pick your visual style! Choose a style that matches your brand below, then customize colors if you want. Click "Next: Automation" when you\'re ready.',
       undefined,
-      <StyleSelector
-        currentStyle={style}
-        onSelect={(s) => {
-          setStyle(s);
-          const styleOption = STYLE_OPTIONS.find(o => o.value === s);
-          if (styleOption) {
-            setColors(styleOption.colors);
-          }
-        }}
-      />,
+      undefined,
       600
-    );
-
-    await addAssistantMessage(
-      'Selected style looks good? You can also customize colors below, or move on:',
-      undefined,
-      <ColorPicker colors={colors} onChange={setColors} />,
-      800
-    );
-
-    await addAssistantMessage(
-      'Ready to set up automation?',
-      [
-        { value: 'automation', label: '➡️ Next: Automation', description: 'Configure what happens when someone fills out your form' },
-        { value: 'skip', label: '⏭️ Skip to build', description: 'Use default settings' },
-      ],
-      undefined,
-      400
     );
   };
 
@@ -438,23 +399,41 @@ export default function AgenticPageBuilder({
     setPhase('automation');
 
     await addAssistantMessage(
-      '⚡ Let\'s set up your automation! When someone fills out your form, I can:',
+      '⚡ Let\'s set up your automation! Configure what happens when someone fills out your form below. You can:\n\n• Send a welcome email to new leads\n• Get notified when someone submits\n• Auto-tag contacts for organization',
       undefined,
-      <AutomationSetup
-        config={automation}
-        onChange={setAutomation}
-        businessName={generatedContent?.business_info?.business_name || 'your business'}
-      />,
+      undefined,
       600
     );
+  };
+
+  // Move to naming phase (skipped in update mode)
+  const moveToNaming = async () => {
+    // If we're updating an existing page, skip naming and go straight to building
+    if (pageId) {
+      await startBuilding();
+      return;
+    }
+
+    // Auto-generate page name and subdomain from business info
+    const businessName = generatedContent?.business_info?.business_name || '';
+    if (businessName && !pageName) {
+      setPageName(businessName);
+      // Generate subdomain from business name (lowercase, alphanumeric, hyphens)
+      const suggestedSubdomain = businessName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .substring(0, 30);
+      setPageSubdomain(suggestedSubdomain);
+    }
+
+    setPhase('naming');
 
     await addAssistantMessage(
-      'Configure the options above, or type your notification email. Ready to build?',
-      [
-        { value: 'build', label: '🚀 Build my page!', description: 'Create page, form, and workflow' },
-      ],
+      '📝 Almost there! Give your page a name and optional subdomain. The subdomain will let people access your page at **yourname.dev.complens.ai**.',
       undefined,
-      400
+      undefined,
+      600
     );
   };
 
@@ -462,18 +441,30 @@ export default function AgenticPageBuilder({
   const startBuilding = async () => {
     if (!generatedContent) return;
 
+    // In create mode, require page name
+    const isUpdateMode = !!pageId;
+    if (!isUpdateMode && !pageName.trim()) {
+      await addAssistantMessage('⚠️ Please enter a page name first.', undefined, undefined, 300);
+      return;
+    }
+
     setPhase('building');
     setBuildProgress(0);
 
-    await addAssistantMessage('🚀 Building your complete marketing package...', undefined, undefined, 300);
+    const actionText = isUpdateMode ? 'Updating your page...' : 'Building your complete marketing package...';
+    await addAssistantMessage(`🚀 ${actionText}`, undefined, undefined, 300);
 
-    // Build blocks from content
-    const blocks = buildBlocksFromContent(generatedContent, style, colors, includeForm, includeChat);
+    // Generate slug from page name (only used in create mode)
+    const slug = pageName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
 
-    // Generate hero image
+    // Step 1: Generate hero image
     addSystemMessage('🎨 Generating hero image...');
-    setBuildProgress(20);
+    setBuildProgress(10);
 
+    let heroUrl: string | null = null;
     try {
       const imagePrompt = buildImagePrompt(generatedContent, style);
       const imageResult = await generateImage.mutateAsync({
@@ -481,53 +472,243 @@ export default function AgenticPageBuilder({
         context: generatedContent.business_info?.business_name || 'business',
         style,
       });
-
       if (imageResult?.url) {
+        heroUrl = imageResult.url;
         setHeroImageUrl(imageResult.url);
-        // Update hero block with image
-        blocks[0].config = {
-          ...blocks[0].config,
-          backgroundImage: imageResult.url,
-          backgroundType: 'image',
-        };
         addSystemMessage('✅ Hero image ready!');
       }
     } catch (err) {
-      console.error('Image generation failed:', err);
+      console.error('Hero image generation failed:', err);
       addSystemMessage('⚠️ Using gradient background');
     }
 
+    setBuildProgress(25);
+
+    // Step 2: Generate testimonial avatars
+    const testimonialConcepts = generatedContent.content.testimonial_concepts || [];
+    const avatarUrls: string[] = [];
+
+    if (testimonialConcepts.length > 0) {
+      addSystemMessage('👤 Generating testimonial avatars...');
+
+      for (let i = 0; i < Math.min(testimonialConcepts.length, 3); i++) {
+        try {
+          const avatarPrompt = buildAvatarPrompt(i, style);
+          const avatarResult = await generateImage.mutateAsync({
+            prompt: avatarPrompt,
+            context: `testimonial-avatar-${i}-${Date.now()}`,
+            style,
+          });
+          if (avatarResult?.url) {
+            avatarUrls.push(avatarResult.url);
+          }
+        } catch (err) {
+          console.error(`Avatar ${i} generation failed:`, err);
+        }
+        setBuildProgress(25 + ((i + 1) / Math.min(testimonialConcepts.length, 3)) * 20);
+      }
+
+      if (avatarUrls.length > 0) {
+        addSystemMessage(`✅ ${avatarUrls.length} testimonial avatars ready!`);
+      }
+    }
+
+    setBuildProgress(50);
+
+    // Step 3: Prepare content with images
+    const contentWithImages = {
+      ...generatedContent,
+      content: {
+        ...generatedContent.content,
+        hero_image_url: heroUrl,
+        testimonial_avatars: avatarUrls,
+      },
+    };
+
+    // Step 4: Create or update complete page (page + form + workflow)
+    const updateMode = !!pageId;
+    addSystemMessage(updateMode ? '📄 Updating page content...' : '📄 Creating page, form, and workflow...');
     setBuildProgress(60);
-    setGeneratedBlocks(blocks);
 
-    // Simulate build progress
-    addSystemMessage('📄 Creating page structure...');
-    await new Promise(r => setTimeout(r, 500));
-    setBuildProgress(80);
+    try {
+      const result = await createCompletePage.mutateAsync({
+        // In update mode, send page_id instead of name/slug
+        ...(updateMode
+          ? { page_id: pageId }
+          : { name: pageName, slug, subdomain: pageSubdomain.trim() || undefined }
+        ),
+        content: contentWithImages,
+        style,
+        colors,
+        include_form: includeForm,
+        include_chat: includeChat,
+        automation,
+      });
 
-    addSystemMessage('📝 Setting up lead capture form...');
-    await new Promise(r => setTimeout(r, 500));
-    setBuildProgress(90);
+      setCreatedPageResult(result);
+      addSystemMessage(updateMode ? '✅ Page updated!' : '✅ Page created!');
+      setBuildProgress(80);
 
-    addSystemMessage('⚡ Configuring automation workflow...');
-    await new Promise(r => setTimeout(r, 500));
-    setBuildProgress(100);
+      if (result.form) {
+        addSystemMessage(result.updated ? '✅ Form ready!' : '✅ Lead capture form created!');
+      }
+      setBuildProgress(90);
 
-    setPhase('review');
+      if (result.workflow) {
+        addSystemMessage('✅ Automation workflow created!');
+      }
+      setBuildProgress(100);
 
-    await addAssistantMessage(
-      `🎉 Done! I've created:\n\n` +
-      `• **Landing page** with ${blocks.length} sections\n` +
-      `${includeForm ? '• **Lead capture form** (email, name, phone, message)\n' : ''}` +
-      `${automation.send_welcome_email || automation.notify_owner ? '• **Automation workflow** to handle new leads\n' : ''}` +
-      `${includeChat ? '• **AI chat widget** for visitor questions\n' : ''}\n` +
-      `Review the preview, then hit "Apply to Page" to publish!`,
-      [
-        { value: 'apply', label: '✅ Apply to Page', description: 'Save and continue editing' },
-      ],
-      undefined,
-      800
-    );
+      // Build blocks for preview (with images)
+      const blocks = buildBlocksFromContent(contentWithImages, style, colors, includeForm, includeChat, avatarUrls, heroUrl);
+      setGeneratedBlocks(blocks);
+
+      setPhase('review');
+
+      const pageUrl = pageSubdomain.trim()
+        ? `https://${pageSubdomain}.dev.complens.ai`
+        : `Your page is ready`;
+
+      // Different message for update vs create
+      const successMessage = result.updated
+        ? `🎉 Done! Your page has been updated with:\n\n` +
+          `• **${blocks.length} new sections**\n` +
+          `${result.form ? '• **Lead capture form** ready\n' : ''}` +
+          `${result.workflow ? '• **Automation workflow** active\n' : ''}` +
+          `${includeChat ? '• **AI chat widget** enabled\n' : ''}\n` +
+          `Click "Done" to see your updated page!`
+        : `🎉 Done! I've created:\n\n` +
+          `• **Landing page** with ${blocks.length} sections\n` +
+          `${result.form ? '• **Lead capture form** (email, name, phone, message)\n' : ''}` +
+          `${result.workflow ? '• **Automation workflow** to handle new leads\n' : ''}` +
+          `${includeChat ? '• **AI chat widget** for visitor questions\n' : ''}\n` +
+          `${pageSubdomain.trim() ? `🌐 **Live at:** ${pageUrl}\n\n` : ''}` +
+          `Click "Done" to close the wizard and view your page!`;
+
+      await addAssistantMessage(
+        successMessage,
+        [
+          { value: 'apply', label: '✅ Done', description: result.updated ? 'Close wizard and refresh page' : 'Close wizard and view page' },
+        ],
+        undefined,
+        800
+      );
+
+    } catch (err) {
+      console.error('Create complete page failed:', err);
+
+      // Check if this is a slug conflict error
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const errorResponse = (err as any)?.response?.data;
+      const errorCode = errorResponse?.error_code;
+
+      if (errorCode === 'SLUG_EXISTS') {
+        // Save state for potential retry with replace_existing
+        setPendingSlugConflict({
+          slug,
+          heroUrl,
+          avatarUrls,
+          contentWithImages,
+        });
+
+        setPhase('naming');
+
+        await addAssistantMessage(
+          `⚠️ A page with the slug "${slug}" already exists in your workspace. Would you like to replace it with this new page? This will delete the existing page, its forms, and workflows.`,
+          [
+            { value: 'replace', label: '🔄 Replace existing page', description: 'Delete old page and create new one' },
+            { value: 'rename', label: '✏️ Choose a different name', description: 'Keep both pages' },
+          ],
+          undefined,
+          600
+        );
+      } else {
+        await addAssistantMessage(
+          `⚠️ Something went wrong creating your page. Error: ${err instanceof Error ? err.message : 'Unknown error'}. Please try again.`,
+          undefined,
+          undefined,
+          600
+        );
+        setPhase('naming');
+      }
+    }
+  };
+
+  // Handle replacing an existing page after slug conflict confirmation
+  const handleReplaceExisting = async () => {
+    if (!pendingSlugConflict || !generatedContent) return;
+
+    const { slug, heroUrl, avatarUrls, contentWithImages } = pendingSlugConflict;
+    setPendingSlugConflict(null);
+
+    setPhase('building');
+    setBuildProgress(60);
+
+    addSystemMessage('🔄 Replacing existing page...');
+
+    try {
+      const result = await createCompletePage.mutateAsync({
+        name: pageName,
+        slug,
+        subdomain: pageSubdomain.trim() || undefined,
+        content: contentWithImages,
+        style,
+        colors,
+        include_form: includeForm,
+        include_chat: includeChat,
+        automation,
+        replace_existing: true,
+      });
+
+      setCreatedPageResult(result);
+      addSystemMessage('✅ Page replaced!');
+      setBuildProgress(80);
+
+      if (result.form) {
+        addSystemMessage('✅ Lead capture form created!');
+      }
+      setBuildProgress(90);
+
+      if (result.workflow) {
+        addSystemMessage('✅ Automation workflow created!');
+      }
+      setBuildProgress(100);
+
+      // Build blocks for preview
+      const blocks = buildBlocksFromContent(contentWithImages, style, colors, includeForm, includeChat, avatarUrls, heroUrl);
+      setGeneratedBlocks(blocks);
+
+      setPhase('review');
+
+      const pageUrl = pageSubdomain.trim()
+        ? `https://${pageSubdomain}.dev.complens.ai`
+        : `Your page is ready`;
+
+      await addAssistantMessage(
+        `🎉 Done! I've replaced your existing page and created:\n\n` +
+        `• **Landing page** with ${blocks.length} sections\n` +
+        `${result.form ? '• **Lead capture form** (email, name, phone, message)\n' : ''}` +
+        `${result.workflow ? '• **Automation workflow** to handle new leads\n' : ''}` +
+        `${includeChat ? '• **AI chat widget** for visitor questions\n' : ''}\n` +
+        `${pageSubdomain.trim() ? `🌐 **Live at:** ${pageUrl}\n\n` : ''}` +
+        `Click "Done" to close the wizard and view your page!`,
+        [
+          { value: 'apply', label: '✅ Done', description: 'Close wizard and view page' },
+        ],
+        undefined,
+        800
+      );
+
+    } catch (err) {
+      console.error('Replace page failed:', err);
+      await addAssistantMessage(
+        `⚠️ Failed to replace the page. Error: ${err instanceof Error ? err.message : 'Unknown error'}. Please try again.`,
+        undefined,
+        undefined,
+        600
+      );
+      setPhase('naming');
+    }
   };
 
   // Apply and close
@@ -542,6 +723,7 @@ export default function AgenticPageBuilder({
       automation,
       includeForm,
       includeChat,
+      createdPage: createdPageResult || undefined,
     });
   };
 
@@ -563,6 +745,18 @@ export default function AgenticPageBuilder({
       await startBuilding();
     } else if (value === 'apply') {
       handleApply();
+    } else if (value === 'replace') {
+      // User confirmed they want to replace existing page
+      await handleReplaceExisting();
+    } else if (value === 'rename') {
+      // User wants to choose a different name, stay on naming phase
+      setPendingSlugConflict(null);
+      await addAssistantMessage(
+        'No problem! Change the page name below and try again.',
+        undefined,
+        undefined,
+        300
+      );
     }
   };
 
@@ -601,14 +795,17 @@ export default function AgenticPageBuilder({
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {/* Phase indicators */}
+                {/* Phase indicators - skip 'naming' phase in update mode */}
                 <div className="flex gap-1">
-                  {(['discovery', 'content', 'design', 'automation', 'review'] as WizardPhase[]).map((p, i) => (
+                  {(pageId
+                    ? ['discovery', 'content', 'design', 'automation', 'review'] as WizardPhase[]
+                    : ['discovery', 'content', 'design', 'automation', 'naming', 'review'] as WizardPhase[]
+                  ).map((p, i, phases) => (
                     <div
                       key={p}
                       className={`w-2 h-2 rounded-full transition-colors ${
                         phase === p ? 'bg-white' :
-                        ['discovery', 'content', 'design', 'automation', 'review'].indexOf(phase) > i
+                        phases.indexOf(phase as WizardPhase) > i
                           ? 'bg-white/60' : 'bg-white/20'
                       }`}
                     />
@@ -655,6 +852,113 @@ export default function AgenticPageBuilder({
               </div>
             )}
 
+            {/* Content Review - rendered directly so state updates work */}
+            {phase === 'content' && generatedContent && (
+              <div className="bg-white rounded-xl p-4 shadow-sm space-y-4">
+                <ContentReviewCards
+                  content={generatedContent}
+                  selectedHeadline={selectedHeadline}
+                  onSelectHeadline={setSelectedHeadline}
+                  onRefine={(section, feedback) => refineContent(feedback, section)}
+                />
+                <div className="flex justify-end">
+                  <button
+                    onClick={moveToDesign}
+                    className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2"
+                  >
+                    ✅ Next: Design
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Design Options - rendered directly so state updates work */}
+            {phase === 'design' && (
+              <div className="bg-white rounded-xl p-4 shadow-sm space-y-4">
+                <StyleSelector
+                  currentStyle={style}
+                  onSelect={(s) => {
+                    setStyle(s);
+                    const styleOption = STYLE_OPTIONS.find(o => o.value === s);
+                    if (styleOption) {
+                      setColors(styleOption.colors);
+                    }
+                  }}
+                />
+                <ColorPicker colors={colors} onChange={setColors} />
+                <div className="flex justify-end">
+                  <button
+                    onClick={moveToAutomation}
+                    className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2"
+                  >
+                    ➡️ Next: Automation
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Automation Setup - rendered directly so state updates work */}
+            {phase === 'automation' && (
+              <div className="bg-white rounded-xl p-4 shadow-sm">
+                <AutomationSetup
+                  config={automation}
+                  onChange={setAutomation}
+                  businessName={generatedContent?.business_info?.business_name || 'your business'}
+                />
+                <div className="mt-4 flex justify-end">
+                  <button
+                    onClick={moveToNaming}
+                    className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2"
+                  >
+                    ➡️ Next: Name Your Page
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Naming Setup - rendered directly so state updates work */}
+            {phase === 'naming' && (
+              <div className="bg-white rounded-xl p-4 shadow-sm space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Page Name</label>
+                  <input
+                    type="text"
+                    value={pageName}
+                    onChange={(e) => setPageName(e.target.value)}
+                    placeholder="e.g., My Business Landing Page"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Subdomain (optional)</label>
+                  <div className="flex items-center">
+                    <input
+                      type="text"
+                      value={pageSubdomain}
+                      onChange={(e) => setPageSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                      placeholder="yourname"
+                      className="flex-1 px-4 py-2 border border-gray-200 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
+                    />
+                    <span className="px-3 py-2 bg-gray-100 border border-l-0 border-gray-200 rounded-r-lg text-gray-500 text-sm">
+                      .dev.complens.ai
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Leave empty to use the page slug instead
+                  </p>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={startBuilding}
+                    disabled={!pageName.trim()}
+                    className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    🚀 Build my page!
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Build progress */}
             {phase === 'building' && (
               <div className="bg-white rounded-xl p-4 shadow-sm">
@@ -696,8 +1000,8 @@ export default function AgenticPageBuilder({
           </div>
         </div>
 
-        {/* Right side - Preview (shows during content/design/review phases) */}
-        {(phase === 'content' || phase === 'design' || phase === 'building' || phase === 'review') && generatedContent && (
+        {/* Right side - Preview (shows during content/design/naming/building/review phases) */}
+        {(phase === 'content' || phase === 'design' || phase === 'naming' || phase === 'building' || phase === 'review') && generatedContent && (
           <div className="w-96 border-l border-gray-200 bg-white flex flex-col shrink-0">
             <div className="p-4 border-b border-gray-200">
               <div className="flex items-center justify-between">
@@ -925,57 +1229,108 @@ function AutomationSetup({
   onChange: (config: AutomationConfig) => void;
   businessName: string;
 }) {
+  const [newTag, setNewTag] = useState('');
+
+  const handleAddTag = () => {
+    const tag = newTag.trim().toLowerCase();
+    if (tag && !config.add_tags.includes(tag)) {
+      onChange({ ...config, add_tags: [...config.add_tags, tag] });
+      setNewTag('');
+    }
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    onChange({ ...config, add_tags: config.add_tags.filter(t => t !== tagToRemove) });
+  };
+
+  const handleTagKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddTag();
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg p-4 border border-gray-200 mt-2 space-y-4">
       {/* Welcome email toggle */}
-      <label className="flex items-start gap-3 cursor-pointer">
+      <div className="flex items-start gap-3">
         <input
           type="checkbox"
+          id="send_welcome_email"
           checked={config.send_welcome_email}
           onChange={(e) => onChange({ ...config, send_welcome_email: e.target.checked })}
-          className="mt-1 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+          className="mt-1 w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
         />
-        <div>
+        <label htmlFor="send_welcome_email" className="cursor-pointer">
           <p className="font-medium text-gray-900">Send welcome email to leads</p>
           <p className="text-xs text-gray-500">Automatically send a thank-you email when someone submits the form</p>
-        </div>
-      </label>
+        </label>
+      </div>
 
       {/* Owner notification toggle */}
-      <label className="flex items-start gap-3 cursor-pointer">
+      <div className="flex items-start gap-3">
         <input
           type="checkbox"
+          id="notify_owner"
           checked={config.notify_owner}
           onChange={(e) => onChange({ ...config, notify_owner: e.target.checked })}
-          className="mt-1 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+          className="mt-1 w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
         />
         <div className="flex-1">
-          <p className="font-medium text-gray-900">Notify me about new leads</p>
-          <p className="text-xs text-gray-500 mb-2">Get an email when someone fills out your form</p>
+          <label htmlFor="notify_owner" className="cursor-pointer">
+            <p className="font-medium text-gray-900">Notify me about new leads</p>
+            <p className="text-xs text-gray-500 mb-2">Get an email when someone fills out your form</p>
+          </label>
           {config.notify_owner && (
             <input
               type="email"
-              value={config.owner_email}
+              value={config.owner_email || ''}
               onChange={(e) => onChange({ ...config, owner_email: e.target.value })}
+              onClick={(e) => e.stopPropagation()}
               placeholder="your@email.com"
               className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
             />
           )}
         </div>
-      </label>
+      </div>
 
-      {/* Tags */}
+      {/* Tags - editable */}
       <div>
-        <p className="font-medium text-gray-900 text-sm mb-1">Tags to apply</p>
-        <div className="flex flex-wrap gap-2">
-          {config.add_tags.map((tag, i) => (
+        <p className="font-medium text-gray-900 text-sm mb-2">Tags to apply to new contacts</p>
+        <div className="flex flex-wrap gap-2 mb-2">
+          {config.add_tags.map((tag) => (
             <span
-              key={i}
-              className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs font-medium"
+              key={tag}
+              className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs font-medium flex items-center gap-1"
             >
               {tag}
+              <button
+                type="button"
+                onClick={() => handleRemoveTag(tag)}
+                className="ml-1 text-purple-500 hover:text-purple-800 font-bold"
+              >
+                ×
+              </button>
             </span>
           ))}
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={newTag}
+            onChange={(e) => setNewTag(e.target.value)}
+            onKeyDown={handleTagKeyDown}
+            placeholder="Add a tag..."
+            className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
+          />
+          <button
+            type="button"
+            onClick={handleAddTag}
+            disabled={!newTag.trim()}
+            className="px-3 py-1.5 text-sm bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Add
+          </button>
         </div>
       </div>
     </div>
@@ -1162,6 +1517,8 @@ function buildBlocksFromContent(
   colors: ColorScheme,
   includeForm: boolean,
   includeChat: boolean,
+  avatarUrls: string[] = [],
+  heroUrl: string | null = null,
 ): PageBlock[] {
   const blocks: PageBlock[] = [];
   let order = 0;
@@ -1186,7 +1543,8 @@ function buildBlocksFromContent(
       subheadline: content.content.hero_subheadline || content.content.tagline || '',
       buttonText: content.content.cta_text || 'Get Started',
       buttonLink: '#contact',
-      backgroundType: 'gradient',
+      backgroundType: heroUrl ? 'image' : 'gradient',
+      backgroundImage: heroUrl || undefined,
       gradientFrom: gradients[0],
       gradientTo: gradients[1],
       textAlign: 'center',
@@ -1234,6 +1592,10 @@ function buildBlocksFromContent(
 
   // Testimonials
   if (content.content.testimonial_concepts && content.content.testimonial_concepts.length > 0) {
+    // Generate placeholder names for testimonials
+    const placeholderNames = ['Sarah M.', 'James T.', 'Emily R.', 'Michael K.', 'Jessica L.'];
+    const placeholderCompanies = ['Satisfied Customer', 'Happy Client', 'Loyal Customer', 'Verified Buyer', 'Business Owner'];
+
     blocks.push({
       id: Math.random().toString(36).substring(2, 10),
       type: 'testimonials',
@@ -1241,11 +1603,11 @@ function buildBlocksFromContent(
       width: 4,
       config: {
         title: 'What People Say',
-        items: content.content.testimonial_concepts.slice(0, 2).map(t => ({
+        items: content.content.testimonial_concepts.slice(0, 3).map((t, i) => ({
           quote: t,
-          author: 'Happy Customer',
-          company: '',
-          avatar: '',
+          author: placeholderNames[i] || 'Happy Customer',
+          company: placeholderCompanies[i] || '',
+          avatar: avatarUrls[i] || '',
         })),
       },
     });
@@ -1320,22 +1682,77 @@ function buildBlocksFromContent(
 }
 
 function buildImagePrompt(content: GeneratedPageContent, style: WizardStyle): string {
+  const businessName = content.business_info?.business_name || '';
   const industry = content.business_info?.industry || 'business';
   const businessType = content.business_info?.business_type || 'professional';
+  const tagline = content.content.tagline || '';
+  const headline = content.content.headlines?.[0] || '';
 
-  let prompt = `Professional ${style} hero image for a ${industry} ${businessType} website. `;
+  // Extract keywords from the business context for more specific imagery
+  const contextWords = [businessName, tagline, headline, industry]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
 
-  if (businessType === 'freelancer' || businessType === 'consultant') {
-    prompt += 'Modern workspace, clean desk, professional environment. ';
-  } else if (businessType === 'saas') {
-    prompt += 'Abstract technology visualization, digital interface, modern software. ';
+  let prompt = '';
+
+  // Style-specific visual approaches
+  const styleDescriptions: Record<WizardStyle, string> = {
+    professional: 'clean corporate photography, business professional, polished, trustworthy',
+    bold: 'vibrant dynamic imagery, high contrast, energetic, impactful visuals',
+    minimal: 'simple elegant design, lots of white space, subtle, refined aesthetic',
+    playful: 'colorful creative imagery, fun approachable, friendly vibrant',
+  };
+
+  // Build industry/type specific imagery
+  if (contextWords.includes('tech') || contextWords.includes('software') || contextWords.includes('saas') || contextWords.includes('app')) {
+    prompt = `Modern technology workspace, sleek devices, digital innovation, futuristic elements. `;
+  } else if (contextWords.includes('health') || contextWords.includes('wellness') || contextWords.includes('fitness')) {
+    prompt = `Healthy lifestyle imagery, wellness and vitality, natural light, serene environment. `;
+  } else if (contextWords.includes('food') || contextWords.includes('restaurant') || contextWords.includes('chef')) {
+    prompt = `Appetizing culinary scene, fresh ingredients, warm inviting atmosphere. `;
+  } else if (contextWords.includes('finance') || contextWords.includes('invest') || contextWords.includes('money')) {
+    prompt = `Financial success imagery, growth charts, prosperity, professional confidence. `;
+  } else if (contextWords.includes('creative') || contextWords.includes('design') || contextWords.includes('art')) {
+    prompt = `Creative studio environment, artistic tools, inspiration, innovative workspace. `;
+  } else if (contextWords.includes('consult') || contextWords.includes('coach') || contextWords.includes('mentor')) {
+    prompt = `Professional consultation scene, confident guidance, collaborative meeting. `;
+  } else if (contextWords.includes('real estate') || contextWords.includes('home') || contextWords.includes('property')) {
+    prompt = `Beautiful property exterior, dream home, architectural elegance, inviting spaces. `;
+  } else if (businessType === 'freelancer' || businessType === 'consultant') {
+    prompt = `Modern professional workspace, clean organized desk, natural lighting. `;
   } else if (businessType === 'agency') {
-    prompt += 'Creative team environment, modern office, collaboration. ';
+    prompt = `Creative team collaboration, modern office environment, innovative thinking. `;
   } else {
-    prompt += 'Professional business imagery, modern and trustworthy. ';
+    prompt = `Professional ${industry} imagery, successful business environment. `;
   }
 
-  prompt += `Style: ${style}, high quality, no text, cinematic lighting.`;
+  prompt += `${styleDescriptions[style]}. `;
+  prompt += `Hero banner image, wide aspect ratio, no text or logos, cinematic quality, photorealistic.`;
 
   return prompt.substring(0, 500);
+}
+
+function buildAvatarPrompt(index: number, style: WizardStyle): string {
+  // Vary demographics for diverse testimonials
+  const demographics = [
+    'young professional woman, 30s, confident smile',
+    'middle-aged business man, 40s, friendly approachable',
+    'professional woman, 50s, warm genuine expression',
+    'young entrepreneur man, late 20s, enthusiastic',
+    'senior professional woman, 60s, wise experienced',
+  ];
+
+  const backgrounds = [
+    'modern office background',
+    'neutral gray background',
+    'outdoor natural lighting',
+    'bright window light background',
+    'soft studio lighting',
+  ];
+
+  const demographic = demographics[index % demographics.length];
+  const background = backgrounds[index % backgrounds.length];
+
+  return `Professional headshot portrait, ${demographic}, ${background}, high quality corporate photo, sharp focus, ${style} aesthetic, photorealistic, friendly trustworthy appearance`.substring(0, 500);
 }

@@ -263,7 +263,42 @@ export default function PageEditor() {
     automation: AutomationConfig;
     includeForm: boolean;
     includeChat: boolean;
+    createdPage?: { page: { id: string; name: string; slug: string }; form?: unknown; workflow?: unknown; updated?: boolean };
   }) => {
+    setShowAIGenerator(false);
+
+    // Check if this was an update to the current page (update mode)
+    if (result.createdPage?.updated) {
+      // Page was updated in place - data will refresh via React Query invalidation
+      const features = [];
+      if (result.blocks.length > 0) features.push(`${result.blocks.length} sections`);
+      if (result.createdPage.form) features.push('lead capture form');
+      if (result.createdPage.workflow) features.push('automation workflow');
+      if (result.includeChat) features.push('chat widget');
+
+      toast.success(`Page updated with AI! Features: ${features.join(', ')}.`);
+
+      // Reset form state to trigger re-sync with updated server data
+      setHasChanges(false);
+      return;
+    }
+
+    // If a new page was created, navigate to it
+    if (result.createdPage?.page?.id) {
+      const features = [];
+      if (result.blocks.length > 0) features.push(`${result.blocks.length} sections`);
+      if (result.createdPage.form) features.push('lead capture form');
+      if (result.createdPage.workflow) features.push('automation workflow');
+      if (result.includeChat) features.push('chat widget');
+
+      toast.success(`Page "${result.createdPage.page.name}" created! Features: ${features.join(', ')}.`);
+
+      // Navigate to the newly created page
+      navigate(`/pages/${result.createdPage.page.id}`);
+      return;
+    }
+
+    // Fallback: update current page with generated blocks locally (legacy behavior)
     // Replace all blocks with generated ones
     setBlocks(result.blocks.map((b, i) => ({ ...b, order: i })));
 
@@ -286,7 +321,6 @@ export default function PageEditor() {
     }));
 
     setHasChanges(true);
-    setShowAIGenerator(false);
 
     // Show success message with details about what was created
     const features = [];

@@ -223,9 +223,12 @@ export interface AutomationConfig {
 
 // Create complete page types
 export interface CreateCompletePageInput {
-  name: string;
-  slug: string;
+  // name/slug optional when updating existing page (page_id provided)
+  name?: string;
+  slug?: string;
   subdomain?: string;
+  // Update mode: if provided, update this page instead of creating new
+  page_id?: string;
   content: GeneratedPageContent;
   style: 'professional' | 'bold' | 'minimal' | 'playful';
   colors: {
@@ -236,12 +239,14 @@ export interface CreateCompletePageInput {
   include_form: boolean;
   include_chat: boolean;
   automation: AutomationConfig;
+  replace_existing?: boolean;  // If true, replace existing page with same slug (create mode only)
 }
 
 export interface CompletePageResult {
-  page: Record<string, unknown>;
+  page: { id: string; name: string; slug: string; [key: string]: unknown };
   form: Record<string, unknown> | null;
   workflow: Record<string, unknown> | null;
+  updated?: boolean;  // True if this was an update, not create
 }
 
 // ==================== HOOKS ====================
@@ -418,7 +423,7 @@ export function useRefinePageContent(workspaceId: string) {
   });
 }
 
-// Create complete page package (page + form + workflow)
+// Create or update complete page package (page + form + workflow)
 export function useCreateCompletePage(workspaceId: string) {
   const queryClient = useQueryClient();
 
@@ -430,9 +435,16 @@ export function useCreateCompletePage(workspaceId: string) {
       );
       return data;
     },
-    onSuccess: () => {
-      // Invalidate pages list to show the new page
+    onSuccess: (_data, variables) => {
+      // Invalidate pages list
       queryClient.invalidateQueries({ queryKey: ['pages', workspaceId] });
+      // If updating existing page, invalidate that page's query too
+      if (variables.page_id) {
+        queryClient.invalidateQueries({ queryKey: ['page', workspaceId, variables.page_id] });
+        // Also invalidate forms and workflows for the page
+        queryClient.invalidateQueries({ queryKey: ['pageForms', workspaceId, variables.page_id] });
+        queryClient.invalidateQueries({ queryKey: ['pageWorkflows', workspaceId, variables.page_id] });
+      }
     },
   });
 }

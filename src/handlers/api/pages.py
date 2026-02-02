@@ -1,6 +1,29 @@
 """Pages API handler (admin, authenticated).
 
 Handles both page CRUD and nested forms/workflows under pages.
+
+TODO: [TECH-DEBT] - This file is 1,624 lines and handles too many concerns
+Details: Current file combines page CRUD, form management, workflow integration, 
+and block configuration in one handler. This makes the code difficult to:
+- Test (too many dependencies and scenarios)
+- Understand (large surface area)
+- Modify (changes affect unrelated functionality)
+- Maintain (merged concerns create tight coupling)
+
+Recommended refactoring into separate handlers:
+1. pages_handler.py - Page CRUD operations (create, read, update, delete)
+2. page_forms_handler.py - Form management within pages
+3. page_blocks_handler.py - Block configuration and management
+4. page_workflows_handler.py - Workflow integration with pages
+
+This refactoring would:
+- Reduce each file to ~200-300 lines
+- Enable focused testing per concern
+- Improve readability and maintainability
+- Allow parallel development of features
+
+Severity: Medium - impacts development velocity and code quality
+Estimated effort: 3-4 days for experienced developer
 """
 
 import json
@@ -72,12 +95,18 @@ class AutomationConfig(PydanticBaseModel):
 
 
 class CreateCompleteRequest(PydanticBaseModel):
-    """Request to create a complete marketing package (page + form + workflow)."""
+    """Request to create a complete marketing package (page + form + workflow).
 
-    # Page info
-    name: str = Field(..., min_length=1, max_length=255, description="Page name")
-    slug: str = Field(..., min_length=1, max_length=100, description="URL slug")
+    When page_id is provided, updates the existing page instead of creating a new one.
+    """
+
+    # Page info - name/slug are optional when updating existing page
+    name: str | None = Field(None, min_length=1, max_length=255, description="Page name")
+    slug: str | None = Field(None, min_length=1, max_length=100, description="URL slug")
     subdomain: str | None = Field(None, description="Optional subdomain to claim")
+
+    # Update mode - if provided, update this page instead of creating new
+    page_id: str | None = Field(None, description="Existing page ID to update (update mode)")
 
     # Generated content from wizard
     content: dict = Field(..., description="Generated content from AI wizard")
@@ -95,6 +124,9 @@ class CreateCompleteRequest(PydanticBaseModel):
 
     # Automation settings
     automation: AutomationConfig = Field(default_factory=AutomationConfig, description="Automation workflow config")
+
+    # Replace existing page if slug conflicts (only for create mode)
+    replace_existing: bool = Field(default=False, description="Replace existing page with same slug")
 
 
 def handler(event: dict[str, Any], context: Any) -> dict:
@@ -152,11 +184,13 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return handle_page_workflows(event, http_method, workspace_id, page_id, workflow_id)
 
         # Check for /generate and /create-complete endpoints (before page_id check)
-        if http_method == "POST" and path.endswith("/pages/generate"):
+        # Use 'in' check to handle trailing slashes or query string artifacts
+        if http_method == "POST" and "/pages/generate" in path and "create-complete" not in path:
             return generate_page_content(event)
-        elif http_method == "POST" and path.endswith("/pages/create-complete"):
+        elif http_method == "POST" and "/pages/create-complete" in path:
+            logger.info("Routing to create_complete_page", path=path)
             return create_complete_page(repo, workspace_id, event)
-        elif http_method == "GET" and path.endswith("/pages/check-subdomain"):
+        elif http_method == "GET" and "/pages/check-subdomain" in path:
             return check_subdomain_availability(repo, event)
         elif http_method == "GET" and page_id:
             return get_page(repo, workspace_id, page_id)
@@ -496,21 +530,36 @@ def create_complete_page(
     workspace_id: str,
     event: dict,
 ) -> dict:
-    """Create a complete marketing package: page + form + workflow.
+    """Create or update a complete marketing package: page + form + workflow.
 
-    This is the main endpoint for the AI wizard. It creates:
+    This is the main endpoint for the AI wizard. It creates/updates:
     1. A page with blocks based on the generated content
     2. A lead capture form (if include_form is True)
     3. An automation workflow (form submission → emails → tag contact)
 
     All three are linked together and ready to use.
+
+    When page_id is provided, updates the existing page instead of creating a new one.
     """
     try:
         body = json.loads(event.get("body", "{}"))
-        logger.info("Create complete page request", workspace_id=workspace_id, body_keys=list(body.keys()))
+        logger.info(
+            "Create complete page request",
+            workspace_id=workspace_id,
+            body_keys=list(body.keys()),
+            has_name=bool(body.get("name")),
+            has_slug=bool(body.get("slug")),
+            has_page_id=bool(body.get("page_id")),
+            has_content=bool(body.get("content")),
+            content_keys=list(body.get("content", {}).keys()) if isinstance(body.get("content"), dict) else None,
+        )
         request = CreateCompleteRequest.model_validate(body)
     except PydanticValidationError as e:
-        logger.warning("Create complete request validation failed", errors=e.errors())
+        logger.warning(
+            "Create complete request validation failed",
+            errors=e.errors(),
+            body_keys=list(body.keys()) if isinstance(body, dict) else None,
+        )
         return validation_error([
             {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
             for err in e.errors()
@@ -519,9 +568,40 @@ def create_complete_page(
         logger.warning("Invalid JSON body", error=str(e))
         return error("Invalid JSON body", 400)
 
+    # UPDATE MODE: If page_id is provided, update existing page
+    if request.page_id:
+        return _update_complete_page(repo, workspace_id, request)
+
+    # CREATE MODE: Validate required fields for create
+    if not request.name or not request.slug:
+        return error("name and slug are required when creating a new page", 400)
+
     # Check if slug already exists
-    if repo.slug_exists(workspace_id, request.slug):
-        return error(f"Slug '{request.slug}' is already in use", 400, error_code="SLUG_EXISTS")
+    existing_page = repo.get_by_slug(workspace_id, request.slug)
+    if existing_page:
+        if not request.replace_existing:
+            return error(f"Slug '{request.slug}' is already in use", 400, error_code="SLUG_EXISTS")
+
+        # Delete existing page and its associated resources
+        logger.info("Replacing existing page", page_id=existing_page.id, slug=request.slug)
+
+        # Delete associated forms
+        form_repo = FormRepository()
+        existing_forms, _ = form_repo.list_by_page(existing_page.id)
+        for form in existing_forms:
+            form_repo.delete_form(workspace_id, form.id)
+            logger.info("Deleted existing form", form_id=form.id)
+
+        # Delete associated workflows
+        workflow_repo = WorkflowRepository()
+        existing_workflows, _ = workflow_repo.list_by_page(existing_page.id)
+        for workflow in existing_workflows:
+            workflow_repo.delete_workflow(workspace_id, workflow.id)
+            logger.info("Deleted existing workflow", workflow_id=workflow.id)
+
+        # Delete the page itself
+        repo.delete_page(workspace_id, existing_page.id)
+        logger.info("Deleted existing page", page_id=existing_page.id)
 
     # Check subdomain if provided
     if request.subdomain:
@@ -630,9 +710,16 @@ def create_complete_page(
         result["form"] = form.model_dump(mode="json")
         logger.info("Form created for complete package", form_id=form.id, page_id=page.id)
 
-        # Update page with form reference
+        # Update page with form reference AND update form block with actual form ID
         page.form_ids = [form.id]
+        for block in page.blocks:
+            if block.type == "form" and not block.config.get("formId"):
+                block.config["formId"] = form.id
+                break
         repo.update_page(page)
+
+        # Update result with the updated page data
+        result["page"] = page.model_dump(mode="json")
 
         # Create automation workflow
         if request.automation.send_welcome_email or request.automation.notify_owner:
@@ -656,6 +743,203 @@ def create_complete_page(
     )
 
     return created(result)
+
+
+def _update_complete_page(
+    repo: PageRepository,
+    workspace_id: str,
+    request: CreateCompleteRequest,
+) -> dict:
+    """Update an existing page with AI-generated content.
+
+    This is the "update mode" of the AI wizard. Instead of creating a new page,
+    it updates the existing page's blocks and content while preserving:
+    - Page ID, slug, name (unless new name provided)
+    - Subdomain and custom domain settings
+    - Existing forms (adds new one if include_form and no forms exist)
+    - Existing workflows (adds new one if automation enabled and no workflows exist)
+    """
+    # Get existing page
+    page = repo.get_by_id(workspace_id, request.page_id)
+    if not page:
+        return not_found("Page", request.page_id)
+
+    logger.info("Updating existing page with AI content", page_id=page.id, page_name=page.name)
+
+    # Extract content from wizard
+    content = request.content.get("content", request.content)
+    business_info = request.content.get("business_info", {})
+    colors = request.colors
+
+    # Build page blocks from generated content
+    blocks = _build_blocks_from_content(content, business_info, request.style, colors)
+
+    # Update page fields
+    headline = ""
+    if content.get("headlines") and len(content["headlines"]) > 0:
+        headline = content["headlines"][0]
+
+    page.headline = headline
+    page.subheadline = content.get("hero_subheadline", content.get("tagline", ""))
+    page.blocks = blocks
+    page.primary_color = colors.get("primary", "#6366f1")
+    page.chat_config = ChatConfig(
+        enabled=request.include_chat,
+        position="bottom-right",
+        initial_message=f"Hi! How can I help you learn more about {business_info.get('business_name', page.name)}?",
+        ai_persona=f"Helpful assistant for {business_info.get('business_name', page.name)}",
+    )
+    page.meta_title = page.name
+    page.meta_description = content.get("hero_subheadline", content.get("tagline", ""))
+
+    # Update name if provided
+    if request.name:
+        page.name = request.name
+
+    # Update subdomain if provided (and different from current)
+    if request.subdomain is not None:
+        subdomain = request.subdomain.lower() if request.subdomain else None
+        if subdomain and subdomain != (page.subdomain or "").lower():
+            if subdomain in RESERVED_SUBDOMAINS:
+                return error(f"Subdomain '{subdomain}' is reserved", 400, error_code="SUBDOMAIN_RESERVED")
+            if repo.subdomain_exists(subdomain, exclude_page_id=page.id):
+                return error(f"Subdomain '{subdomain}' is already taken", 400, error_code="SUBDOMAIN_EXISTS")
+        page.subdomain = subdomain
+
+    # Save page updates
+    page = repo.update_page(page)
+    logger.info("Page updated with AI content", page_id=page.id)
+
+    result = {
+        "page": page.model_dump(mode="json"),
+        "form": None,
+        "workflow": None,
+        "updated": True,  # Flag to indicate this was an update, not create
+    }
+
+    # Check for existing forms
+    form_repo = FormRepository()
+    existing_forms, _ = form_repo.list_by_page(page.id)
+
+    # Create form if requested AND no forms exist
+    if request.include_form and not existing_forms:
+        cta_text = content.get("cta_text", "Get Started")
+        form = Form(
+            workspace_id=workspace_id,
+            page_id=page.id,
+            name=f"Contact - {page.name}",
+            description=f"Lead capture form for {page.name}",
+            fields=[
+                FormField(
+                    id=str(uuid.uuid4())[:8],
+                    name="email",
+                    label="Email",
+                    type=FormFieldType.EMAIL,
+                    required=True,
+                    placeholder="your@email.com",
+                    map_to_contact_field="email",
+                ),
+                FormField(
+                    id=str(uuid.uuid4())[:8],
+                    name="first_name",
+                    label="Name",
+                    type=FormFieldType.TEXT,
+                    required=True,
+                    placeholder="Your name",
+                    map_to_contact_field="first_name",
+                ),
+                FormField(
+                    id=str(uuid.uuid4())[:8],
+                    name="phone",
+                    label="Phone",
+                    type=FormFieldType.PHONE,
+                    required=False,
+                    placeholder="(555) 123-4567",
+                    map_to_contact_field="phone",
+                ),
+                FormField(
+                    id=str(uuid.uuid4())[:8],
+                    name="message",
+                    label="Message",
+                    type=FormFieldType.TEXTAREA,
+                    required=False,
+                    placeholder="How can we help?",
+                ),
+            ],
+            submit_button_text=cta_text,
+            success_message="Thanks! We'll be in touch shortly.",
+            add_tags=request.automation.add_tags or ["lead", "website"],
+            trigger_workflow=True,
+        )
+
+        form = form_repo.create_form(form)
+        result["form"] = form.model_dump(mode="json")
+        logger.info("Form created for updated page", form_id=form.id, page_id=page.id)
+
+        # Update form block with actual form ID
+        for block in page.blocks:
+            if block.type == "form" and not block.config.get("formId"):
+                block.config["formId"] = form.id
+                break
+        repo.update_page(page)
+        result["page"] = page.model_dump(mode="json")
+    elif existing_forms:
+        # Use first existing form for the form block
+        existing_form = existing_forms[0]
+        result["form"] = existing_form.model_dump(mode="json")
+        for block in page.blocks:
+            if block.type == "form" and not block.config.get("formId"):
+                block.config["formId"] = existing_form.id
+                break
+        repo.update_page(page)
+        result["page"] = page.model_dump(mode="json")
+
+    # Check for existing workflows
+    workflow_repo = WorkflowRepository()
+    existing_workflows, _ = workflow_repo.list_by_page(page.id)
+
+    # Create automation workflow if requested AND no workflows exist
+    if (request.automation.send_welcome_email or request.automation.notify_owner) and not existing_workflows:
+        form_id = result["form"]["id"] if result["form"] else (existing_forms[0].id if existing_forms else None)
+        if form_id:
+            workflow = _build_automation_workflow(
+                workspace_id=workspace_id,
+                page_id=page.id,
+                form_id=form_id,
+                business_name=business_info.get("business_name", page.name),
+                automation=request.automation,
+            )
+            workflow = workflow_repo.create_workflow(workflow)
+            result["workflow"] = workflow.model_dump(mode="json", by_alias=True)
+            logger.info("Workflow created for updated page", workflow_id=workflow.id, page_id=page.id)
+    elif existing_workflows:
+        result["workflow"] = existing_workflows[0].model_dump(mode="json", by_alias=True)
+
+    # Invalidate CDN cache if page has subdomain or custom domain
+    if page.subdomain or page.custom_domain:
+        try:
+            invalidation_result = invalidate_page_cache(
+                subdomain=page.subdomain,
+                custom_domain=page.custom_domain,
+                page_id=page.id,
+            )
+            logger.info(
+                "CDN cache invalidated for updated page",
+                page_id=page.id,
+                subdomain=page.subdomain,
+                result=invalidation_result,
+            )
+        except Exception as e:
+            logger.warning("Failed to invalidate CDN cache", page_id=page.id, error=str(e))
+
+    logger.info(
+        "Page update complete",
+        page_id=page.id,
+        has_form=result["form"] is not None,
+        has_workflow=result["workflow"] is not None,
+    )
+
+    return success(result)
 
 
 def _build_blocks_from_content(
@@ -682,22 +966,27 @@ def _build_blocks_from_content(
     if content.get("headlines") and len(content["headlines"]) > 0:
         headline = content["headlines"][0]
 
+    hero_image_url = content.get("hero_image_url")
+    hero_config = {
+        "headline": headline,
+        "subheadline": content.get("hero_subheadline", content.get("tagline", "")),
+        "buttonText": content.get("cta_text", "Get Started"),
+        "buttonLink": "#contact",
+        "backgroundType": "image" if hero_image_url else "gradient",
+        "gradientFrom": gradients[0],
+        "gradientTo": gradients[1],
+        "textAlign": "center",
+        "showButton": True,
+    }
+    if hero_image_url:
+        hero_config["backgroundImage"] = hero_image_url
+
     blocks.append(PageBlock(
         id=str(uuid.uuid4())[:8],
         type="hero",
         order=order,
         width=4,
-        config={
-            "headline": headline,
-            "subheadline": content.get("hero_subheadline", content.get("tagline", "")),
-            "buttonText": content.get("cta_text", "Get Started"),
-            "buttonLink": "#contact",
-            "backgroundType": "gradient",
-            "gradientFrom": gradients[0],
-            "gradientTo": gradients[1],
-            "textAlign": "center",
-            "showButton": True,
-        },
+        config=hero_config,
     ))
     order += 1
 
@@ -745,6 +1034,10 @@ def _build_blocks_from_content(
 
     # Testimonials block (if we have concepts)
     testimonials = content.get("testimonial_concepts", [])
+    testimonial_avatars = content.get("testimonial_avatars", [])
+    placeholder_names = ["Sarah M.", "James T.", "Emily R.", "Michael K.", "Jessica L."]
+    placeholder_companies = ["Satisfied Customer", "Happy Client", "Loyal Customer", "Verified Buyer", "Business Owner"]
+
     if testimonials:
         blocks.append(PageBlock(
             id=str(uuid.uuid4())[:8],
@@ -756,11 +1049,11 @@ def _build_blocks_from_content(
                 "items": [
                     {
                         "quote": t,
-                        "author": "Happy Customer",
-                        "company": "",
-                        "avatar": "",
+                        "author": placeholder_names[i] if i < len(placeholder_names) else "Happy Customer",
+                        "company": placeholder_companies[i] if i < len(placeholder_companies) else "",
+                        "avatar": testimonial_avatars[i] if i < len(testimonial_avatars) else "",
                     }
-                    for t in testimonials[:2]
+                    for i, t in enumerate(testimonials[:3])
                 ],
             },
         ))
@@ -879,9 +1172,10 @@ def _build_automation_workflow(
             data={
                 "label": "Welcome Email",
                 "config": {
-                    "to": "{{contact.email}}",
-                    "subject": f"Thanks for contacting {business_name}!",
-                    "body": f"Hi {{{{contact.first_name}}}},\n\n{welcome_msg}\n\nBest regards,\n{business_name}",
+                    "email_to": "{{contact.email}}",
+                    "email_subject": f"Thanks for contacting {business_name}!",
+                    "email_body": f"Hi {{{{contact.first_name}}}},\n\n{welcome_msg}\n\nBest regards,\n{business_name}",
+                    "email_from": "noreply@complens.ai",
                 },
             },
         ))
@@ -901,9 +1195,9 @@ def _build_automation_workflow(
             data={
                 "label": "Notify Owner",
                 "config": {
-                    "to": automation.owner_email,
-                    "subject": f"New Lead: {{{{contact.first_name}}}} {{{{contact.last_name}}}}",
-                    "body": (
+                    "email_to": automation.owner_email,
+                    "email_subject": f"New Lead: {{{{contact.first_name}}}} {{{{contact.last_name}}}}",
+                    "email_body": (
                         f"New lead from {business_name} website!\n\n"
                         "Contact Details:\n"
                         "- Name: {{contact.first_name}} {{contact.last_name}}\n"
@@ -911,6 +1205,7 @@ def _build_automation_workflow(
                         "- Phone: {{contact.phone}}\n\n"
                         "Form Data:\n{{trigger_data.form_data}}"
                     ),
+                    "email_from": "noreply@complens.ai",
                 },
             },
         ))
