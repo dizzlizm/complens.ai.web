@@ -227,7 +227,7 @@ class SendEmailAction(BaseNode):
 
 
 class AIRespondAction(BaseNode):
-    """Generate and send AI response."""
+    """Generate and send AI response via SMS or email."""
 
     node_type = "action_ai_respond"
 
@@ -238,32 +238,162 @@ class AIRespondAction(BaseNode):
             context: Execution context.
 
         Returns:
-            NodeResult with AI response.
+            NodeResult with AI response and send status.
         """
+        import boto3
+
         prompt_template = self._get_config_value("ai_prompt", "")
         prompt = context.render_template(prompt_template)
 
         respond_via = self._get_config_value("ai_respond_via", "same_channel")
         max_tokens = self._get_config_value("ai_max_tokens", 500)
+        model = self._get_config_value(
+            "ai_model", "us.anthropic.claude-3-sonnet-20240229-v1:0"
+        )
+        system_prompt = self._get_config_value(
+            "ai_system_prompt",
+            "You are a helpful assistant for a business. Be concise and professional.",
+        )
+
+        if not prompt:
+            return NodeResult.failed(error="AI prompt is required")
+
+        # Determine channel from trigger if "same_channel"
+        if respond_via == "same_channel":
+            trigger_channel = context.trigger_data.get("channel", "email")
+            respond_via = trigger_channel
+
+        # Build context for AI
+        contact_info = f"""Contact Information:
+- Name: {context.contact.full_name}
+- Email: {context.contact.email or 'N/A'}
+- Phone: {context.contact.phone or 'N/A'}
+- Tags: {', '.join(context.contact.tags) if context.contact.tags else 'None'}"""
+
+        # Get any message being responded to
+        incoming_message = context.variables.get("message_content") or context.trigger_data.get("body", "")
+
+        full_prompt = f"""{contact_info}
+
+Variables:
+{json.dumps(context.variables, indent=2)}
+
+{f'Message to respond to: {incoming_message}' if incoming_message else ''}
+
+Task:
+{prompt}"""
 
         self.logger.info(
             "Generating AI response",
-            prompt_length=len(prompt),
+            prompt_length=len(full_prompt),
             respond_via=respond_via,
+            model=model,
         )
 
-        # TODO: Integrate with Bedrock
-        # For now, return placeholder
-        ai_response = f"[AI Response to: {prompt[:50]}...]"
+        try:
+            # Invoke Bedrock
+            bedrock = boto3.client("bedrock-runtime")
+
+            body = {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": max_tokens,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": full_prompt}],
+            }
+
+            response = bedrock.invoke_model(
+                modelId=model,
+                body=json.dumps(body),
+                contentType="application/json",
+            )
+
+            response_body = json.loads(response["body"].read())
+            ai_response = response_body["content"][0]["text"]
+
+            self.logger.info(
+                "AI response generated",
+                response_length=len(ai_response),
+            )
+
+        except Exception as e:
+            self.logger.error("AI generation failed", error=str(e))
+            return NodeResult.failed(
+                error=f"AI generation failed: {str(e)}",
+                error_details={"exception": type(e).__name__},
+            )
+
+        # Send the response via the appropriate channel
+        send_result = None
+
+        if respond_via == "sms":
+            from complens.services.twilio_service import TwilioError, get_twilio_service
+
+            to_number = context.contact.phone
+            if not to_number:
+                return NodeResult.failed(
+                    error="Contact has no phone number for SMS response"
+                )
+
+            twilio = get_twilio_service()
+            if twilio.is_configured:
+                try:
+                    result = twilio.send_sms(to=to_number, body=ai_response)
+                    send_result = {
+                        "channel": "sms",
+                        "message_sid": result["message_sid"],
+                        "status": result["status"],
+                    }
+                except TwilioError as e:
+                    self.logger.warning("SMS send failed, returning response only", error=e.message)
+                    send_result = {"channel": "sms", "status": "send_failed", "error": e.message}
+            else:
+                send_result = {"channel": "sms", "status": "simulated"}
+
+        elif respond_via == "email":
+            from complens.services.email_service import EmailError, get_email_service
+
+            to_email = context.contact.email
+            if not to_email:
+                return NodeResult.failed(
+                    error="Contact has no email address for email response"
+                )
+
+            email_service = get_email_service()
+            subject = self._get_config_value("ai_email_subject", "Response from us")
+            subject = context.render_template(subject)
+
+            try:
+                result = email_service.send_email(
+                    to=to_email,
+                    subject=subject,
+                    body_text=ai_response,
+                )
+                send_result = {
+                    "channel": "email",
+                    "message_id": result["message_id"],
+                    "status": result["status"],
+                }
+            except EmailError as e:
+                self.logger.warning("Email send failed, returning response only", error=e.message)
+                send_result = {"channel": "email", "status": "send_failed", "error": e.message}
+
+        else:
+            # No send - just generate (e.g., for chat/websocket or storage)
+            send_result = {"channel": respond_via, "status": "generated_only"}
 
         return NodeResult.completed(
             output={
                 "ai_response": ai_response,
                 "respond_via": respond_via,
-                "model": "claude-3-sonnet",
+                "model": model,
+                "send_result": send_result,
             },
             variables={"last_ai_response": ai_response},
         )
+
+    def get_required_config(self) -> list[str]:
+        """Get required configuration."""
+        return ["ai_prompt"]
 
 
 class UpdateContactAction(BaseNode):

@@ -91,11 +91,16 @@ def list_workflows(
     workspace_id: str,
     event: dict,
 ) -> dict:
-    """List workflows in a workspace."""
+    """List workflows in a workspace.
+
+    By default, returns only workspace-level workflows (no page_id).
+    Add ?include_page_workflows=true to include page-specific workflows.
+    """
     query_params = event.get("queryStringParameters", {}) or {}
 
     limit = min(int(query_params.get("limit", 50)), 100)
     status_filter = query_params.get("status")
+    include_page_workflows = query_params.get("include_page_workflows", "").lower() == "true"
 
     status = None
     if status_filter:
@@ -104,7 +109,12 @@ def list_workflows(
         except ValueError:
             return error(f"Invalid status: {status_filter}", 400)
 
-    workflows, next_key = repo.list_by_workspace(workspace_id, status, limit)
+    if include_page_workflows:
+        # Return all workflows (both workspace-level and page-specific)
+        workflows, next_key = repo.list_by_workspace(workspace_id, status, limit)
+    else:
+        # Return only workspace-level workflows (no page_id)
+        workflows, next_key = repo.list_workspace_level(workspace_id, status, limit)
 
     # Use by_alias=True to return 'type' instead of 'node_type' for React Flow compatibility
     return success({

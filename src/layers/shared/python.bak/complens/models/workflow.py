@@ -59,17 +59,24 @@ class TriggerConfig(PydanticBaseModel):
 class Workflow(BaseModel):
     """Workflow entity - represents a visual automation workflow.
 
+    Workflows can be:
+    - Workspace-level: page_id is None, shown in global Workflows page
+    - Page-specific: page_id is set, shown in page editor
+
     Key Pattern:
         PK: WS#{workspace_id}
         SK: WF#{id}
         GSI1PK: WS#{workspace_id}#WF_STATUS
         GSI1SK: {status}#{id}
+        GSI2PK: PAGE#{page_id}#WORKFLOWS (if page_id set)
+        GSI2SK: {status}#{id}
     """
 
     _pk_prefix: ClassVar[str] = "WS#"
     _sk_prefix: ClassVar[str] = "WF#"
 
     workspace_id: str = Field(..., description="Parent workspace ID")
+    page_id: str | None = Field(None, description="Parent page ID (None for workspace-level workflows)")
 
     # Workflow metadata
     name: str = Field(..., min_length=1, max_length=255, description="Workflow name")
@@ -119,6 +126,16 @@ class Workflow(BaseModel):
         return {
             "GSI1PK": f"WS#{self.workspace_id}#WF_STATUS",
             "GSI1SK": f"{status_value}#{self.id}",
+        }
+
+    def get_gsi2_keys(self) -> dict[str, str] | None:
+        """Get GSI2 keys for page-scoped workflow listing (if page_id set)."""
+        if not self.page_id:
+            return None
+        status_value = self.status.value if hasattr(self.status, 'value') else self.status
+        return {
+            "GSI2PK": f"PAGE#{self.page_id}#WORKFLOWS",
+            "GSI2SK": f"{status_value}#{self.id}",
         }
 
     def get_node_by_id(self, node_id: str) -> WorkflowNode | None:

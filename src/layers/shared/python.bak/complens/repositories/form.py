@@ -29,7 +29,7 @@ class FormRepository(BaseRepository[Form]):
         limit: int = 50,
         last_key: dict | None = None,
     ) -> tuple[list[Form], dict | None]:
-        """List forms in a workspace.
+        """List all forms in a workspace.
 
         Args:
             workspace_id: The workspace ID.
@@ -42,6 +42,30 @@ class FormRepository(BaseRepository[Form]):
         return self.query(
             pk=f"WS#{workspace_id}",
             sk_begins_with="FORM#",
+            limit=limit,
+            last_key=last_key,
+        )
+
+    def list_by_page(
+        self,
+        page_id: str,
+        limit: int = 50,
+        last_key: dict | None = None,
+    ) -> tuple[list[Form], dict | None]:
+        """List forms for a specific page using GSI1.
+
+        Args:
+            page_id: The page ID.
+            limit: Maximum forms to return.
+            last_key: Pagination cursor.
+
+        Returns:
+            Tuple of (forms, next_page_key).
+        """
+        return self.query(
+            pk=f"PAGE#{page_id}#FORMS",
+            sk_begins_with="",  # All forms for this page
+            index_name="GSI1",
             limit=limit,
             last_key=last_key,
         )

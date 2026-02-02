@@ -15,6 +15,8 @@ import {
   INDUSTRY_OPTIONS,
   BUSINESS_TYPE_OPTIONS,
   BRAND_VOICE_OPTIONS,
+  GeneratedPageContent,
+  AutomationConfig,
 } from '../lib/hooks/useAI';
 import { useToast } from '../components/Toast';
 import FormBuilder from '../components/FormBuilder';
@@ -252,18 +254,48 @@ export default function PageEditor() {
     }
   };
 
-  // Handle AI-generated blocks from the agentic page builder
-  const handleAIGeneratedBlocks = (newBlocks: PageBlock[]) => {
+  // Handle AI-generated content from the new agentic page builder
+  const handleAIGeneratedBlocks = (result: {
+    blocks: PageBlock[];
+    content: GeneratedPageContent;
+    style: 'professional' | 'bold' | 'minimal' | 'playful';
+    colors: { primary: string; secondary: string; accent: string };
+    automation: AutomationConfig;
+    includeForm: boolean;
+    includeChat: boolean;
+  }) => {
     // Replace all blocks with generated ones
-    setBlocks(newBlocks.map((b, i) => ({ ...b, order: i })));
-    // Clear legacy body_content since we're using blocks now
+    setBlocks(result.blocks.map((b, i) => ({ ...b, order: i })));
+
+    // Update form data with generated content
+    const headline = result.content.content.headlines?.[0] || '';
+    const subheadline = result.content.content.hero_subheadline || result.content.content.tagline || '';
+
     setFormData((prev) => ({
       ...prev,
-      body_content: '',
+      headline,
+      subheadline,
+      body_content: '', // Clear legacy body_content since we're using blocks
+      primary_color: result.colors.primary,
+      chat_config: result.includeChat ? {
+        enabled: true,
+        position: 'bottom-right',
+        initial_message: `Hi! How can I help you learn more about ${result.content.business_info?.business_name || formData.name}?`,
+        ai_persona: `Helpful assistant for ${result.content.business_info?.business_name || formData.name}`,
+      } : prev.chat_config,
     }));
+
     setHasChanges(true);
     setShowAIGenerator(false);
-    toast.success('Page built with AI! Review and save your changes.');
+
+    // Show success message with details about what was created
+    const features = [];
+    if (result.blocks.length > 0) features.push(`${result.blocks.length} sections`);
+    if (result.includeForm) features.push('lead capture form');
+    if (result.automation.send_welcome_email || result.automation.notify_owner) features.push('automation workflow');
+    if (result.includeChat) features.push('chat widget');
+
+    toast.success(`Page built with AI! Created: ${features.join(', ')}. Review and save your changes.`);
   };
 
   // Form builder state
@@ -1149,7 +1181,7 @@ export default function PageEditor() {
       {/* AI Page Builder Modal - agentic chat-based builder */}
       {showAIGenerator && (
         <AgenticPageBuilder
-          onGenerate={handleAIGeneratedBlocks}
+          onComplete={handleAIGeneratedBlocks}
           onClose={() => setShowAIGenerator(false)}
           pageId={pageId}
         />

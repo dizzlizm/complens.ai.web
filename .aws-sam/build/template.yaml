@@ -76,7 +76,10 @@ Globals:
         EVENT_BUS_NAME:
           Fn::Sub: complens-${Stage}-workflow-events
         WEBSOCKET_ENDPOINT:
-          Fn::Sub: https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
+          Fn::If:
+          - CustomDomainEnabled
+          - Fn::Sub: wss://ws.${DomainName}
+          - Fn::Sub: wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
         CORS_ALLOWED_ORIGIN:
           Fn::If:
           - IsProd
@@ -117,6 +120,10 @@ Resources:
         AttributeType: S
       - AttributeName: GSI2SK
         AttributeType: S
+      - AttributeName: GSI3PK
+        AttributeType: S
+      - AttributeName: GSI3SK
+        AttributeType: S
       KeySchema:
       - AttributeName: PK
         KeyType: HASH
@@ -136,6 +143,14 @@ Resources:
         - AttributeName: GSI2PK
           KeyType: HASH
         - AttributeName: GSI2SK
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      - IndexName: GSI3
+        KeySchema:
+        - AttributeName: GSI3PK
+          KeyType: HASH
+        - AttributeName: GSI3SK
           KeyType: RANGE
         Projection:
           ProjectionType: ALL
@@ -274,7 +289,7 @@ Resources:
       QueueName:
         Fn::Sub: complens-${Stage}-workflow-queue.fifo
       FifoQueue: true
-      ContentBasedDeduplication: false
+      ContentBasedDeduplication: true
       DeduplicationScope: messageGroup
       FifoThroughputLimit: perMessageGroupId
       VisibilityTimeout: 300
@@ -337,7 +352,7 @@ Resources:
           - WorkflowQueue
           - Arn
         SqsParameters:
-          MessageGroupId: $.detail.workspace_id
+          MessageGroupId: workflow-triggers
   FormSubmitRule:
     Type: AWS::Events::Rule
     Properties:
@@ -358,7 +373,7 @@ Resources:
           - WorkflowQueue
           - Arn
         SqsParameters:
-          MessageGroupId: $.detail.workspace_id
+          MessageGroupId: workflow-triggers
   InboundMessageRule:
     Type: AWS::Events::Rule
     Properties:
@@ -380,7 +395,7 @@ Resources:
           - WorkflowQueue
           - Arn
         SqsParameters:
-          MessageGroupId: $.detail.workspace_id
+          MessageGroupId: workflow-triggers
   WorkflowQueuePolicy:
     Type: AWS::SQS::QueuePolicy
     Properties:
@@ -914,6 +929,18 @@ Resources:
           Action:
           - bedrock:InvokeModel
           Resource: '*'
+      - Statement:
+        - Effect: Allow
+          Action:
+          - cloudfront:CreateInvalidation
+          Resource:
+            Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/*
+      - Statement:
+        - Effect: Allow
+          Action:
+          - cloudformation:DescribeStacks
+          Resource:
+            Fn::Sub: arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/complens-${Stage}/*
       Events:
         List:
           Type: Api
@@ -936,6 +963,13 @@ Resources:
               Ref: RestApi
             Path: /workspaces/{workspace_id}/pages/generate
             Method: POST
+        CheckSubdomain:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/check-subdomain
+            Method: GET
         Get:
           Type: Api
           Properties:
@@ -956,6 +990,76 @@ Resources:
             RestApiId:
               Ref: RestApi
             Path: /workspaces/{workspace_id}/pages/{page_id}
+            Method: DELETE
+        PageFormsList:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/forms
+            Method: GET
+        PageFormsCreate:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/forms
+            Method: POST
+        PageFormsGet:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/forms/{form_id}
+            Method: GET
+        PageFormsUpdate:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/forms/{form_id}
+            Method: PUT
+        PageFormsDelete:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/forms/{form_id}
+            Method: DELETE
+        PageWorkflowsList:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/workflows
+            Method: GET
+        PageWorkflowsCreate:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/workflows
+            Method: POST
+        PageWorkflowsGet:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/workflows/{workflow_id}
+            Method: GET
+        PageWorkflowsUpdate:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/workflows/{workflow_id}
+            Method: PUT
+        PageWorkflowsDelete:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/pages/{page_id}/workflows/{workflow_id}
             Method: DELETE
     Metadata:
       SamResourceId: PagesFunction
@@ -1016,6 +1120,98 @@ Resources:
             Method: GET
     Metadata:
       SamResourceId: FormsFunction
+  AIFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: complens-${Stage}-ai
+      Handler: ai.handler
+      CodeUri: AIFunction
+      Description: AI-powered content generation and business profile management
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          ASSETS_BUCKET:
+            Ref: AssetsBucket
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: MainTable
+      - S3CrudPolicy:
+          BucketName:
+            Ref: AssetsBucket
+      - Statement:
+        - Effect: Allow
+          Action:
+          - bedrock:InvokeModel
+          Resource: '*'
+      Events:
+        GetProfile:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/ai/profile
+            Method: GET
+        UpdateProfile:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/ai/profile
+            Method: PUT
+        AnalyzeContent:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/ai/profile/analyze
+            Method: POST
+        OnboardingQuestion:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/ai/onboarding/question
+            Method: GET
+        OnboardingAnswer:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/ai/onboarding/answer
+            Method: POST
+        ImproveBlock:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/ai/improve-block
+            Method: POST
+        GenerateBlocks:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/ai/generate-blocks
+            Method: POST
+        GenerateImage:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/ai/generate-image
+            Method: POST
+        GenerateWorkflow:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /workspaces/{workspace_id}/ai/generate-workflow
+            Method: POST
+    Metadata:
+      SamResourceId: AIFunction
   DomainsFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -1159,6 +1355,13 @@ Resources:
             - CustomDomainEnabled
             - Fn::Sub: https://api.${DomainName}
             - Fn::Sub: https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
+          WEBSOCKET_ENDPOINT:
+            Fn::If:
+            - CustomDomainEnabled
+            - Fn::Sub: wss://ws.${DomainName}
+            - Fn::Sub: wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
+          WORKFLOW_QUEUE_URL:
+            Ref: WorkflowQueue
       Policies:
       - DynamoDBCrudPolicy:
           TableName:
@@ -1170,6 +1373,14 @@ Resources:
           Resource:
             Fn::GetAtt:
             - WorkflowEventBus
+            - Arn
+      - Statement:
+        - Effect: Allow
+          Action:
+          - sqs:SendMessage
+          Resource:
+            Fn::GetAtt:
+            - WorkflowQueue
             - Arn
       Events:
         GetPage:
@@ -1199,6 +1410,15 @@ Resources:
             Method: POST
             Auth:
               Authorizer: NONE
+        SubmitPageFormOptions:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /public/submit/page/{page_id}
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
         SubmitForm:
           Type: Api
           Properties:
@@ -1208,12 +1428,30 @@ Resources:
             Method: POST
             Auth:
               Authorizer: NONE
+        SubmitFormOptions:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /public/submit/form/{form_id}
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
         GetPageByDomain:
           Type: Api
           Properties:
             RestApiId:
               Ref: RestApi
             Path: /public/domain/{domain}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        GetPageBySubdomain:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: RestApi
+            Path: /public/subdomain/{subdomain}
             Method: GET
             Auth:
               Authorizer: NONE
@@ -1292,8 +1530,10 @@ Resources:
         - Effect: Allow
           Action:
           - execute-api:ManageConnections
+          - execute-api:Invoke
           Resource:
           - Fn::Sub: arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+          - Fn::Sub: arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*/POST/@connections/*
       - Statement:
         - Effect: Allow
           Action:
@@ -2183,6 +2423,109 @@ Resources:
           - DomainName
         HostedZoneId: Z2FDTNDATAQYW2
         EvaluateTargetHealth: false
+  SubdomainRouterFunction:
+    Type: AWS::CloudFront::Function
+    Condition: CustomDomainEnabled
+    Properties:
+      Name:
+        Fn::Sub: complens-${Stage}-subdomain-router
+      AutoPublish: true
+      FunctionCode: "function handler(event) {\n  var request = event.request;\n \
+        \ var host = request.headers.host.value;\n\n  // Extract subdomain from host\
+        \ (e.g., \"itsross\" from \"itsross.dev.complens.ai\")\n  var parts = host.split('.');\n\
+        \  var subdomain = parts[0];\n\n  // Rewrite URI to include subdomain path\n\
+        \  request.uri = '/' + subdomain;\n\n  return request;\n}\n"
+      FunctionConfig:
+        Comment:
+          Fn::Sub: Route subdomain requests to API for ${Stage}
+        Runtime: cloudfront-js-1.0
+  SubdomainDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: CustomDomainEnabled
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment:
+          Fn::Sub: Complens ${Stage} Subdomain Pages (*.${DomainName})
+        Aliases:
+        - Fn::Sub: '*.${DomainName}'
+        ViewerCertificate:
+          AcmCertificateArn:
+            Fn::If:
+            - UseCertificateArn
+            - Ref: CertificateArn
+            - Ref: ApiCertificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+        - Id: ApiGatewayOrigin
+          DomainName:
+            Fn::Sub: ${RestApi}.execute-api.${AWS::Region}.amazonaws.com
+          OriginPath:
+            Fn::Sub: /${Stage}/public/subdomain
+          CustomOriginConfig:
+            HTTPSPort: 443
+            OriginProtocolPolicy: https-only
+            OriginSSLProtocols:
+            - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: ApiGatewayOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          CachedMethods:
+          - GET
+          - HEAD
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf
+          FunctionAssociations:
+          - EventType: viewer-request
+            FunctionARN:
+              Fn::GetAtt:
+              - SubdomainRouterFunction
+              - FunctionARN
+        PriceClass: PriceClass_100
+        HttpVersion: http2and3
+      Tags:
+      - Key: Service
+        Value: complens
+      - Key: Stage
+        Value:
+          Ref: Stage
+  SubdomainDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CustomDomainEnabled
+    Properties:
+      HostedZoneId:
+        Ref: HostedZoneId
+      Name:
+        Fn::Sub: '*.${DomainName}'
+      Type: A
+      AliasTarget:
+        DNSName:
+          Fn::GetAtt:
+          - SubdomainDistribution
+          - DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
+  SubdomainDnsRecordIPv6:
+    Type: AWS::Route53::RecordSet
+    Condition: CustomDomainEnabled
+    Properties:
+      HostedZoneId:
+        Ref: HostedZoneId
+      Name:
+        Fn::Sub: '*.${DomainName}'
+      Type: AAAA
+      AliasTarget:
+        DNSName:
+          Fn::GetAtt:
+          - SubdomainDistribution
+          - DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
 Conditions:
   IsProd:
     Fn::Equals:
@@ -2352,3 +2695,29 @@ Outputs:
     Export:
       Name:
         Fn::Sub: ${AWS::StackName}-PagesCnameTarget
+  SubdomainDistributionId:
+    Condition: CustomDomainEnabled
+    Description: Subdomain CloudFront Distribution ID (for *.dev.complens.ai)
+    Value:
+      Ref: SubdomainDistribution
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-SubdomainDistributionId
+  SubdomainDistributionDomainName:
+    Condition: CustomDomainEnabled
+    Description: Subdomain CloudFront Distribution Domain Name
+    Value:
+      Fn::GetAtt:
+      - SubdomainDistribution
+      - DomainName
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-SubdomainDistributionDomainName
+  SubdomainBaseUrl:
+    Condition: CustomDomainEnabled
+    Description: Base URL pattern for subdomain pages (e.g., yourname.dev.complens.ai)
+    Value:
+      Fn::Sub: '*.${DomainName}'
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-SubdomainBaseUrl

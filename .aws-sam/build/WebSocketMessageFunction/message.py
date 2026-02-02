@@ -114,9 +114,19 @@ def handle_public_chat(
             return {"statusCode": 404}
 
         # Build AI prompt with page context
-        chat_config = page.chat_config or {}
-        ai_persona = chat_config.get("ai_persona") or "You are a helpful assistant."
-        business_context = chat_config.get("business_context", {})
+        # chat_config can be a Pydantic model or None
+        chat_config = page.chat_config
+        if chat_config:
+            # Handle both Pydantic model and dict
+            if hasattr(chat_config, 'ai_persona'):
+                ai_persona = chat_config.ai_persona or "You are a helpful assistant."
+                business_context = chat_config.business_context or {}
+            else:
+                ai_persona = chat_config.get("ai_persona") or "You are a helpful assistant."
+                business_context = chat_config.get("business_context", {})
+        else:
+            ai_persona = "You are a helpful assistant."
+            business_context = {}
 
         system_prompt = f"""{ai_persona}
 
@@ -229,10 +239,11 @@ def _find_page_by_id(page_repo: PageRepository, page_id: str):
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ.get("TABLE_NAME", "complens-dev"))
 
+    # Note: Removed Limit=1 as it limits items evaluated, not returned.
+    # The scan continues until it finds a match or exhausts the table.
     response = table.scan(
         FilterExpression="SK = :sk",
         ExpressionAttributeValues={":sk": f"PAGE#{page_id}"},
-        Limit=1,
     )
 
     items = response.get("Items", [])
@@ -243,7 +254,7 @@ def _find_page_by_id(page_repo: PageRepository, page_id: str):
     # Extract workspace_id from PK (format: WS#{workspace_id})
     workspace_id = item.get("PK", "").replace("WS#", "")
 
-    return page_repo.get(workspace_id, page_id)
+    return page_repo.get_by_id(workspace_id, page_id)
 
 
 def _generate_chat_response(system_prompt: str, user_message: str) -> str:
@@ -374,7 +385,15 @@ def send_to_connection(
     Returns:
         Response.
     """
-    endpoint = f"https://{domain}/{stage}"
+    # For custom domains (e.g., ws.dev.complens.ai), don't include stage in path
+    # For default API Gateway domains (e.g., xxx.execute-api.region.amazonaws.com), include stage
+    if "execute-api" in domain:
+        endpoint = f"https://{domain}/{stage}"
+    else:
+        # Custom domain - stage is already mapped, don't include it
+        endpoint = f"https://{domain}"
+
+    logger.debug("Sending to connection", connection_id=connection_id, endpoint=endpoint)
 
     apigw = boto3.client(
         "apigatewaymanagementapi",

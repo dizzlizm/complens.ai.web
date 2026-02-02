@@ -151,3 +151,44 @@ def get_workspace_id_from_path(event: dict[str, Any]) -> str:
         raise ValueError("workspace_id not found in path parameters")
 
     return workspace_id
+
+
+def get_user_workspaces(claims: dict[str, Any]) -> list[str]:
+    """Extract workspace IDs from Cognito JWT claims.
+
+    This is a simplified helper for handlers that just need to check
+    workspace access without the full AuthContext.
+
+    Args:
+        claims: JWT claims from Cognito authorizer.
+
+    Returns:
+        List of workspace IDs the user has access to.
+    """
+    # For Cognito, the sub claim is the user_id
+    user_id = claims.get("sub", "")
+
+    # Custom claims might include workspace access
+    workspace_ids_raw = claims.get("custom:workspaces") or claims.get("workspaces")
+
+    if workspace_ids_raw:
+        if isinstance(workspace_ids_raw, str):
+            return [ws.strip() for ws in workspace_ids_raw.split(",") if ws.strip()]
+        elif isinstance(workspace_ids_raw, list):
+            return workspace_ids_raw
+
+    # If no explicit workspaces in claims, look up from database
+    # For now, return user_id as a "workspace" - the handler should
+    # verify actual workspace ownership
+    if user_id:
+        # Query workspaces owned by this user
+        try:
+            from complens.repositories.workspace import WorkspaceRepository
+            repo = WorkspaceRepository()
+            workspaces = repo.list_by_agency(user_id)
+            return [ws.id for ws in workspaces]
+        except Exception as e:
+            logger.warning("Failed to lookup user workspaces", error=str(e))
+            return []
+
+    return []

@@ -64,7 +64,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
 
 def list_workspaces(repo: WorkspaceRepository, auth) -> dict:
-    """List workspaces the user has access to."""
+    """List workspaces the user has access to. Auto-creates one if none exist."""
     workspaces = []
 
     # Get workspaces by user's agency
@@ -81,6 +81,19 @@ def list_workspaces(repo: WorkspaceRepository, auth) -> dict:
             ws = repo.get_by_id(ws_id)
             if ws and ws not in workspaces:
                 workspaces.append(ws)
+
+    # Auto-create a default workspace if user has none
+    if not workspaces and auth.user_id:
+        logger.info("Auto-creating default workspace for user", user_id=auth.user_id)
+        name = auth.email.split("@")[0] if auth.email else "My"
+        workspace = Workspace(
+            agency_id=auth.user_id,
+            name=f"{name}'s Workspace",
+            slug=f"workspace-{auth.user_id[:8]}",
+        )
+        workspace = repo.create_workspace(workspace)
+        workspaces = [workspace]
+        logger.info("Default workspace created", user_id=auth.user_id, workspace_id=workspace.id)
 
     return success({
         "items": [w.model_dump(mode="json") for w in workspaces],

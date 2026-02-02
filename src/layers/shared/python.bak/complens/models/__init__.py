@@ -38,6 +38,12 @@ from complens.models.form import (
     UpdateFormRequest,
     SubmitFormRequest,
 )
+from complens.models.domain import (
+    DomainSetup,
+    DomainStatus,
+    CreateDomainRequest,
+    DomainStatusResponse,
+)
 
 __all__ = [
     # Base
@@ -92,4 +98,9 @@ __all__ = [
     "CreateFormRequest",
     "UpdateFormRequest",
     "SubmitFormRequest",
+    # Domain
+    "DomainSetup",
+    "DomainStatus",
+    "CreateDomainRequest",
+    "DomainStatusResponse",
 ]

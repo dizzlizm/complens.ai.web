@@ -58,6 +58,40 @@ class PageRepository(BaseRepository[Page]):
         )
         return items[0] if items else None
 
+    def get_by_subdomain(self, subdomain: str) -> Page | None:
+        """Get page by subdomain using GSI3.
+
+        Args:
+            subdomain: The subdomain (e.g., 'mypage' for mypage.complens.ai).
+
+        Returns:
+            Page or None if not found.
+        """
+        items, _ = self.query(
+            pk=f"PAGE_SUBDOMAIN#{subdomain.lower()}",
+            sk_begins_with="PAGE#",
+            index_name="GSI3",
+            limit=1,
+        )
+        return items[0] if items else None
+
+    def subdomain_exists(self, subdomain: str, exclude_page_id: str | None = None) -> bool:
+        """Check if a subdomain is already in use globally.
+
+        Args:
+            subdomain: The subdomain to check.
+            exclude_page_id: Page ID to exclude from check (for updates).
+
+        Returns:
+            True if subdomain exists, False otherwise.
+        """
+        page = self.get_by_subdomain(subdomain)
+        if not page:
+            return False
+        if exclude_page_id and page.id == exclude_page_id:
+            return False
+        return True
+
     def list_by_workspace(
         self,
         workspace_id: str,
@@ -125,6 +159,9 @@ class PageRepository(BaseRepository[Page]):
         gsi2_keys = page.get_gsi2_keys()
         if gsi2_keys:
             gsi_keys.update(gsi2_keys)
+        gsi3_keys = page.get_gsi3_keys()
+        if gsi3_keys:
+            gsi_keys.update(gsi3_keys)
         return self.create(page, gsi_keys=gsi_keys)
 
     def update_page(self, page: Page) -> Page:
@@ -140,6 +177,9 @@ class PageRepository(BaseRepository[Page]):
         gsi2_keys = page.get_gsi2_keys()
         if gsi2_keys:
             gsi_keys.update(gsi2_keys)
+        gsi3_keys = page.get_gsi3_keys()
+        if gsi3_keys:
+            gsi_keys.update(gsi3_keys)
         return self.update(page, gsi_keys=gsi_keys)
 
     def delete_page(self, workspace_id: str, page_id: str) -> bool:

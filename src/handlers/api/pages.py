@@ -5,6 +5,7 @@ Handles both page CRUD and nested forms/workflows under pages.
 
 import json
 import re
+import uuid
 from typing import Any
 
 import boto3
@@ -15,6 +16,7 @@ from complens.models.form import (
     CreateFormRequest,
     Form,
     FormField,
+    FormFieldType,
     UpdateFormRequest,
 )
 from complens.models.page import (
@@ -59,6 +61,42 @@ class GeneratePageRequest(PydanticBaseModel):
     create_form: bool = Field(default=True, description="Auto-create a lead capture form for the page")
 
 
+class AutomationConfig(PydanticBaseModel):
+    """Automation configuration for create-complete endpoint."""
+
+    send_welcome_email: bool = Field(default=True, description="Send welcome email to lead")
+    notify_owner: bool = Field(default=True, description="Notify page owner via email")
+    owner_email: str | None = Field(None, description="Owner email for notifications")
+    welcome_message: str | None = Field(None, description="Custom welcome email message")
+    add_tags: list[str] = Field(default_factory=list, description="Tags to add to contact")
+
+
+class CreateCompleteRequest(PydanticBaseModel):
+    """Request to create a complete marketing package (page + form + workflow)."""
+
+    # Page info
+    name: str = Field(..., min_length=1, max_length=255, description="Page name")
+    slug: str = Field(..., min_length=1, max_length=100, description="URL slug")
+    subdomain: str | None = Field(None, description="Optional subdomain to claim")
+
+    # Generated content from wizard
+    content: dict = Field(..., description="Generated content from AI wizard")
+    style: str = Field(default="professional", description="Visual style")
+    colors: dict = Field(
+        default_factory=lambda: {"primary": "#6366f1", "secondary": "#818cf8", "accent": "#c7d2fe"},
+        description="Color scheme"
+    )
+
+    # Form inclusion
+    include_form: bool = Field(default=True, description="Include lead capture form")
+
+    # Chat widget
+    include_chat: bool = Field(default=True, description="Include AI chat widget")
+
+    # Automation settings
+    automation: AutomationConfig = Field(default_factory=AutomationConfig, description="Automation workflow config")
+
+
 def handler(event: dict[str, Any], context: Any) -> dict:
     """Handle pages API requests.
 
@@ -66,6 +104,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         GET    /workspaces/{workspace_id}/pages
         POST   /workspaces/{workspace_id}/pages
         POST   /workspaces/{workspace_id}/pages/generate  - AI generate page content
+        POST   /workspaces/{workspace_id}/pages/create-complete  - Create page + form + workflow
         GET    /workspaces/{workspace_id}/pages/check-subdomain?subdomain=xxx
         GET    /workspaces/{workspace_id}/pages/{page_id}
         PUT    /workspaces/{workspace_id}/pages/{page_id}
@@ -112,9 +151,11 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         if "/workflows" in path and page_id:
             return handle_page_workflows(event, http_method, workspace_id, page_id, workflow_id)
 
-        # Check for /generate endpoint (before page_id check)
+        # Check for /generate and /create-complete endpoints (before page_id check)
         if http_method == "POST" and path.endswith("/pages/generate"):
             return generate_page_content(event)
+        elif http_method == "POST" and path.endswith("/pages/create-complete"):
+            return create_complete_page(repo, workspace_id, event)
         elif http_method == "GET" and path.endswith("/pages/check-subdomain"):
             return check_subdomain_availability(repo, event)
         elif http_method == "GET" and page_id:
@@ -450,13 +491,454 @@ def check_subdomain_availability(repo: PageRepository, event: dict) -> dict:
     })
 
 
+def create_complete_page(
+    repo: PageRepository,
+    workspace_id: str,
+    event: dict,
+) -> dict:
+    """Create a complete marketing package: page + form + workflow.
+
+    This is the main endpoint for the AI wizard. It creates:
+    1. A page with blocks based on the generated content
+    2. A lead capture form (if include_form is True)
+    3. An automation workflow (form submission → emails → tag contact)
+
+    All three are linked together and ready to use.
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+        logger.info("Create complete page request", workspace_id=workspace_id, body_keys=list(body.keys()))
+        request = CreateCompleteRequest.model_validate(body)
+    except PydanticValidationError as e:
+        logger.warning("Create complete request validation failed", errors=e.errors())
+        return validation_error([
+            {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
+            for err in e.errors()
+        ])
+    except json.JSONDecodeError as e:
+        logger.warning("Invalid JSON body", error=str(e))
+        return error("Invalid JSON body", 400)
+
+    # Check if slug already exists
+    if repo.slug_exists(workspace_id, request.slug):
+        return error(f"Slug '{request.slug}' is already in use", 400, error_code="SLUG_EXISTS")
+
+    # Check subdomain if provided
+    if request.subdomain:
+        subdomain = request.subdomain.lower()
+        if subdomain in RESERVED_SUBDOMAINS:
+            return error(f"Subdomain '{subdomain}' is reserved", 400, error_code="SUBDOMAIN_RESERVED")
+        if repo.subdomain_exists(subdomain):
+            return error(f"Subdomain '{subdomain}' is already taken", 400, error_code="SUBDOMAIN_EXISTS")
+
+    # Extract content from wizard
+    content = request.content.get("content", request.content)
+    business_info = request.content.get("business_info", {})
+    colors = request.colors
+
+    # Build page blocks from generated content
+    blocks = _build_blocks_from_content(content, business_info, request.style, colors)
+
+    # Create the page
+    headline = ""
+    if content.get("headlines") and len(content["headlines"]) > 0:
+        headline = content["headlines"][0]
+
+    page = Page(
+        workspace_id=workspace_id,
+        name=request.name,
+        slug=request.slug,
+        subdomain=request.subdomain.lower() if request.subdomain else None,
+        headline=headline,
+        subheadline=content.get("hero_subheadline", content.get("tagline", "")),
+        blocks=blocks,
+        primary_color=colors.get("primary", "#6366f1"),
+        chat_config=ChatConfig(
+            enabled=request.include_chat,
+            position="bottom-right",
+            initial_message=f"Hi! How can I help you learn more about {business_info.get('business_name', request.name)}?",
+            ai_persona=f"Helpful assistant for {business_info.get('business_name', request.name)}",
+        ),
+        meta_title=request.name,
+        meta_description=content.get("hero_subheadline", content.get("tagline", "")),
+        status=PageStatus.PUBLISHED,
+    )
+
+    page = repo.create_page(page)
+    logger.info("Page created for complete package", page_id=page.id, workspace_id=workspace_id)
+
+    result = {
+        "page": page.model_dump(mode="json"),
+        "form": None,
+        "workflow": None,
+    }
+
+    # Create form if requested
+    if request.include_form:
+        form_repo = FormRepository()
+
+        cta_text = content.get("cta_text", "Get Started")
+        form = Form(
+            workspace_id=workspace_id,
+            page_id=page.id,
+            name=f"Contact - {request.name}",
+            description=f"Lead capture form for {request.name}",
+            fields=[
+                FormField(
+                    id=str(uuid.uuid4())[:8],
+                    name="email",
+                    label="Email",
+                    type=FormFieldType.EMAIL,
+                    required=True,
+                    placeholder="your@email.com",
+                    map_to_contact_field="email",
+                ),
+                FormField(
+                    id=str(uuid.uuid4())[:8],
+                    name="first_name",
+                    label="Name",
+                    type=FormFieldType.TEXT,
+                    required=True,
+                    placeholder="Your name",
+                    map_to_contact_field="first_name",
+                ),
+                FormField(
+                    id=str(uuid.uuid4())[:8],
+                    name="phone",
+                    label="Phone",
+                    type=FormFieldType.PHONE,
+                    required=False,
+                    placeholder="(555) 123-4567",
+                    map_to_contact_field="phone",
+                ),
+                FormField(
+                    id=str(uuid.uuid4())[:8],
+                    name="message",
+                    label="Message",
+                    type=FormFieldType.TEXTAREA,
+                    required=False,
+                    placeholder="How can we help?",
+                ),
+            ],
+            submit_button_text=cta_text,
+            success_message="Thanks! We'll be in touch shortly.",
+            add_tags=request.automation.add_tags or ["lead", "website"],
+            trigger_workflow=True,
+        )
+
+        form = form_repo.create_form(form)
+        result["form"] = form.model_dump(mode="json")
+        logger.info("Form created for complete package", form_id=form.id, page_id=page.id)
+
+        # Update page with form reference
+        page.form_ids = [form.id]
+        repo.update_page(page)
+
+        # Create automation workflow
+        if request.automation.send_welcome_email or request.automation.notify_owner:
+            workflow_repo = WorkflowRepository()
+            workflow = _build_automation_workflow(
+                workspace_id=workspace_id,
+                page_id=page.id,
+                form_id=form.id,
+                business_name=business_info.get("business_name", request.name),
+                automation=request.automation,
+            )
+            workflow = workflow_repo.create_workflow(workflow)
+            result["workflow"] = workflow.model_dump(mode="json", by_alias=True)
+            logger.info("Workflow created for complete package", workflow_id=workflow.id, page_id=page.id)
+
+    logger.info(
+        "Complete package created",
+        page_id=page.id,
+        has_form=result["form"] is not None,
+        has_workflow=result["workflow"] is not None,
+    )
+
+    return created(result)
+
+
+def _build_blocks_from_content(
+    content: dict,
+    business_info: dict,
+    style: str,
+    colors: dict,
+) -> list[PageBlock]:
+    """Build page blocks from AI-generated content."""
+    blocks = []
+    order = 0
+
+    # Style-based settings
+    style_gradients = {
+        "professional": ["#1e1b4b", "#312e81"],
+        "bold": ["#0f0f0f", "#1f1f1f"],
+        "minimal": ["#fafafa", "#f5f5f5"],
+        "playful": ["#831843", "#701a75"],
+    }
+    gradients = style_gradients.get(style, style_gradients["professional"])
+
+    # Hero block
+    headline = ""
+    if content.get("headlines") and len(content["headlines"]) > 0:
+        headline = content["headlines"][0]
+
+    blocks.append(PageBlock(
+        id=str(uuid.uuid4())[:8],
+        type="hero",
+        order=order,
+        width=4,
+        config={
+            "headline": headline,
+            "subheadline": content.get("hero_subheadline", content.get("tagline", "")),
+            "buttonText": content.get("cta_text", "Get Started"),
+            "buttonLink": "#contact",
+            "backgroundType": "gradient",
+            "gradientFrom": gradients[0],
+            "gradientTo": gradients[1],
+            "textAlign": "center",
+            "showButton": True,
+        },
+    ))
+    order += 1
+
+    # Features block
+    features = content.get("features", [])
+    if features:
+        blocks.append(PageBlock(
+            id=str(uuid.uuid4())[:8],
+            type="features",
+            order=order,
+            width=4,
+            config={
+                "title": "Why Choose Us",
+                "subtitle": content.get("value_props", [""])[0] if content.get("value_props") else "",
+                "columns": min(len(features), 3),
+                "items": [
+                    {
+                        "icon": f.get("icon", "⚡"),
+                        "title": f.get("title", "Feature"),
+                        "description": f.get("description", ""),
+                    }
+                    for f in features[:3]
+                ],
+            },
+        ))
+        order += 1
+
+    # Stats block (if we have social proof)
+    if content.get("social_proof"):
+        blocks.append(PageBlock(
+            id=str(uuid.uuid4())[:8],
+            type="stats",
+            order=order,
+            width=4,
+            config={
+                "title": "",
+                "items": [
+                    {"value": "100%", "label": "Satisfaction"},
+                    {"value": "24/7", "label": "Support"},
+                    {"value": "5+", "label": "Years Experience"},
+                ],
+            },
+        ))
+        order += 1
+
+    # Testimonials block (if we have concepts)
+    testimonials = content.get("testimonial_concepts", [])
+    if testimonials:
+        blocks.append(PageBlock(
+            id=str(uuid.uuid4())[:8],
+            type="testimonials",
+            order=order,
+            width=4,
+            config={
+                "title": "What People Say",
+                "items": [
+                    {
+                        "quote": t,
+                        "author": "Happy Customer",
+                        "company": "",
+                        "avatar": "",
+                    }
+                    for t in testimonials[:2]
+                ],
+            },
+        ))
+        order += 1
+
+    # FAQ block
+    faqs = content.get("faq", [])
+    if faqs:
+        blocks.append(PageBlock(
+            id=str(uuid.uuid4())[:8],
+            type="faq",
+            order=order,
+            width=4,
+            config={
+                "title": "Frequently Asked Questions",
+                "items": [
+                    {"question": f.get("q", ""), "answer": f.get("a", "")}
+                    for f in faqs[:4]
+                ],
+            },
+        ))
+        order += 1
+
+    # Form block placeholder (actual form is created separately)
+    blocks.append(PageBlock(
+        id=str(uuid.uuid4())[:8],
+        type="form",
+        order=order,
+        width=4,
+        config={
+            "formId": "",  # Will be updated after form creation
+            "title": "Get in Touch",
+            "description": "Fill out the form and we'll be in touch shortly.",
+        },
+    ))
+    order += 1
+
+    # CTA block
+    blocks.append(PageBlock(
+        id=str(uuid.uuid4())[:8],
+        type="cta",
+        order=order,
+        width=4,
+        config={
+            "headline": "Ready to Get Started?",
+            "description": f"Take the next step with {business_info.get('business_name', 'us')}.",
+            "buttonText": content.get("cta_text", "Get Started"),
+            "buttonLink": "#contact",
+            "backgroundColor": colors.get("primary", "#6366f1"),
+            "textColor": "light" if style != "minimal" else "dark",
+        },
+    ))
+
+    return blocks
+
+
+def _build_automation_workflow(
+    workspace_id: str,
+    page_id: str,
+    form_id: str,
+    business_name: str,
+    automation: AutomationConfig,
+) -> Workflow:
+    """Build an automation workflow for form submissions."""
+    nodes = []
+    edges = []
+    node_y = 100
+
+    # Trigger node
+    trigger_id = str(uuid.uuid4())[:8]
+    nodes.append(WorkflowNode(
+        id=trigger_id,
+        node_type="trigger_form_submitted",
+        position={"x": 250, "y": node_y},
+        data={
+            "label": "Form Submitted",
+            "config": {"form_id": form_id},
+        },
+    ))
+    last_node_id = trigger_id
+    node_y += 150
+
+    # Update contact with tags
+    if automation.add_tags:
+        tag_id = str(uuid.uuid4())[:8]
+        nodes.append(WorkflowNode(
+            id=tag_id,
+            node_type="action_update_contact",
+            position={"x": 250, "y": node_y},
+            data={
+                "label": "Add Tags",
+                "config": {
+                    "add_tags": automation.add_tags,
+                },
+            },
+        ))
+        edges.append(WorkflowEdge(
+            id=f"e{last_node_id}-{tag_id}",
+            source=last_node_id,
+            target=tag_id,
+        ))
+        last_node_id = tag_id
+        node_y += 150
+
+    # Welcome email to lead
+    if automation.send_welcome_email:
+        email_id = str(uuid.uuid4())[:8]
+        welcome_msg = automation.welcome_message or (
+            f"Thanks for reaching out to {business_name}! "
+            "We've received your message and will get back to you shortly."
+        )
+        nodes.append(WorkflowNode(
+            id=email_id,
+            node_type="action_send_email",
+            position={"x": 100, "y": node_y},
+            data={
+                "label": "Welcome Email",
+                "config": {
+                    "to": "{{contact.email}}",
+                    "subject": f"Thanks for contacting {business_name}!",
+                    "body": f"Hi {{{{contact.first_name}}}},\n\n{welcome_msg}\n\nBest regards,\n{business_name}",
+                },
+            },
+        ))
+        edges.append(WorkflowEdge(
+            id=f"e{last_node_id}-{email_id}",
+            source=last_node_id,
+            target=email_id,
+        ))
+
+    # Notify owner
+    if automation.notify_owner and automation.owner_email:
+        notify_id = str(uuid.uuid4())[:8]
+        nodes.append(WorkflowNode(
+            id=notify_id,
+            node_type="action_send_email",
+            position={"x": 400, "y": node_y},
+            data={
+                "label": "Notify Owner",
+                "config": {
+                    "to": automation.owner_email,
+                    "subject": f"New Lead: {{{{contact.first_name}}}} {{{{contact.last_name}}}}",
+                    "body": (
+                        f"New lead from {business_name} website!\n\n"
+                        "Contact Details:\n"
+                        "- Name: {{contact.first_name}} {{contact.last_name}}\n"
+                        "- Email: {{contact.email}}\n"
+                        "- Phone: {{contact.phone}}\n\n"
+                        "Form Data:\n{{trigger_data.form_data}}"
+                    ),
+                },
+            },
+        ))
+        edges.append(WorkflowEdge(
+            id=f"e{last_node_id}-{notify_id}",
+            source=last_node_id,
+            target=notify_id,
+        ))
+
+    workflow = Workflow(
+        workspace_id=workspace_id,
+        page_id=page_id,
+        name=f"Lead Automation - {business_name}",
+        description=f"Automatically processes new leads from the {business_name} landing page",
+        nodes=nodes,
+        edges=edges,
+        status=WorkflowStatus.ACTIVE,
+    )
+
+    return workflow
+
+
 def generate_page_content(event: dict) -> dict:
     """Generate page content using templates + AI copy.
 
     AI generates the text content, we merge it into a beautiful template.
     Much more reliable than AI-generated HTML.
     """
-    import uuid
     from complens.services.page_templates import fill_template, get_template, list_templates
 
     path_params = event.get("pathParameters", {}) or {}

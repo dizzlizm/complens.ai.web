@@ -16,6 +16,7 @@ import structlog
 from complens.models.workflow_run import RunStatus, WorkflowRun
 from complens.repositories.contact import ContactRepository
 from complens.repositories.workflow import WorkflowRepository, WorkflowRunRepository
+from complens.repositories.workspace import WorkspaceRepository
 from complens.services.workflow_engine import WorkflowEngine
 
 logger = structlog.get_logger()
@@ -138,6 +139,7 @@ def execute_node(event: dict) -> dict:
     run_repo = WorkflowRunRepository()
     workflow_repo = WorkflowRepository()
     contact_repo = ContactRepository()
+    workspace_repo = WorkspaceRepository()
 
     # Find the run
     # Note: We need to know the workflow_id to get the run
@@ -160,6 +162,19 @@ def execute_node(event: dict) -> dict:
     if not contact:
         raise ValueError(f"Contact {run.contact_id} not found")
 
+    # Load workspace for settings (notification_email, from_email, etc.)
+    workspace = workspace_repo.get_by_id(workspace_id)
+    workspace_settings = {}
+    if workspace:
+        # Merge explicit fields and settings dict for template access
+        workspace_settings = {
+            **workspace.settings,
+            "notification_email": workspace.notification_email or "",
+            "from_email": workspace.from_email or "",
+            "name": workspace.name,
+            "twilio_phone_number": workspace.twilio_phone_number or "",
+        }
+
     # Get node definition
     node_def = workflow.get_node_by_id(current_node_id)
     if not node_def:
@@ -180,6 +195,7 @@ def execute_node(event: dict) -> dict:
         contact=contact,
         workflow_run=run,
         workspace_id=workspace_id,
+        workspace_settings=workspace_settings,
         variables=variables,
         trigger_data=run.trigger_data,
         node_config=node_def.get_config(),

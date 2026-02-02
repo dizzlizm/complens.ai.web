@@ -536,6 +536,156 @@ Return the extracted information as JSON."""
     return _sanitize_extracted_profile(extracted)
 
 
+def generate_page_content_from_description(
+    workspace_id: str,
+    business_description: str,
+    page_id: str | None = None,
+) -> dict:
+    """Generate rich page content from a business description.
+
+    This is the core AI generation for the wizard. It extracts business info
+    and generates all the marketing copy needed for a landing page.
+
+    Args:
+        workspace_id: The workspace ID for business context.
+        business_description: Free-form description of the business.
+        page_id: Optional page ID for page-specific profile.
+
+    Returns:
+        Dict with business_info and generated content.
+    """
+    system = """You are an expert marketing copywriter and business analyst.
+Analyze the business description and generate compelling landing page content.
+
+Return a JSON object with this exact structure:
+{
+  "business_info": {
+    "business_name": "Name of the business or person",
+    "business_type": "saas|agency|freelancer|ecommerce|consultant|coach|creator|other",
+    "industry": "technology|consulting|healthcare|finance|education|real_estate|marketing|creative|professional_services|retail|hospitality|other",
+    "products": ["Product or service 1", "Product or service 2"],
+    "audience": "Description of target audience",
+    "tone": "professional|friendly|bold|playful|authoritative|casual|inspirational"
+  },
+  "content": {
+    "headlines": [
+      "Punchy headline option 1 (3-6 words)",
+      "Punchy headline option 2 (3-6 words)",
+      "Punchy headline option 3 (3-6 words)"
+    ],
+    "tagline": "Memorable tagline (5-10 words)",
+    "value_props": [
+      "Key benefit 1 - what they get",
+      "Key benefit 2 - what they get",
+      "Key benefit 3 - what they get"
+    ],
+    "features": [
+      {"title": "Feature 1", "description": "What this does and why it matters", "icon": "🚀"},
+      {"title": "Feature 2", "description": "What this does and why it matters", "icon": "⚡"},
+      {"title": "Feature 3", "description": "What this does and why it matters", "icon": "✨"}
+    ],
+    "testimonial_concepts": [
+      "What a happy customer might say about benefit 1",
+      "What a happy customer might say about benefit 2"
+    ],
+    "faq": [
+      {"q": "Common question 1?", "a": "Helpful answer that addresses concerns"},
+      {"q": "Common question 2?", "a": "Helpful answer that addresses concerns"},
+      {"q": "Common question 3?", "a": "Helpful answer that addresses concerns"}
+    ],
+    "cta_text": "Primary call-to-action (2-3 words)",
+    "hero_subheadline": "Compelling subheadline for hero (15-25 words)",
+    "social_proof": "A credibility statement (e.g., 'Trusted by 1000+ businesses')"
+  },
+  "suggested_colors": {
+    "primary": "#hex color that fits the brand",
+    "secondary": "#complementary hex color",
+    "accent": "#accent hex color"
+  }
+}
+
+Guidelines:
+- Headlines must be SHORT and PUNCHY. No filler words. Use power words.
+- Features focus on BENEFITS, not just features
+- FAQ should address real customer concerns and objections
+- Tone should match the business type
+- Colors should match industry conventions
+- Use appropriate emojis for icons: 🚀 ⚡ ✨ 💎 🎯 📈 💡 🔒 ⭐ 🛠️ 💰 🔥 ✅ 🏆 💪 🎨 📱 🌟 ❤️
+
+Return ONLY valid JSON, no markdown."""
+
+    prompt = f"""Analyze this business and generate landing page content:
+
+{business_description}
+
+Generate compelling marketing copy that will convert visitors into leads."""
+
+    try:
+        result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+
+        # Validate and ensure required structure
+        if "business_info" not in result:
+            result["business_info"] = {}
+        if "content" not in result:
+            result["content"] = {}
+        if "suggested_colors" not in result:
+            result["suggested_colors"] = {
+                "primary": "#6366f1",
+                "secondary": "#818cf8",
+                "accent": "#c7d2fe"
+            }
+
+        return result
+
+    except Exception as e:
+        logger.error("Failed to generate page content", error=str(e))
+        raise
+
+
+def refine_page_content(
+    workspace_id: str,
+    current_content: dict,
+    feedback: str,
+    section: str | None = None,
+    page_id: str | None = None,
+) -> dict:
+    """Refine generated page content based on user feedback.
+
+    Args:
+        workspace_id: The workspace ID for business context.
+        current_content: The current generated content.
+        feedback: User's feedback or refinement request.
+        section: Optional section to refine (headlines, features, faq, etc.)
+        page_id: Optional page ID for page-specific profile.
+
+    Returns:
+        Updated content dict with refinements applied.
+    """
+    section_note = f"\nFocus on refining the '{section}' section." if section else ""
+
+    system = f"""You are an expert marketing copywriter.
+You're refining landing page content based on user feedback.
+{section_note}
+
+Return the COMPLETE updated content structure in the same JSON format.
+Apply the user's feedback while maintaining consistency across all sections.
+
+Return ONLY valid JSON, no markdown."""
+
+    prompt = f"""Current content:
+{json.dumps(current_content, indent=2)}
+
+User feedback: {feedback}
+
+Generate the updated content with the feedback applied."""
+
+    try:
+        return invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+    except Exception as e:
+        logger.error("Failed to refine page content", error=str(e))
+        raise
+
+
 def _sanitize_extracted_profile(data: dict) -> dict:
     """Sanitize extracted profile data to match expected model types.
 

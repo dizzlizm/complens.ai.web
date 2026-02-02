@@ -172,6 +172,78 @@ export interface GeneratedWorkflow {
   }>;
 }
 
+// Page content generation types (for wizard)
+export interface GeneratePageContentInput {
+  business_description: string;
+  page_id?: string;
+}
+
+export interface GeneratedPageContent {
+  business_info: {
+    business_name: string;
+    business_type: string;
+    industry: string;
+    products: string[];
+    audience: string;
+    tone: string;
+  };
+  content: {
+    headlines: string[];
+    tagline: string;
+    value_props: string[];
+    features: Array<{ title: string; description: string; icon: string }>;
+    testimonial_concepts: string[];
+    faq: Array<{ q: string; a: string }>;
+    cta_text: string;
+    hero_subheadline: string;
+    social_proof?: string;
+  };
+  suggested_colors: {
+    primary: string;
+    secondary: string;
+    accent: string;
+  };
+}
+
+export interface RefinePageContentInput {
+  current_content: GeneratedPageContent;
+  feedback: string;
+  section?: string;
+  page_id?: string;
+}
+
+// Automation config for complete page creation
+export interface AutomationConfig {
+  send_welcome_email: boolean;
+  notify_owner: boolean;
+  owner_email?: string;
+  welcome_message?: string;
+  add_tags: string[];
+}
+
+// Create complete page types
+export interface CreateCompletePageInput {
+  name: string;
+  slug: string;
+  subdomain?: string;
+  content: GeneratedPageContent;
+  style: 'professional' | 'bold' | 'minimal' | 'playful';
+  colors: {
+    primary: string;
+    secondary: string;
+    accent: string;
+  };
+  include_form: boolean;
+  include_chat: boolean;
+  automation: AutomationConfig;
+}
+
+export interface CompletePageResult {
+  page: Record<string, unknown>;
+  form: Record<string, unknown> | null;
+  workflow: Record<string, unknown> | null;
+}
+
 // ==================== HOOKS ====================
 
 // Fetch business profile (workspace-level or page-specific)
@@ -316,6 +388,51 @@ export function useGenerateWorkflow(workspaceId: string) {
         input
       );
       return data.workflow;
+    },
+  });
+}
+
+// Generate page content from business description (for wizard)
+export function useGeneratePageContent(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: GeneratePageContentInput) => {
+      const { data } = await api.post<GeneratedPageContent>(
+        `/workspaces/${workspaceId}/ai/generate-page-content`,
+        input
+      );
+      return data;
+    },
+  });
+}
+
+// Refine previously generated content with feedback
+export function useRefinePageContent(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: RefinePageContentInput) => {
+      const { data } = await api.post<GeneratedPageContent>(
+        `/workspaces/${workspaceId}/ai/refine-page-content`,
+        input
+      );
+      return data;
+    },
+  });
+}
+
+// Create complete page package (page + form + workflow)
+export function useCreateCompletePage(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: CreateCompletePageInput) => {
+      const { data } = await api.post<CompletePageResult>(
+        `/workspaces/${workspaceId}/pages/create-complete`,
+        input
+      );
+      return data;
+    },
+    onSuccess: () => {
+      // Invalidate pages list to show the new page
+      queryClient.invalidateQueries({ queryKey: ['pages', workspaceId] });
     },
   });
 }

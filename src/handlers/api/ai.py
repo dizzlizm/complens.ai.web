@@ -54,6 +54,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         POST   /workspaces/{workspace_id}/ai/generate-blocks - Generate page blocks
         POST   /workspaces/{workspace_id}/ai/generate-image  - Generate an image
         POST   /workspaces/{workspace_id}/ai/generate-workflow - Generate workflow from NL
+        POST   /workspaces/{workspace_id}/ai/generate-page-content - Generate page content from description
+        POST   /workspaces/{workspace_id}/ai/refine-page-content - Refine generated content with feedback
     """
     try:
         http_method = event.get("httpMethod", "").upper()
@@ -90,6 +92,10 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return generate_image(workspace_id, event)
         elif "/ai/generate-workflow" in path and http_method == "POST":
             return generate_workflow(workspace_id, event)
+        elif "/ai/generate-page-content" in path and http_method == "POST":
+            return generate_page_content(workspace_id, event)
+        elif "/ai/refine-page-content" in path and http_method == "POST":
+            return refine_page_content(workspace_id, event)
         else:
             return error("Not found", 404)
 
@@ -453,3 +459,92 @@ def generate_workflow(workspace_id: str, event: dict) -> dict:
     except Exception as e:
         logger.error("Workflow generation failed", error=str(e))
         return error(f"Workflow generation failed: {str(e)}", 500)
+
+
+def generate_page_content(workspace_id: str, event: dict) -> dict:
+    """Generate rich page content from a business description.
+
+    This is the main endpoint for the AI page builder wizard.
+    Takes a free-form business description and generates:
+    - Business info (type, industry, audience, tone)
+    - Headlines (multiple options)
+    - Features with descriptions
+    - FAQ content
+    - Testimonial concepts
+    - Color suggestions
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+        business_description = body.get("business_description", "")
+        page_id = body.get("page_id")
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    if not business_description:
+        return error("business_description is required", 400)
+
+    if len(business_description) > 10000:
+        return error("business_description too long (max 10,000 characters)", 400)
+
+    try:
+        content = ai_service.generate_page_content_from_description(
+            workspace_id=workspace_id,
+            business_description=business_description,
+            page_id=page_id,
+        )
+
+        logger.info(
+            "Page content generated",
+            workspace_id=workspace_id,
+            has_business_info="business_info" in content,
+            has_content="content" in content,
+        )
+
+        return success(content)
+
+    except Exception as e:
+        logger.error("Page content generation failed", error=str(e))
+        return error(f"Content generation failed: {str(e)}", 500)
+
+
+def refine_page_content(workspace_id: str, event: dict) -> dict:
+    """Refine previously generated page content based on feedback.
+
+    Allows users to request changes like "make the headline more punchy"
+    or "make the tone more friendly" and get updated content.
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+        current_content = body.get("current_content", {})
+        feedback = body.get("feedback", "")
+        section = body.get("section")  # Optional: headlines, features, faq, etc.
+        page_id = body.get("page_id")
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    if not current_content:
+        return error("current_content is required", 400)
+
+    if not feedback:
+        return error("feedback is required", 400)
+
+    try:
+        refined = ai_service.refine_page_content(
+            workspace_id=workspace_id,
+            current_content=current_content,
+            feedback=feedback,
+            section=section,
+            page_id=page_id,
+        )
+
+        logger.info(
+            "Page content refined",
+            workspace_id=workspace_id,
+            section=section,
+        )
+
+        return success(refined)
+
+    except Exception as e:
+        logger.error("Page content refinement failed", error=str(e))
+        return error(f"Content refinement failed: {str(e)}", 500)
