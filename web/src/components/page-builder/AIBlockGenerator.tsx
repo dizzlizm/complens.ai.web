@@ -301,7 +301,7 @@ export default function AIBlockGenerator({
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Paste a resume, business description, product info, or describe what you want. The more detail you provide, the better the result!
 
-Example: 'Steve Ross - Staff Systems Architect with 8+ years experience in cloud infrastructure, AI systems, and team leadership. Currently at TheRealReal building AI agent pipelines...'"
+Example: 'Senior Software Engineer with 5+ years experience in full-stack development. Specializing in React, Node.js, and cloud architecture. Previously at TechCorp building scalable APIs...'"
                 rows={6}
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-200 resize-none"
               />
