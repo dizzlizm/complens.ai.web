@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { PageBlock, BlockType, createBlock } from './types';
+import { PageBlock, BlockType } from './types';
 import BlockSelectionGrid from './BlockSelectionGrid';
 import SynthesisPopup from './SynthesisPopup';
 import ProfilePromptBanner from './ProfilePromptBanner';
@@ -60,16 +60,6 @@ export default function ContentTabV2({
   // Synthesis popup state
   const [showSynthesisPopup, setShowSynthesisPopup] = useState(false);
   const [selectedBlockTypesForSynthesis, setSelectedBlockTypesForSynthesis] = useState<BlockType[]>([]);
-
-  // Handle adding a single block
-  const handleAddBlock = useCallback(
-    (type: BlockType) => {
-      const newBlock = createBlock(type);
-      const newBlocks = [...blocks, { ...newBlock, order: blocks.length }];
-      onChange(newBlocks);
-    },
-    [blocks, onChange]
-  );
 
   // Handle opening synthesis popup with selected blocks
   const handleSynthesizeBlocks = useCallback((blockTypes: BlockType[]) => {
@@ -196,7 +186,6 @@ export default function ContentTabV2({
 
       {/* Block Selection Grid */}
       <BlockSelectionGrid
-        onAddBlock={handleAddBlock}
         onSynthesizeBlocks={handleSynthesizeBlocks}
         showCategories={true}
       />
@@ -212,12 +201,12 @@ export default function ContentTabV2({
         pageId={pageId}
       />
 
-      {/* Legacy content info */}
+      {/* Empty state */}
       {blocks.length === 0 && (
         <div className="text-center py-8 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
-          <p className="text-gray-500 mb-2">No blocks yet</p>
+          <p className="text-gray-500 mb-2">No content yet</p>
           <p className="text-sm text-gray-400">
-            Click blocks above to add them, or select multiple and use AI to generate content
+            Select sections above and click "Synthesize" to generate AI-powered content
           </p>
         </div>
       )}

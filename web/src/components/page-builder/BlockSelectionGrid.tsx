@@ -81,42 +81,29 @@ const BLOCK_ICONS: Record<string, React.ElementType> = {
 };
 
 interface BlockSelectionGridProps {
-  onAddBlock: (type: BlockType) => void;
   onSynthesizeBlocks: (blockTypes: BlockType[]) => void;
   showCategories?: boolean;
 }
 
 export default function BlockSelectionGrid({
-  onAddBlock,
   onSynthesizeBlocks,
   showCategories = true,
 }: BlockSelectionGridProps) {
   const [selectedBlockTypes, setSelectedBlockTypes] = useState<Set<BlockType>>(new Set());
   const [hoveredBlock, setHoveredBlock] = useState<string | null>(null);
 
-  // Handle block click - single click adds, Ctrl+click selects for synthesis
-  const handleBlockClick = useCallback(
-    (type: BlockType, event: React.MouseEvent) => {
-      if (event.ctrlKey || event.metaKey) {
-        // Toggle selection for synthesis
-        setSelectedBlockTypes((prev) => {
-          const newSet = new Set(prev);
-          if (newSet.has(type)) {
-            newSet.delete(type);
-          } else {
-            newSet.add(type);
-          }
-          return newSet;
-        });
+  // Handle block click - toggle selection for synthesis
+  const handleBlockClick = useCallback((type: BlockType) => {
+    setSelectedBlockTypes((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(type)) {
+        newSet.delete(type);
       } else {
-        // Regular click - add block immediately
-        onAddBlock(type);
-        // Clear selection when adding single block
-        setSelectedBlockTypes(new Set());
+        newSet.add(type);
       }
-    },
-    [onAddBlock]
-  );
+      return newSet;
+    });
+  }, []);
 
   // Handle synthesize button click
   const handleSynthesize = useCallback(() => {
@@ -147,7 +134,7 @@ export default function BlockSelectionGrid({
     return (
       <button
         key={type}
-        onClick={(e) => handleBlockClick(type as BlockType, e)}
+        onClick={() => handleBlockClick(type as BlockType)}
         onMouseEnter={() => setHoveredBlock(type)}
         onMouseLeave={() => setHoveredBlock(null)}
         className={`
@@ -225,9 +212,9 @@ export default function BlockSelectionGrid({
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div>
-          <h3 className="text-lg font-semibold text-gray-900">Add Blocks</h3>
+          <h3 className="text-lg font-semibold text-gray-900">Select Page Sections</h3>
           <p className="text-sm text-gray-500">
-            Click to add • <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono">Ctrl</kbd>+click to select for AI synthesis
+            Choose which sections the AI will generate content for
           </p>
         </div>
 
@@ -257,7 +244,7 @@ export default function BlockSelectionGrid({
       {/* Helper text at bottom */}
       <div className="mt-4 pt-4 border-t border-gray-100">
         <p className="text-xs text-gray-400 text-center">
-          Select multiple blocks and click "Synthesize" to generate AI content for them all at once
+          Select the sections you want, then click "Synthesize" to have AI generate tailored content
         </p>
       </div>
     </div>
