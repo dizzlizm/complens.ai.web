@@ -212,6 +212,101 @@ export interface RefinePageContentInput {
   page_id?: string;
 }
 
+// ==================== SYNTHESIS ENGINE TYPES ====================
+
+export interface SynthesizePageInput {
+  description: string;
+  intent_hints?: string[];
+  style_preference?: 'professional' | 'bold' | 'minimal' | 'playful';
+  page_id?: string;
+  include_form?: boolean;
+  include_chat?: boolean;
+}
+
+export interface PageIntent {
+  goal: 'lead-gen' | 'portfolio' | 'product-launch' | 'services' | 'coming-soon' | 'event' | 'comparison';
+  audience_intent: string;
+  content_type: string;
+  urgency: 'low' | 'medium' | 'high';
+  keywords: string[];
+}
+
+export interface ContentAssessment {
+  testimonials_score: number;
+  testimonials_real: boolean;
+  testimonials_count: number;
+  stats_score: number;
+  stats_real: boolean;
+  stats_items: Array<{ value: string; label: string; source?: string }>;
+  features_score: number;
+  features_count: number;
+  pricing_available: boolean;
+  faq_score: number;
+  faq_count: number;
+  gaps: string[];
+  strengths: string[];
+}
+
+export interface SynthesisColorScheme {
+  primary: string;
+  secondary: string;
+  accent: string;
+  background: string;
+  text: string;
+}
+
+export interface SynthesisDesignSystem {
+  colors: SynthesisColorScheme;
+  style: 'professional' | 'bold' | 'minimal' | 'playful';
+  rationale: string;
+}
+
+export interface SynthesisPageBlock {
+  id: string;
+  type: string;
+  order: number;
+  width: number;
+  config: Record<string, unknown>;
+}
+
+export interface SynthesisFormConfig {
+  name: string;
+  fields: Array<Record<string, unknown>>;
+  submit_button_text: string;
+  success_message: string;
+  add_tags: string[];
+}
+
+export interface SynthesisWorkflowConfig {
+  name: string;
+  send_welcome_email: boolean;
+  notify_owner: boolean;
+  owner_email?: string;
+  welcome_message?: string;
+  add_tags: string[];
+}
+
+export interface SynthesisMetadata {
+  blocks_included: string[];
+  blocks_excluded: Record<string, string>;
+  layout_decisions: Record<string, unknown>;
+  content_sources: Record<string, string>;
+  generation_stages: string[];
+}
+
+export interface SynthesisResult {
+  synthesis_id: string;
+  intent: PageIntent;
+  assessment: ContentAssessment;
+  design_system: SynthesisDesignSystem;
+  blocks: SynthesisPageBlock[];
+  form_config: SynthesisFormConfig | null;
+  workflow_config: SynthesisWorkflowConfig | null;
+  metadata: SynthesisMetadata;
+  business_name: string;
+  tagline: string;
+}
+
 // Automation config for complete page creation
 export interface AutomationConfig {
   send_welcome_email: boolean;
@@ -219,6 +314,15 @@ export interface AutomationConfig {
   owner_email?: string;
   welcome_message?: string;
   add_tags: string[];
+}
+
+// Synthesized block input for create-complete endpoint
+export interface SynthesizedBlockInput {
+  id: string;
+  type: string;
+  order: number;
+  width: number;
+  config: Record<string, unknown>;
 }
 
 // Create complete page types
@@ -240,6 +344,12 @@ export interface CreateCompletePageInput {
   include_chat: boolean;
   automation: AutomationConfig;
   replace_existing?: boolean;  // If true, replace existing page with same slug (create mode only)
+
+  // NEW: Synthesis engine outputs (when using synthesis engine)
+  synthesized_blocks?: SynthesizedBlockInput[];  // Pre-built blocks from synthesis engine
+  synthesized_form_config?: SynthesisFormConfig;  // Form config from synthesis
+  synthesized_workflow_config?: SynthesisWorkflowConfig;  // Workflow config from synthesis
+  business_name?: string;  // Business name from synthesis
 }
 
 export interface CompletePageResult {
@@ -445,6 +555,19 @@ export function useCreateCompletePage(workspaceId: string) {
         queryClient.invalidateQueries({ queryKey: ['pageForms', workspaceId, variables.page_id] });
         queryClient.invalidateQueries({ queryKey: ['pageWorkflows', workspaceId, variables.page_id] });
       }
+    },
+  });
+}
+
+// Synthesize a complete page using the unified synthesis engine
+export function useSynthesizePage(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: SynthesizePageInput) => {
+      const { data } = await api.post<SynthesisResult>(
+        `/workspaces/${workspaceId}/ai/synthesize-page`,
+        input
+      );
+      return data;
     },
   });
 }

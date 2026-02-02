@@ -94,10 +94,45 @@ class AutomationConfig(PydanticBaseModel):
     add_tags: list[str] = Field(default_factory=list, description="Tags to add to contact")
 
 
+class SynthesizedBlockInput(PydanticBaseModel):
+    """A pre-synthesized block from the synthesis engine."""
+
+    id: str
+    type: str
+    order: int
+    width: int = Field(default=4, ge=1, le=4)
+    config: dict = Field(default_factory=dict)
+
+
+class SynthesizedFormConfig(PydanticBaseModel):
+    """Form configuration from synthesis engine."""
+
+    name: str = Field(default="Contact Form")
+    fields: list[dict] = Field(default_factory=list)
+    submit_button_text: str = Field(default="Get Started")
+    success_message: str = Field(default="Thanks! We'll be in touch shortly.")
+    add_tags: list[str] = Field(default_factory=lambda: ["lead", "website"])
+
+
+class SynthesizedWorkflowConfig(PydanticBaseModel):
+    """Workflow configuration from synthesis engine."""
+
+    name: str = Field(default="Lead Automation")
+    send_welcome_email: bool = Field(default=True)
+    notify_owner: bool = Field(default=True)
+    owner_email: str | None = Field(default=None)
+    welcome_message: str | None = Field(default=None)
+    add_tags: list[str] = Field(default_factory=list)
+
+
 class CreateCompleteRequest(PydanticBaseModel):
     """Request to create a complete marketing package (page + form + workflow).
 
     When page_id is provided, updates the existing page instead of creating a new one.
+
+    Can accept either:
+    1. Traditional `content` dict for legacy block building
+    2. `synthesized_blocks` for pre-built blocks from synthesis engine
     """
 
     # Page info - name/slug are optional when updating existing page
@@ -108,12 +143,27 @@ class CreateCompleteRequest(PydanticBaseModel):
     # Update mode - if provided, update this page instead of creating new
     page_id: str | None = Field(None, description="Existing page ID to update (update mode)")
 
-    # Generated content from wizard
-    content: dict = Field(..., description="Generated content from AI wizard")
+    # Generated content from wizard (legacy approach)
+    content: dict = Field(default_factory=dict, description="Generated content from AI wizard")
     style: str = Field(default="professional", description="Visual style")
     colors: dict = Field(
         default_factory=lambda: {"primary": "#6366f1", "secondary": "#818cf8", "accent": "#c7d2fe"},
         description="Color scheme"
+    )
+
+    # NEW: Pre-synthesized blocks from synthesis engine
+    synthesized_blocks: list[SynthesizedBlockInput] | None = Field(
+        None, description="Pre-built blocks from synthesis engine (overrides content-based building)"
+    )
+
+    # NEW: Synthesis-generated form config
+    synthesized_form_config: SynthesizedFormConfig | None = Field(
+        None, description="Form config from synthesis engine"
+    )
+
+    # NEW: Synthesis-generated workflow config
+    synthesized_workflow_config: SynthesizedWorkflowConfig | None = Field(
+        None, description="Workflow config from synthesis engine"
     )
 
     # Form inclusion
@@ -122,11 +172,14 @@ class CreateCompleteRequest(PydanticBaseModel):
     # Chat widget
     include_chat: bool = Field(default=True, description="Include AI chat widget")
 
-    # Automation settings
+    # Automation settings (legacy - used if synthesized_workflow_config not provided)
     automation: AutomationConfig = Field(default_factory=AutomationConfig, description="Automation workflow config")
 
     # Replace existing page if slug conflicts (only for create mode)
     replace_existing: bool = Field(default=False, description="Replace existing page with same slug")
+
+    # Business name for chat/workflow naming
+    business_name: str | None = Field(None, description="Business name from synthesis")
 
 
 def handler(event: dict[str, Any], context: Any) -> dict:
@@ -612,12 +665,28 @@ def create_complete_page(
             return error(f"Subdomain '{subdomain}' is already taken", 400, error_code="SUBDOMAIN_EXISTS")
 
     # Extract content from wizard
-    content = request.content.get("content", request.content)
-    business_info = request.content.get("business_info", {})
+    content = request.content.get("content", request.content) if request.content else {}
+    business_info = request.content.get("business_info", {}) if request.content else {}
     colors = request.colors
 
-    # Build page blocks from generated content
-    blocks = _build_blocks_from_content(content, business_info, request.style, colors)
+    # Determine business name
+    business_name = request.business_name or business_info.get("business_name") or request.name or "Business"
+
+    # Build page blocks - use synthesized blocks if provided, otherwise legacy approach
+    if request.synthesized_blocks:
+        logger.info("Using synthesized blocks", block_count=len(request.synthesized_blocks))
+        blocks = [
+            PageBlock(
+                id=sb.id,
+                type=sb.type,
+                order=sb.order,
+                width=sb.width,
+                config=sb.config,
+            )
+            for sb in request.synthesized_blocks
+        ]
+    else:
+        blocks = _build_blocks_from_content(content, business_info, request.style, colors)
 
     # Create the page
     headline = ""
@@ -657,54 +726,90 @@ def create_complete_page(
     if request.include_form:
         form_repo = FormRepository()
 
-        cta_text = content.get("cta_text", "Get Started")
-        form = Form(
-            workspace_id=workspace_id,
-            page_id=page.id,
-            name=f"Contact - {request.name}",
-            description=f"Lead capture form for {request.name}",
-            fields=[
-                FormField(
-                    id=str(uuid.uuid4())[:8],
-                    name="email",
-                    label="Email",
-                    type=FormFieldType.EMAIL,
-                    required=True,
-                    placeholder="your@email.com",
-                    map_to_contact_field="email",
-                ),
-                FormField(
-                    id=str(uuid.uuid4())[:8],
-                    name="first_name",
-                    label="Name",
-                    type=FormFieldType.TEXT,
-                    required=True,
-                    placeholder="Your name",
-                    map_to_contact_field="first_name",
-                ),
-                FormField(
-                    id=str(uuid.uuid4())[:8],
-                    name="phone",
-                    label="Phone",
-                    type=FormFieldType.PHONE,
-                    required=False,
-                    placeholder="(555) 123-4567",
-                    map_to_contact_field="phone",
-                ),
-                FormField(
-                    id=str(uuid.uuid4())[:8],
-                    name="message",
-                    label="Message",
-                    type=FormFieldType.TEXTAREA,
-                    required=False,
-                    placeholder="How can we help?",
-                ),
-            ],
-            submit_button_text=cta_text,
-            success_message="Thanks! We'll be in touch shortly.",
-            add_tags=request.automation.add_tags or ["lead", "website"],
-            trigger_workflow=True,
-        )
+        # Use synthesized form config if provided, otherwise use defaults
+        if request.synthesized_form_config:
+            synth_form = request.synthesized_form_config
+            # Convert synthesized field dicts to FormField objects
+            form_fields = []
+            for field_dict in synth_form.fields:
+                field_type_str = field_dict.get("type", "text").upper()
+                try:
+                    field_type = FormFieldType[field_type_str]
+                except KeyError:
+                    field_type = FormFieldType.TEXT
+                form_fields.append(
+                    FormField(
+                        id=str(uuid.uuid4())[:8],
+                        name=field_dict.get("name", "field"),
+                        label=field_dict.get("label", "Field"),
+                        type=field_type,
+                        required=field_dict.get("required", False),
+                        placeholder=field_dict.get("placeholder", ""),
+                        map_to_contact_field=field_dict.get("map_to_contact_field"),
+                    )
+                )
+            form = Form(
+                workspace_id=workspace_id,
+                page_id=page.id,
+                name=synth_form.name or f"Contact - {business_name}",
+                description=f"Lead capture form for {business_name}",
+                fields=form_fields,
+                submit_button_text=synth_form.submit_button_text,
+                success_message=synth_form.success_message,
+                add_tags=synth_form.add_tags,
+                trigger_workflow=True,
+            )
+            logger.info("Using synthesized form config", field_count=len(form_fields))
+        else:
+            # Legacy hardcoded form
+            cta_text = content.get("cta_text", "Get Started")
+            form = Form(
+                workspace_id=workspace_id,
+                page_id=page.id,
+                name=f"Contact - {request.name}",
+                description=f"Lead capture form for {request.name}",
+                fields=[
+                    FormField(
+                        id=str(uuid.uuid4())[:8],
+                        name="email",
+                        label="Email",
+                        type=FormFieldType.EMAIL,
+                        required=True,
+                        placeholder="your@email.com",
+                        map_to_contact_field="email",
+                    ),
+                    FormField(
+                        id=str(uuid.uuid4())[:8],
+                        name="first_name",
+                        label="Name",
+                        type=FormFieldType.TEXT,
+                        required=True,
+                        placeholder="Your name",
+                        map_to_contact_field="first_name",
+                    ),
+                    FormField(
+                        id=str(uuid.uuid4())[:8],
+                        name="phone",
+                        label="Phone",
+                        type=FormFieldType.PHONE,
+                        required=False,
+                        placeholder="(555) 123-4567",
+                        map_to_contact_field="phone",
+                    ),
+                    FormField(
+                        id=str(uuid.uuid4())[:8],
+                        name="message",
+                        label="Message",
+                        type=FormFieldType.TEXTAREA,
+                        required=False,
+                        placeholder="How can we help?",
+                    ),
+                ],
+                submit_button_text=cta_text,
+                success_message="Thanks! We'll be in touch shortly.",
+                add_tags=request.automation.add_tags or ["lead", "website"],
+                trigger_workflow=True,
+            )
 
         form = form_repo.create_form(form)
         result["form"] = form.model_dump(mode="json")
@@ -722,15 +827,40 @@ def create_complete_page(
         result["page"] = page.model_dump(mode="json")
 
         # Create automation workflow
-        if request.automation.send_welcome_email or request.automation.notify_owner:
+        # Use synthesized_workflow_config if provided, otherwise fall back to request.automation
+        synth_wf = request.synthesized_workflow_config
+        should_create_workflow = (
+            (synth_wf and (synth_wf.send_welcome_email or synth_wf.notify_owner))
+            or (not synth_wf and (request.automation.send_welcome_email or request.automation.notify_owner))
+        )
+
+        if should_create_workflow:
             workflow_repo = WorkflowRepository()
+
+            if synth_wf:
+                # Use synthesis-generated workflow config
+                automation_config = AutomationConfig(
+                    send_welcome_email=synth_wf.send_welcome_email,
+                    notify_owner=synth_wf.notify_owner,
+                    owner_email=synth_wf.owner_email,
+                    welcome_message=synth_wf.welcome_message,
+                    add_tags=synth_wf.add_tags or ["lead", "website"],
+                )
+                workflow_name = synth_wf.name
+                logger.info("Using synthesized workflow config", workflow_name=workflow_name)
+            else:
+                # Legacy automation config
+                automation_config = request.automation
+                workflow_name = f"{business_name} Lead Automation"
+
             workflow = _build_automation_workflow(
                 workspace_id=workspace_id,
                 page_id=page.id,
                 form_id=form.id,
-                business_name=business_info.get("business_name", request.name),
-                automation=request.automation,
+                business_name=business_name,
+                automation=automation_config,
             )
+            workflow.name = workflow_name
             workflow = workflow_repo.create_workflow(workflow)
             result["workflow"] = workflow.model_dump(mode="json", by_alias=True)
             logger.info("Workflow created for complete package", workflow_id=workflow.id, page_id=page.id)
@@ -823,54 +953,86 @@ def _update_complete_page(
 
     # Create form if requested AND no forms exist
     if request.include_form and not existing_forms:
-        cta_text = content.get("cta_text", "Get Started")
-        form = Form(
-            workspace_id=workspace_id,
-            page_id=page.id,
-            name=f"Contact - {page.name}",
-            description=f"Lead capture form for {page.name}",
-            fields=[
-                FormField(
-                    id=str(uuid.uuid4())[:8],
-                    name="email",
-                    label="Email",
-                    type=FormFieldType.EMAIL,
-                    required=True,
-                    placeholder="your@email.com",
-                    map_to_contact_field="email",
-                ),
-                FormField(
-                    id=str(uuid.uuid4())[:8],
-                    name="first_name",
-                    label="Name",
-                    type=FormFieldType.TEXT,
-                    required=True,
-                    placeholder="Your name",
-                    map_to_contact_field="first_name",
-                ),
-                FormField(
-                    id=str(uuid.uuid4())[:8],
-                    name="phone",
-                    label="Phone",
-                    type=FormFieldType.PHONE,
-                    required=False,
-                    placeholder="(555) 123-4567",
-                    map_to_contact_field="phone",
-                ),
-                FormField(
-                    id=str(uuid.uuid4())[:8],
-                    name="message",
-                    label="Message",
-                    type=FormFieldType.TEXTAREA,
-                    required=False,
-                    placeholder="How can we help?",
-                ),
-            ],
-            submit_button_text=cta_text,
-            success_message="Thanks! We'll be in touch shortly.",
-            add_tags=request.automation.add_tags or ["lead", "website"],
-            trigger_workflow=True,
-        )
+        synth_form = request.synthesized_form_config
+
+        if synth_form and synth_form.fields:
+            # Use synthesis-generated form config
+            form_fields = []
+            for field_def in synth_form.fields:
+                field_type = FormFieldType(field_def.get("type", "text"))
+                form_fields.append(
+                    FormField(
+                        id=str(uuid.uuid4())[:8],
+                        name=field_def.get("name", "field"),
+                        label=field_def.get("label", "Field"),
+                        type=field_type,
+                        required=field_def.get("required", False),
+                        placeholder=field_def.get("placeholder", ""),
+                        map_to_contact_field=field_def.get("map_to_contact_field"),
+                    )
+                )
+            form = Form(
+                workspace_id=workspace_id,
+                page_id=page.id,
+                name=synth_form.name or f"Contact - {page.name}",
+                description=f"Lead capture form for {page.name}",
+                fields=form_fields,
+                submit_button_text=synth_form.submit_button_text,
+                success_message=synth_form.success_message,
+                add_tags=synth_form.add_tags,
+                trigger_workflow=True,
+            )
+            logger.info("Using synthesized form config for update", field_count=len(form_fields))
+        else:
+            # Legacy hardcoded form
+            cta_text = content.get("cta_text", "Get Started")
+            form = Form(
+                workspace_id=workspace_id,
+                page_id=page.id,
+                name=f"Contact - {page.name}",
+                description=f"Lead capture form for {page.name}",
+                fields=[
+                    FormField(
+                        id=str(uuid.uuid4())[:8],
+                        name="email",
+                        label="Email",
+                        type=FormFieldType.EMAIL,
+                        required=True,
+                        placeholder="your@email.com",
+                        map_to_contact_field="email",
+                    ),
+                    FormField(
+                        id=str(uuid.uuid4())[:8],
+                        name="first_name",
+                        label="Name",
+                        type=FormFieldType.TEXT,
+                        required=True,
+                        placeholder="Your name",
+                        map_to_contact_field="first_name",
+                    ),
+                    FormField(
+                        id=str(uuid.uuid4())[:8],
+                        name="phone",
+                        label="Phone",
+                        type=FormFieldType.PHONE,
+                        required=False,
+                        placeholder="(555) 123-4567",
+                        map_to_contact_field="phone",
+                    ),
+                    FormField(
+                        id=str(uuid.uuid4())[:8],
+                        name="message",
+                        label="Message",
+                        type=FormFieldType.TEXTAREA,
+                        required=False,
+                        placeholder="How can we help?",
+                    ),
+                ],
+                submit_button_text=cta_text,
+                success_message="Thanks! We'll be in touch shortly.",
+                add_tags=request.automation.add_tags or ["lead", "website"],
+                trigger_workflow=True,
+            )
 
         form = form_repo.create_form(form)
         result["form"] = form.model_dump(mode="json")
@@ -899,16 +1061,40 @@ def _update_complete_page(
     existing_workflows, _ = workflow_repo.list_by_page(page.id)
 
     # Create automation workflow if requested AND no workflows exist
-    if (request.automation.send_welcome_email or request.automation.notify_owner) and not existing_workflows:
+    # Use synthesized_workflow_config if provided, otherwise fall back to request.automation
+    synth_wf = request.synthesized_workflow_config
+    should_create_workflow = (
+        (synth_wf and (synth_wf.send_welcome_email or synth_wf.notify_owner))
+        or (not synth_wf and (request.automation.send_welcome_email or request.automation.notify_owner))
+    ) and not existing_workflows
+
+    if should_create_workflow:
         form_id = result["form"]["id"] if result["form"] else (existing_forms[0].id if existing_forms else None)
         if form_id:
+            if synth_wf:
+                # Use synthesis-generated workflow config
+                automation_config = AutomationConfig(
+                    send_welcome_email=synth_wf.send_welcome_email,
+                    notify_owner=synth_wf.notify_owner,
+                    owner_email=synth_wf.owner_email,
+                    welcome_message=synth_wf.welcome_message,
+                    add_tags=synth_wf.add_tags or ["lead", "website"],
+                )
+                workflow_name = synth_wf.name
+                logger.info("Using synthesized workflow config for update", workflow_name=workflow_name)
+            else:
+                # Legacy automation config
+                automation_config = request.automation
+                workflow_name = f"{page.name} Lead Automation"
+
             workflow = _build_automation_workflow(
                 workspace_id=workspace_id,
                 page_id=page.id,
                 form_id=form_id,
                 business_name=business_info.get("business_name", page.name),
-                automation=request.automation,
+                automation=automation_config,
             )
+            workflow.name = workflow_name
             workflow = workflow_repo.create_workflow(workflow)
             result["workflow"] = workflow.model_dump(mode="json", by_alias=True)
             logger.info("Workflow created for updated page", workflow_id=workflow.id, page_id=page.id)

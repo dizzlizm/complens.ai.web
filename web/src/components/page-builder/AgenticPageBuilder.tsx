@@ -10,9 +10,12 @@ import {
   useGeneratePageContent,
   useRefinePageContent,
   useCreateCompletePage,
+  useSynthesizePage,
   GeneratedPageContent,
   AutomationConfig,
   CompletePageResult,
+  SynthesisResult,
+  SynthesisPageBlock,
 } from '../../lib/hooks/useAI';
 import { useCurrentWorkspace } from '../../lib/hooks/useWorkspaces';
 
@@ -26,9 +29,11 @@ interface AgenticPageBuilderProps {
     includeForm: boolean;
     includeChat: boolean;
     createdPage?: CompletePageResult;
+    synthesisResult?: SynthesisResult;
   }) => void;
   onClose: () => void;
   pageId?: string;
+  useSynthesisEngine?: boolean; // Feature flag to enable new synthesis engine
 }
 
 // Chat message types
@@ -101,6 +106,7 @@ export default function AgenticPageBuilder({
   onComplete,
   onClose,
   pageId,
+  useSynthesisEngine = false, // Default to false for gradual rollout
 }: AgenticPageBuilderProps) {
   const { workspaceId } = useCurrentWorkspace();
   const { data: profile, isLoading: profileLoading } = useBusinessProfile(workspaceId, pageId);
@@ -108,6 +114,7 @@ export default function AgenticPageBuilder({
   const generatePageContent = useGeneratePageContent(workspaceId || '');
   const refinePageContent = useRefinePageContent(workspaceId || '');
   const createCompletePage = useCreateCompletePage(workspaceId || '');
+  const synthesizePage = useSynthesizePage(workspaceId || '');
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -149,6 +156,7 @@ export default function AgenticPageBuilder({
   const [heroImageUrl, setHeroImageUrl] = useState<string | null>(null);
   const [buildProgress, setBuildProgress] = useState(0);
   const [createdPageResult, setCreatedPageResult] = useState<CompletePageResult | null>(null);
+  const [synthesisResult, setSynthesisResult] = useState<SynthesisResult | null>(null);
 
   // Slug conflict state (for replace confirmation)
   const [pendingSlugConflict, setPendingSlugConflict] = useState<{
@@ -437,8 +445,203 @@ export default function AgenticPageBuilder({
     );
   };
 
-  // Start building the page
+  // Build using synthesis engine (new approach)
+  const startBuildingWithSynthesis = async () => {
+    if (!generatedContent) return;
+
+    const isUpdateMode = !!pageId;
+    if (!isUpdateMode && !pageName.trim()) {
+      await addAssistantMessage('⚠️ Please enter a page name first.', undefined, undefined, 300);
+      return;
+    }
+
+    setPhase('building');
+    setBuildProgress(0);
+
+    const actionText = isUpdateMode ? 'Synthesizing your page...' : 'Building your complete marketing package with AI synthesis...';
+    await addAssistantMessage(`🚀 ${actionText}`, undefined, undefined, 300);
+
+    const slug = pageName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    addSystemMessage('🧠 Running AI synthesis engine...');
+    setBuildProgress(10);
+
+    try {
+      // Use the synthesis engine to generate blocks intelligently
+      const synthesisDesc = `${generatedContent.business_info?.business_name || pageName}: ${generatedContent.content.tagline || ''} ${generatedContent.content.hero_subheadline || ''}`;
+
+      const result = await synthesizePage.mutateAsync({
+        description: synthesisDesc,
+        intent_hints: generatedContent.business_info?.business_type ? [generatedContent.business_info.business_type] : undefined,
+        style_preference: style,
+        page_id: pageId,
+        include_form: includeForm,
+        include_chat: includeChat,
+      });
+
+      setSynthesisResult(result);
+      setBuildProgress(40);
+
+      // Display synthesis metadata
+      addSystemMessage(`✅ Synthesis complete: ${result.metadata.blocks_included.length} blocks included`);
+      if (Object.keys(result.metadata.blocks_excluded).length > 0) {
+        const excludedReasons = Object.entries(result.metadata.blocks_excluded)
+          .map(([block, reason]) => `${block}: ${reason}`)
+          .slice(0, 2)
+          .join('; ');
+        addSystemMessage(`ℹ️ Excluded: ${excludedReasons}`);
+      }
+
+      // Convert synthesis blocks to PageBlock format with proper type casting
+      const synthesizedBlocks: PageBlock[] = result.blocks.map((b: SynthesisPageBlock) => ({
+        id: b.id,
+        type: b.type as PageBlock['type'],
+        order: b.order,
+        width: (b.width >= 1 && b.width <= 4 ? b.width : 4) as PageBlock['width'],
+        config: b.config as Record<string, unknown>,
+      }));
+
+      setBuildProgress(50);
+
+      // Generate hero image if not present
+      addSystemMessage('🎨 Generating hero image...');
+      let heroUrl: string | null = null;
+      try {
+        const imagePrompt = buildImagePrompt(generatedContent, style);
+        const imageResult = await generateImage.mutateAsync({
+          prompt: imagePrompt,
+          context: result.business_name || 'business',
+          style,
+        });
+        if (imageResult?.url) {
+          heroUrl = imageResult.url;
+          setHeroImageUrl(imageResult.url);
+          // Update hero block with image
+          const heroBlock = synthesizedBlocks.find(b => b.type === 'hero');
+          if (heroBlock) {
+            heroBlock.config.backgroundType = 'image';
+            heroBlock.config.backgroundImage = imageResult.url;
+          }
+          addSystemMessage('✅ Hero image ready!');
+        }
+      } catch {
+        addSystemMessage('⚠️ Using gradient background');
+      }
+
+      setBuildProgress(60);
+
+      // Prepare content with synthesis data for create-complete
+      const contentWithSynthesis = {
+        ...generatedContent,
+        content: {
+          ...generatedContent.content,
+          hero_image_url: heroUrl,
+        },
+      };
+
+      // Create or update the page
+      addSystemMessage(isUpdateMode ? '📄 Updating page...' : '📄 Creating page, form, and workflow...');
+
+      const createResult = await createCompletePage.mutateAsync({
+        ...(isUpdateMode
+          ? { page_id: pageId }
+          : { name: pageName, slug, subdomain: pageSubdomain.trim() || undefined }
+        ),
+        content: contentWithSynthesis,
+        style,
+        colors: {
+          primary: result.design_system.colors.primary,
+          secondary: result.design_system.colors.secondary,
+          accent: result.design_system.colors.accent,
+        },
+        include_form: includeForm,
+        include_chat: includeChat,
+        automation,
+        // Pass synthesis engine outputs for intelligent form/workflow creation
+        synthesized_blocks: result.blocks.map(b => ({
+          id: b.id,
+          type: b.type,
+          order: b.order,
+          width: b.width,
+          config: b.config,
+        })),
+        synthesized_form_config: result.form_config || undefined,
+        synthesized_workflow_config: result.workflow_config || undefined,
+        business_name: result.business_name || undefined,
+      });
+
+      setCreatedPageResult(createResult);
+      setGeneratedBlocks(synthesizedBlocks);
+      setBuildProgress(100);
+
+      addSystemMessage(isUpdateMode ? '✅ Page updated!' : '✅ Page created!');
+      if (createResult.form) addSystemMessage('✅ Lead capture form ready!');
+      if (createResult.workflow) addSystemMessage('✅ Automation workflow active!');
+
+      setPhase('review');
+
+      const pageUrl = pageSubdomain.trim()
+        ? `https://${pageSubdomain}.dev.complens.ai`
+        : 'Your page is ready';
+
+      const strengthsText = result.assessment.strengths.length > 0
+        ? `\n\n**Content strengths:** ${result.assessment.strengths.slice(0, 2).join(', ')}`
+        : '';
+
+      const successMessage = createResult.updated
+        ? `🎉 Done! Your page has been updated with:\n\n` +
+          `• **${synthesizedBlocks.length} intelligent sections** (${result.intent.goal} optimized)\n` +
+          `${createResult.form ? '• **Lead capture form** ready\n' : ''}` +
+          `${createResult.workflow ? '• **Automation workflow** active\n' : ''}` +
+          `${includeChat ? '• **AI chat widget** enabled\n' : ''}` +
+          strengthsText +
+          `\n\nClick "Done" to see your updated page!`
+        : `🎉 Done! The synthesis engine created:\n\n` +
+          `• **Landing page** with ${synthesizedBlocks.length} optimized sections\n` +
+          `• **Intent detected:** ${result.intent.goal} (${result.intent.audience_intent})\n` +
+          `${createResult.form ? '• **Lead capture form** (email, name, phone, message)\n' : ''}` +
+          `${createResult.workflow ? '• **Automation workflow** to handle new leads\n' : ''}` +
+          `${includeChat ? '• **AI chat widget** for visitor questions\n' : ''}\n` +
+          `${pageSubdomain.trim() ? `🌐 **Live at:** ${pageUrl}\n\n` : ''}` +
+          strengthsText +
+          `\n\nClick "Done" to close the wizard and view your page!`;
+
+      await addAssistantMessage(
+        successMessage,
+        [
+          { value: 'apply', label: '✅ Done', description: createResult.updated ? 'Close wizard and refresh page' : 'Close wizard and view page' },
+        ],
+        undefined,
+        800
+      );
+
+    } catch (err) {
+      console.error('Synthesis build failed:', err);
+      await addAssistantMessage(
+        `⚠️ Synthesis failed. Error: ${err instanceof Error ? err.message : 'Unknown error'}. Falling back to standard build...`,
+        undefined,
+        undefined,
+        600
+      );
+      // Fall back to the original build method
+      await startBuildingLegacy();
+    }
+  };
+
+  // Start building - dispatches to synthesis or legacy based on feature flag
   const startBuilding = async () => {
+    if (useSynthesisEngine) {
+      await startBuildingWithSynthesis();
+    } else {
+      await startBuildingLegacy();
+    }
+  };
+
+  // Start building the page (legacy approach)
+  const startBuildingLegacy = async () => {
     if (!generatedContent) return;
 
     // In create mode, require page name
@@ -724,6 +927,7 @@ export default function AgenticPageBuilder({
       includeForm,
       includeChat,
       createdPage: createdPageResult || undefined,
+      synthesisResult: synthesisResult || undefined,
     });
   };
 
@@ -1024,6 +1228,41 @@ export default function AgenticPageBuilder({
                 includeChat={includeChat}
               />
             </div>
+
+            {/* Synthesis metadata (when using synthesis engine) */}
+            {phase === 'review' && synthesisResult && (
+              <div className="p-3 border-t border-gray-200 bg-gray-50">
+                <p className="text-xs font-medium text-gray-500 uppercase mb-2">Synthesis Details</p>
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Intent:</span>
+                    <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded">{synthesisResult.intent.goal}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Blocks:</span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {synthesisResult.metadata.blocks_included.map(block => (
+                        <span key={block} className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px]">
+                          {block}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  {Object.keys(synthesisResult.metadata.blocks_excluded).length > 0 && (
+                    <div>
+                      <span className="text-gray-500">Excluded:</span>
+                      <div className="mt-1 space-y-0.5">
+                        {Object.entries(synthesisResult.metadata.blocks_excluded).slice(0, 3).map(([block, reason]) => (
+                          <div key={block} className="text-gray-400 text-[10px]">
+                            <span className="line-through">{block}</span>: {reason}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Apply button in review phase */}
             {phase === 'review' && (
