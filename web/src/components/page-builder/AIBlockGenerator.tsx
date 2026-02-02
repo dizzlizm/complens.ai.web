@@ -1,11 +1,14 @@
-import { useState } from 'react';
-import { Sparkles, X, Wand2, Loader2 } from 'lucide-react';
-import { PageBlock } from './types';
+import { useState, useEffect, useCallback } from 'react';
+import { Sparkles, X, Wand2, Loader2, Check, RefreshCw, ChevronRight, Eye, Trash2 } from 'lucide-react';
+import { PageBlock, getBlockTypeInfo, BlockType } from './types';
+import { useGenerateBlocks, useImproveBlock } from '../../lib/hooks/useAI';
+import { useCurrentWorkspace } from '../../lib/hooks/useWorkspaces';
 
 interface AIBlockGeneratorProps {
   onGenerate: (blocks: PageBlock[]) => void;
   onClose: () => void;
   isGenerating?: boolean;
+  pageId?: string;
 }
 
 const STYLE_OPTIONS = [
@@ -24,31 +27,191 @@ const QUICK_PROMPTS = [
   'About us company page',
 ];
 
+type GenerationStep = 'input' | 'generating' | 'preview';
+
+interface PreviewBlock extends PageBlock {
+  isGenerating?: boolean;
+  error?: string;
+}
+
 export default function AIBlockGenerator({
   onGenerate,
   onClose,
-  isGenerating = false,
+  isGenerating: externalIsGenerating = false,
+  pageId,
 }: AIBlockGeneratorProps) {
+  const { workspaceId } = useCurrentWorkspace();
+  const generateBlocks = useGenerateBlocks(workspaceId || '');
+  const improveBlock = useImproveBlock(workspaceId || '');
+
   const [description, setDescription] = useState('');
   const [style, setStyle] = useState<'professional' | 'bold' | 'minimal' | 'playful'>('professional');
   const [includeForm, setIncludeForm] = useState(true);
   const [includeChat, setIncludeChat] = useState(true);
 
+  // Agentic state
+  const [step, setStep] = useState<GenerationStep>('input');
+  const [previewBlocks, setPreviewBlocks] = useState<PreviewBlock[]>([]);
+  const [currentBlockIndex, setCurrentBlockIndex] = useState(-1);
+  const [generationMessages, setGenerationMessages] = useState<string[]>([]);
+  const [selectedPreviewBlock, setSelectedPreviewBlock] = useState<number | null>(null);
+  const [isRefining, setIsRefining] = useState(false);
+
+  const isGenerating = externalIsGenerating || generateBlocks.isPending;
+
+  // Add generation message
+  const addMessage = useCallback((message: string) => {
+    setGenerationMessages(prev => [...prev, message]);
+  }, []);
+
+  // Agentic generation process
   const handleGenerate = async () => {
     if (!description.trim()) return;
 
-    // Generate blocks from the description
+    setStep('generating');
+    setGenerationMessages([]);
+    setPreviewBlocks([]);
+    setCurrentBlockIndex(-1);
+
+    addMessage('🧠 Analyzing your content...');
+
+    // Try AI backend first, fall back to local generation
+    if (workspaceId) {
+      try {
+        addMessage('🤖 AI is crafting your page structure...');
+
+        const blocks = await generateBlocks.mutateAsync({
+          description,
+          style,
+          include_form: includeForm,
+          include_chat: includeChat,
+          page_id: pageId,
+        });
+
+        if (blocks && blocks.length > 0) {
+          addMessage(`✨ Generated ${blocks.length} blocks!`);
+
+          // Simulate streaming effect - add blocks one by one
+          for (let i = 0; i < blocks.length; i++) {
+            await new Promise(r => setTimeout(r, 300));
+            const block = blocks[i] as Record<string, unknown>;
+            setPreviewBlocks(prev => [...prev, {
+              ...block,
+              id: (block.id as string) || Math.random().toString(36).substring(2, 10),
+              type: block.type as string,
+              config: block.config as Record<string, unknown>,
+              order: i,
+              width: (block.width as number) || 4,
+            } as PreviewBlock]);
+            setCurrentBlockIndex(i);
+            const blockInfo = getBlockTypeInfo(block.type as BlockType);
+            addMessage(`  ✓ Added ${blockInfo?.label || block.type} block`);
+          }
+
+          addMessage('🎉 Page ready for review!');
+          setStep('preview');
+          return;
+        }
+      } catch (error) {
+        console.error('AI generation failed, falling back to local:', error);
+        addMessage('⚠️ AI service unavailable, using smart templates...');
+      }
+    }
+
+    // Fallback to local generation
+    addMessage('📝 Detecting content type...');
+    await new Promise(r => setTimeout(r, 500));
+
     const blocks = generateBlocksFromDescription(description, style, includeForm, includeChat);
-    onGenerate(blocks);
+    addMessage(`✨ Creating ${blocks.length} blocks...`);
+
+    // Simulate streaming effect
+    for (let i = 0; i < blocks.length; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      setPreviewBlocks(prev => [...prev, blocks[i] as PreviewBlock]);
+      setCurrentBlockIndex(i);
+      const blockInfo = getBlockTypeInfo(blocks[i].type);
+      addMessage(`  ✓ ${blockInfo?.label || blocks[i].type}`);
+    }
+
+    addMessage('🎉 Ready to review!');
+    setStep('preview');
+  };
+
+  // Refine a single block with AI
+  const handleRefineBlock = async (blockIndex: number, instruction: string) => {
+    if (!workspaceId) return;
+
+    const block = previewBlocks[blockIndex];
+    setIsRefining(true);
+
+    // Mark block as generating
+    setPreviewBlocks(prev => prev.map((b, i) =>
+      i === blockIndex ? { ...b, isGenerating: true } : b
+    ));
+
+    try {
+      const result = await improveBlock.mutateAsync({
+        block_type: block.type,
+        config: block.config,
+        instruction,
+        page_id: pageId,
+      });
+
+      // Update block with refined content
+      setPreviewBlocks(prev => prev.map((b, i) =>
+        i === blockIndex ? { ...b, config: result, isGenerating: false } : b
+      ));
+    } catch (error) {
+      console.error('Block refinement failed:', error);
+      setPreviewBlocks(prev => prev.map((b, i) =>
+        i === blockIndex ? { ...b, isGenerating: false, error: 'Refinement failed' } : b
+      ));
+    } finally {
+      setIsRefining(false);
+    }
+  };
+
+  // Remove a block from preview
+  const handleRemoveBlock = (blockIndex: number) => {
+    setPreviewBlocks(prev => prev.filter((_, i) => i !== blockIndex));
+    setSelectedPreviewBlock(null);
+  };
+
+  // Apply the generated blocks
+  const handleApply = () => {
+    const cleanBlocks: PageBlock[] = previewBlocks.map((b, i) => ({
+      id: b.id,
+      type: b.type,
+      order: i,
+      width: b.width || 4,
+      config: b.config,
+    }));
+    onGenerate(cleanBlocks);
+  };
+
+  // Back to input
+  const handleBack = () => {
+    setStep('input');
+    setPreviewBlocks([]);
+    setGenerationMessages([]);
   };
 
   const handleQuickPrompt = (prompt: string) => {
     setDescription(prompt);
   };
 
+  // Auto-scroll messages
+  useEffect(() => {
+    const container = document.getElementById('generation-messages');
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [generationMessages]);
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-r from-purple-600 to-indigo-600 p-6 text-white">
           <div className="flex items-center justify-between">
@@ -57,8 +220,16 @@ export default function AIBlockGenerator({
                 <Sparkles className="w-6 h-6" />
               </div>
               <div>
-                <h2 className="text-xl font-bold">AI Page Builder</h2>
-                <p className="text-white/80 text-sm">Describe your page and let AI build it</p>
+                <h2 className="text-xl font-bold">
+                  {step === 'input' && 'AI Page Builder'}
+                  {step === 'generating' && 'Building Your Page...'}
+                  {step === 'preview' && 'Review & Refine'}
+                </h2>
+                <p className="text-white/80 text-sm">
+                  {step === 'input' && 'Describe your page and let AI build it'}
+                  {step === 'generating' && 'AI is creating blocks one by one'}
+                  {step === 'preview' && 'Click blocks to refine or remove them'}
+                </p>
               </div>
             </div>
             <button
@@ -68,135 +239,398 @@ export default function AIBlockGenerator({
               <X className="w-5 h-5" />
             </button>
           </div>
-        </div>
 
-        {/* Content */}
-        <div className="p-6 space-y-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-          {/* Quick prompts */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Quick Start
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {QUICK_PROMPTS.map((prompt) => (
-                <button
-                  key={prompt}
-                  onClick={() => handleQuickPrompt(prompt)}
-                  className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
-                    description === prompt
-                      ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                      : 'border-gray-200 hover:border-gray-300 text-gray-600'
-                  }`}
-                >
-                  {prompt}
-                </button>
-              ))}
+          {/* Progress steps */}
+          <div className="flex items-center gap-2 mt-4">
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
+              step === 'input' ? 'bg-white text-purple-600' : 'bg-white/20 text-white'
+            }`}>
+              {step !== 'input' && <Check className="w-3 h-3" />}
+              <span>Describe</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/50" />
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
+              step === 'generating' ? 'bg-white text-purple-600' :
+              step === 'preview' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/50'
+            }`}>
+              {step === 'generating' && <Loader2 className="w-3 h-3 animate-spin" />}
+              {step === 'preview' && <Check className="w-3 h-3" />}
+              <span>Generate</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/50" />
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
+              step === 'preview' ? 'bg-white text-purple-600' : 'bg-white/10 text-white/50'
+            }`}>
+              <span>Review</span>
             </div>
           </div>
+        </div>
 
-          {/* Description input */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Describe Your Page (or paste your content)
-            </label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Paste a resume, business description, product info, or describe what you want. The more detail you provide, the better the result!
+        {/* Content - Input Step */}
+        {step === 'input' && (
+          <div className="p-6 space-y-6 overflow-y-auto max-h-[calc(90vh-280px)]">
+            {/* Quick prompts */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Quick Start
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {QUICK_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    onClick={() => handleQuickPrompt(prompt)}
+                    className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+                      description === prompt
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                        : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                    }`}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Description input */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Describe Your Page (or paste your content)
+              </label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Paste a resume, business description, product info, or describe what you want. The more detail you provide, the better the result!
 
 Example: 'Steve Ross - Staff Systems Architect with 8+ years experience in cloud infrastructure, AI systems, and team leadership. Currently at TheRealReal building AI agent pipelines...'"
-              rows={6}
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-200 resize-none"
-            />
-            <p className="mt-2 text-xs text-gray-500">
-              Tip: Paste a full resume, bio, or business description for best results!
-            </p>
-          </div>
+                rows={6}
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-200 resize-none"
+              />
+              <p className="mt-2 text-xs text-gray-500">
+                Tip: Paste a full resume, bio, or business description for best results!
+              </p>
+            </div>
 
-          {/* Style selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Visual Style
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {STYLE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  onClick={() => setStyle(option.value)}
-                  className={`p-3 rounded-xl border-2 text-left transition-all ${
-                    style === option.value
-                      ? 'border-indigo-500 bg-indigo-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <p className={`font-medium text-sm ${
-                    style === option.value ? 'text-indigo-700' : 'text-gray-900'
-                  }`}>
-                    {option.label}
-                  </p>
-                  <p className="text-xs text-gray-500">{option.description}</p>
-                </button>
-              ))}
+            {/* Style selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Visual Style
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => setStyle(option.value)}
+                    className={`p-3 rounded-xl border-2 text-left transition-all ${
+                      style === option.value
+                        ? 'border-indigo-500 bg-indigo-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <p className={`font-medium text-sm ${
+                      style === option.value ? 'text-indigo-700' : 'text-gray-900'
+                    }`}>
+                      {option.label}
+                    </p>
+                    <p className="text-xs text-gray-500">{option.description}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Options */}
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeForm}
+                  onChange={(e) => setIncludeForm(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="text-sm text-gray-700">Include contact form</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeChat}
+                  onChange={(e) => setIncludeChat(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="text-sm text-gray-700">Include AI chat widget</span>
+              </label>
             </div>
           </div>
+        )}
 
-          {/* Options */}
-          <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={includeForm}
-                onChange={(e) => setIncludeForm(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-              />
-              <span className="text-sm text-gray-700">Include contact form</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={includeChat}
-                onChange={(e) => setIncludeChat(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-              />
-              <span className="text-sm text-gray-700">Include AI chat widget</span>
-            </label>
+        {/* Content - Generating Step */}
+        {step === 'generating' && (
+          <div className="p-6 space-y-4">
+            {/* Live generation messages */}
+            <div
+              id="generation-messages"
+              className="bg-gray-900 rounded-xl p-4 font-mono text-sm max-h-64 overflow-y-auto"
+            >
+              {generationMessages.map((msg, i) => (
+                <div key={i} className="text-green-400 py-0.5">
+                  {msg}
+                </div>
+              ))}
+              {generationMessages.length > 0 && (
+                <div className="text-green-400 animate-pulse">▊</div>
+              )}
+            </div>
+
+            {/* Preview of blocks being generated */}
+            {previewBlocks.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-gray-700">Blocks being created:</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {previewBlocks.map((block, i) => {
+                    const blockInfo = getBlockTypeInfo(block.type);
+                    return (
+                      <div
+                        key={block.id}
+                        className={`flex items-center gap-2 p-2 rounded-lg border ${
+                          i === currentBlockIndex
+                            ? 'border-purple-500 bg-purple-50'
+                            : 'border-gray-200 bg-white'
+                        }`}
+                      >
+                        <Check className="w-4 h-4 text-green-500" />
+                        <span className="text-sm font-medium text-gray-900">
+                          {blockInfo?.label || block.type}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
-        </div>
+        )}
+
+        {/* Content - Preview Step */}
+        {step === 'preview' && (
+          <div className="flex max-h-[calc(90vh-280px)]">
+            {/* Block list */}
+            <div className="flex-1 p-6 overflow-y-auto border-r border-gray-200">
+              <p className="text-sm font-medium text-gray-700 mb-3">
+                Generated Blocks ({previewBlocks.length})
+              </p>
+              <div className="space-y-2">
+                {previewBlocks.map((block, i) => {
+                  const blockInfo = getBlockTypeInfo(block.type);
+                  const isSelected = selectedPreviewBlock === i;
+                  return (
+                    <div
+                      key={block.id}
+                      onClick={() => setSelectedPreviewBlock(isSelected ? null : i)}
+                      className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                        isSelected
+                          ? 'border-purple-500 bg-purple-50 shadow-md'
+                          : 'border-gray-200 bg-white hover:border-gray-300'
+                      } ${block.isGenerating ? 'opacity-50' : ''}`}
+                    >
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                        isSelected ? 'bg-purple-100' : 'bg-gray-100'
+                      }`}>
+                        <span className="text-xs font-bold text-gray-600">{i + 1}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900">
+                          {blockInfo?.label || block.type}
+                        </p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {String(block.config?.headline || block.config?.title || blockInfo?.description || '')}
+                        </p>
+                      </div>
+                      {block.isGenerating ? (
+                        <Loader2 className="w-4 h-4 text-purple-500 animate-spin" />
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemoveBlock(i);
+                          }}
+                          className="p-1 text-gray-400 hover:text-red-500 rounded"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Refinement panel */}
+            <div className="w-80 p-6 bg-gray-50">
+              {selectedPreviewBlock !== null ? (
+                <BlockRefinementPanel
+                  block={previewBlocks[selectedPreviewBlock]}
+                  onRefine={(instruction) => handleRefineBlock(selectedPreviewBlock, instruction)}
+                  onRemove={() => handleRemoveBlock(selectedPreviewBlock)}
+                  isRefining={isRefining}
+                />
+              ) : (
+                <div className="text-center py-8">
+                  <Eye className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                  <p className="text-sm text-gray-500">
+                    Click a block to refine it with AI
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="p-6 border-t border-gray-200 bg-gray-50">
           <div className="flex items-center justify-between">
             <p className="text-xs text-gray-500">
-              AI will generate blocks based on your description
+              {step === 'input' && 'AI will generate blocks based on your description'}
+              {step === 'generating' && 'Please wait while AI creates your page...'}
+              {step === 'preview' && 'Review your blocks before applying'}
             </p>
             <div className="flex gap-3">
-              <button
-                onClick={onClose}
-                className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleGenerate}
-                disabled={!description.trim() || isGenerating}
-                className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                {isGenerating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
+              {step === 'input' && (
+                <>
+                  <button
+                    onClick={onClose}
+                    className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleGenerate}
+                    disabled={!description.trim() || isGenerating}
+                    className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  >
                     <Wand2 className="w-4 h-4" />
                     Generate Page
-                  </>
-                )}
-              </button>
+                  </button>
+                </>
+              )}
+              {step === 'preview' && (
+                <>
+                  <button
+                    onClick={handleBack}
+                    className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    onClick={handleGenerate}
+                    className="flex items-center gap-2 px-4 py-2 text-purple-600 hover:text-purple-700 font-medium"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Regenerate
+                  </button>
+                  <button
+                    onClick={handleApply}
+                    disabled={previewBlocks.length === 0}
+                    className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  >
+                    <Check className="w-4 h-4" />
+                    Apply {previewBlocks.length} Blocks
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Block refinement panel component
+function BlockRefinementPanel({
+  block,
+  onRefine,
+  onRemove,
+  isRefining,
+}: {
+  block: PreviewBlock;
+  onRefine: (instruction: string) => void;
+  onRemove: () => void;
+  isRefining: boolean;
+}) {
+  const [customInstruction, setCustomInstruction] = useState('');
+  const blockInfo = getBlockTypeInfo(block.type);
+
+  const quickRefinements = [
+    { label: 'More Professional', instruction: 'Make this more professional and business-appropriate' },
+    { label: 'More Engaging', instruction: 'Make this more engaging and exciting' },
+    { label: 'More Concise', instruction: 'Make this shorter and more punchy' },
+    { label: 'More Detailed', instruction: 'Expand this with more details and information' },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h4 className="font-medium text-gray-900">{blockInfo?.label || block.type}</h4>
+        <p className="text-xs text-gray-500 mt-1">{blockInfo?.description || ''}</p>
+      </div>
+
+      {/* Quick refinement buttons */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-gray-700">Quick Refinements</p>
+        <div className="grid grid-cols-2 gap-2">
+          {quickRefinements.map((r) => (
+            <button
+              key={r.label}
+              onClick={() => onRefine(r.instruction)}
+              disabled={isRefining}
+              className="px-3 py-2 text-xs bg-white border border-gray-200 rounded-lg hover:border-purple-300 hover:bg-purple-50 disabled:opacity-50 text-left"
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Custom instruction */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-gray-700">Custom Instruction</p>
+        <textarea
+          value={customInstruction}
+          onChange={(e) => setCustomInstruction(e.target.value)}
+          placeholder="Describe how you want to change this block..."
+          rows={3}
+          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-200 resize-none"
+        />
+        <button
+          onClick={() => {
+            if (customInstruction.trim()) {
+              onRefine(customInstruction);
+              setCustomInstruction('');
+            }
+          }}
+          disabled={!customInstruction.trim() || isRefining}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50"
+        >
+          {isRefining ? (
+            <>
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Refining...
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-3 h-3" />
+              Apply Refinement
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Remove button */}
+      <button
+        onClick={onRemove}
+        className="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-600 text-sm font-medium border border-red-200 rounded-lg hover:bg-red-50"
+      >
+        <Trash2 className="w-3 h-3" />
+        Remove Block
+      </button>
     </div>
   );
 }

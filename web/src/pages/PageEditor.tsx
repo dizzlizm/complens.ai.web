@@ -517,6 +517,8 @@ export default function PageEditor() {
               forms={pageForms?.map((f: Form) => ({ id: f.id, name: f.name })) || []}
               pageHeadline={formData.headline}
               pageSubheadline={formData.subheadline}
+              workspaceId={workspaceId}
+              pageId={pageId}
             />
 
             {/* Legacy content info */}

@@ -6,7 +6,8 @@ import { PageBlock, getBlockTypeInfo } from './types';
 interface BlockWrapperProps {
   block: PageBlock;
   isSelected: boolean;
-  onSelect: () => void;
+  isMultiSelected?: boolean;
+  onSelect: (e?: React.MouseEvent) => void;
   onDelete: () => void;
   onDuplicate: () => void;
   children: React.ReactNode;
@@ -15,6 +16,7 @@ interface BlockWrapperProps {
 export default function BlockWrapper({
   block,
   isSelected,
+  isMultiSelected = false,
   onSelect,
   onDelete,
   onDuplicate,
@@ -44,14 +46,16 @@ export default function BlockWrapper({
     >
       {/* Block container */}
       <div
-        onClick={onSelect}
+        onClick={(e) => onSelect(e)}
         className={`relative border-2 rounded-lg transition-all cursor-pointer ${
           isDragging
             ? 'opacity-50 shadow-2xl'
+            : isMultiSelected
+            ? 'border-purple-500 shadow-lg ring-2 ring-purple-200'
             : isSelected
-            ? 'border-indigo-500 shadow-lg'
+            ? 'border-indigo-500 shadow-lg ring-2 ring-indigo-200'
             : 'border-transparent hover:border-gray-300'
-        } ${isSelected ? 'ring-2 ring-indigo-200' : ''}`}
+        }`}
       >
         {/* Top bar with controls */}
         <div
@@ -90,7 +94,7 @@ export default function BlockWrapper({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onSelect();
+              onSelect(e);
             }}
             className="p-1.5 bg-gray-800 text-white rounded hover:bg-gray-700"
             title="Configure block"
