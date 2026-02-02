@@ -288,7 +288,7 @@ Resources:
     Properties:
       QueueName: !Sub "complens-${Stage}-workflow-queue.fifo"
       FifoQueue: true
-      ContentBasedDeduplication: false
+      ContentBasedDeduplication: true
       DeduplicationScope: messageGroup
       FifoThroughputLimit: perMessageGroupId
       VisibilityTimeout: 300
@@ -345,7 +345,7 @@ Resources:
         - Id: WorkflowTriggerQueue
           Arn: !GetAtt WorkflowQueue.Arn
           SqsParameters:
-            MessageGroupId: "$.detail.workspace_id"
+            MessageGroupId: "workflow-triggers"
 
   # Rule for form submission triggers
   FormSubmitRule:
@@ -363,7 +363,7 @@ Resources:
         - Id: WorkflowTriggerQueue
           Arn: !GetAtt WorkflowQueue.Arn
           SqsParameters:
-            MessageGroupId: "$.detail.workspace_id"
+            MessageGroupId: "workflow-triggers"
 
   # Rule for inbound message triggers
   InboundMessageRule:
@@ -382,7 +382,7 @@ Resources:
         - Id: WorkflowTriggerQueue
           Arn: !GetAtt WorkflowQueue.Arn
           SqsParameters:
-            MessageGroupId: "$.detail.workspace_id"
+            MessageGroupId: "workflow-triggers"
 
   # Permission for EventBridge to send to SQS
   WorkflowQueuePolicy:
@@ -1208,6 +1208,7 @@ Resources:
         Variables:
           API_URL: !If [CustomDomainEnabled, !Sub "https://api.${DomainName}", !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"]
           WEBSOCKET_ENDPOINT: !If [CustomDomainEnabled, !Sub "wss://ws.${DomainName}", !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"]
+          WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
@@ -1216,6 +1217,11 @@ Resources:
               Action:
                 - events:PutEvents
               Resource: !GetAtt WorkflowEventBus.Arn
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt WorkflowQueue.Arn
       Events:
         GetPage:
           Type: Api
@@ -1241,12 +1247,28 @@ Resources:
             Method: POST
             Auth:
               Authorizer: NONE
+        SubmitPageFormOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/submit/page/{page_id}
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
         SubmitForm:
           Type: Api
           Properties:
             RestApiId: !Ref RestApi
             Path: /public/submit/form/{form_id}
             Method: POST
+            Auth:
+              Authorizer: NONE
+        SubmitFormOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/submit/form/{form_id}
+            Method: OPTIONS
             Auth:
               Authorizer: NONE
         GetPageByDomain:

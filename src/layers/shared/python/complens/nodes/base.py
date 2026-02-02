@@ -28,6 +28,7 @@ class NodeContext:
 
     # Workspace context
     workspace_id: str = ""
+    workspace_settings: dict[str, Any] = field(default_factory=dict)
 
     # Variables passed between nodes
     variables: dict[str, Any] = field(default_factory=dict)
@@ -59,10 +60,34 @@ class NodeContext:
         """
         self.variables[name] = value
 
+    def _get_nested_value(self, data: dict, path: str) -> Any:
+        """Get a nested value from a dict using dot notation.
+
+        Args:
+            data: The dictionary to search.
+            path: Dot-separated path (e.g., "form_data.message").
+
+        Returns:
+            The value at the path, or empty string if not found.
+        """
+        parts = path.split(".")
+        current = data
+        for part in parts:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return ""
+        return current if current is not None else ""
+
     def render_template(self, template: str) -> str:
         """Render a template string with variable substitution.
 
-        Supports {{variable}} and {{contact.field}} syntax.
+        Supports multiple variable formats:
+        - {{contact.field}} - Contact fields (email, first_name, phone, etc.)
+        - {{trigger_data.field}} - Trigger data with nested support (e.g., trigger_data.form_data.message)
+        - {{workspace.field}} - Workspace settings (notification_email, from_email, etc.)
+        - {{owner.email}} - Alias for workspace notification email
+        - {{variable}} - Workflow variables set by previous nodes
 
         Args:
             template: Template string.
@@ -75,20 +100,39 @@ class NodeContext:
         def replace_var(match: re.Match) -> str:
             var_path = match.group(1).strip()
 
-            # Handle contact fields
+            # Handle contact fields: {{contact.email}}, {{contact.first_name}}
             if var_path.startswith("contact."):
                 field_name = var_path[8:]  # Remove "contact."
+                # Support nested custom_fields: {{contact.custom_fields.company}}
+                if field_name.startswith("custom_fields."):
+                    custom_key = field_name[14:]
+                    return str(self.contact.custom_fields.get(custom_key, ""))
                 if hasattr(self.contact, field_name):
                     value = getattr(self.contact, field_name)
                     return str(value) if value is not None else ""
                 return ""
 
-            # Handle trigger data
+            # Handle trigger data with nested support: {{trigger_data.form_data.message}}
+            if var_path.startswith("trigger_data."):
+                path = var_path[13:]  # Remove "trigger_data."
+                value = self._get_nested_value(self.trigger_data, path)
+                return str(value) if value else ""
+
+            # Legacy trigger format: {{trigger.key}} (flat access only)
             if var_path.startswith("trigger."):
                 key = var_path[8:]  # Remove "trigger."
                 return str(self.trigger_data.get(key, ""))
 
-            # Handle regular variables
+            # Handle workspace settings: {{workspace.notification_email}}, {{workspace.from_email}}
+            if var_path.startswith("workspace."):
+                field_name = var_path[10:]  # Remove "workspace."
+                return str(self.workspace_settings.get(field_name, ""))
+
+            # Handle owner shortcut: {{owner.email}} -> workspace notification_email
+            if var_path == "owner.email":
+                return str(self.workspace_settings.get("notification_email", ""))
+
+            # Handle regular workflow variables
             return str(self.variables.get(var_path, ""))
 
         pattern = r"\{\{([^}]+)\}\}"

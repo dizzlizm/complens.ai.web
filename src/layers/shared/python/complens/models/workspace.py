@@ -32,6 +32,10 @@ class Workspace(BaseModel):
     twilio_account_sid: str | None = Field(None, description="Twilio account SID")
     sendgrid_api_key_id: str | None = Field(None, description="SendGrid API key secret ID")
 
+    # Email notification settings (used by workflows via {{workspace.field}} or {{owner.email}})
+    notification_email: str | None = Field(None, description="Email for workflow notifications (owner alerts)")
+    from_email: str | None = Field(None, description="Default sender email for workflow emails")
+
     def get_pk(self) -> str:
         """Get partition key: AGENCY#{agency_id}."""
         return f"AGENCY#{self.agency_id}"
@@ -94,3 +98,5 @@ class UpdateWorkspaceRequest(PydanticBaseModel):
     twilio_phone_number: str | None = None
     twilio_account_sid: str | None = None
     sendgrid_api_key_id: str | None = None
+    notification_email: str | None = None
+    from_email: str | None = None

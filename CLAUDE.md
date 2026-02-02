@@ -918,6 +918,50 @@ When pages are updated or published, CloudFront cache is automatically invalidat
 
 ---
 
+### Workflow Enhancements (Feb 2026) ✅
+
+Enhanced workflow system to be fully configurable with no hardcoded values.
+
+**Template Variable System:**
+The workflow engine supports powerful template variables in all configurable fields:
+
+| Variable Pattern | Description | Example |
+|-----------------|-------------|---------|
+| `{{contact.field}}` | Contact fields | `{{contact.email}}`, `{{contact.first_name}}` |
+| `{{contact.custom_fields.field}}` | Custom contact fields | `{{contact.custom_fields.company}}` |
+| `{{trigger_data.path}}` | Nested trigger data | `{{trigger_data.form_data.message}}` |
+| `{{workspace.field}}` | Workspace settings | `{{workspace.notification_email}}` |
+| `{{owner.email}}` | Owner notification email | Alias for workspace.notification_email |
+| `{{variable_name}}` | Workflow variables | Set by previous nodes |
+
+**Workspace Email Settings:**
+- `notification_email` - Email for workflow notifications/owner alerts
+- `from_email` - Default sender email for workflow emails
+
+**Key Files:**
+- `src/layers/shared/python/complens/nodes/base.py` - Template rendering with nested path support
+- `src/handlers/workers/workflow_executor.py` - Passes workspace_settings to NodeContext
+- `src/layers/shared/python/complens/models/workspace.py` - Added notification_email, from_email fields
+
+**AI Workflow Builder:**
+- [x] "AI Help" button in workflow editor header
+- [x] Modal for describing workflow in natural language
+- [x] Uses `useGenerateWorkflow` hook to call AI endpoint
+- [x] Generated nodes/edges applied to canvas
+
+**Auto-Save for Page Editor:**
+- [x] 3-second debounce auto-save when changes detected
+- [x] beforeunload warning prevents leaving with unsaved changes
+- [x] Visual status indicator (Saving..., Saved, Unsaved changes)
+
+**Bug Fixes:**
+- Fixed Step Functions state machine `workflow_run_id` path issue
+- Fixed `to_dynamodb()` to use `by_alias=True` for correct `type` field serialization
+- Fixed CORS for public form submissions from custom domains
+- Direct SQS trigger for form submissions (bypasses EventBridge for reliability)
+
+---
+
 ### Phase 5: Polish
 - [ ] Stripe billing integration
 - [ ] Workflow templates library

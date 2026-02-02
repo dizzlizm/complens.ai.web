@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Play, Loader2 } from 'lucide-react';
+import { ArrowLeft, Save, Play, Loader2, Sparkles, X } from 'lucide-react';
 import { type Node, type Edge } from '@xyflow/react';
 import WorkflowCanvas, { type WorkflowCanvasRef } from '../components/workflow/WorkflowCanvas';
 import NodeToolbar from '../components/workflow/NodeToolbar';
@@ -16,6 +16,7 @@ import {
   type Workflow,
   type CreateWorkflowInput,
 } from '../lib/hooks';
+import { useGenerateWorkflow } from '../lib/hooks/useAI';
 import api from '../lib/api';
 import { useToast } from '../components/Toast';
 
@@ -40,6 +41,11 @@ export default function WorkflowEditor() {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  // AI help modal state
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [aiDescription, setAiDescription] = useState('');
+  const generateWorkflow = useGenerateWorkflow(workspaceId || '');
 
   const createWorkspace = useCreateWorkspace();
 
@@ -197,6 +203,62 @@ export default function WorkflowEditor() {
     }
   };
 
+  // AI workflow generation
+  const handleAIGenerate = async () => {
+    if (!aiDescription.trim()) {
+      toast.warning('Please describe what the workflow should do.');
+      return;
+    }
+
+    try {
+      const generatedWorkflow = await generateWorkflow.mutateAsync({
+        description: aiDescription,
+      });
+
+      if (generatedWorkflow && canvasRef.current) {
+        // Convert generated workflow to React Flow format
+        const rfNodes: Node[] = generatedWorkflow.nodes.map((n: any) => {
+          const nodeType = n.type || 'action';
+          let rfType = 'action';
+          if (nodeType.startsWith('trigger_')) rfType = 'trigger';
+          else if (nodeType.startsWith('action_')) rfType = 'action';
+          else if (nodeType.startsWith('logic_')) rfType = 'logic';
+          else if (nodeType.startsWith('ai_')) rfType = 'ai';
+
+          return {
+            id: n.id,
+            type: rfType,
+            position: n.position,
+            data: {
+              label: n.label,
+              nodeType: nodeType,
+              config: n.config,
+            },
+          };
+        });
+
+        const rfEdges: Edge[] = generatedWorkflow.edges.map((e: any) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          animated: true,
+        }));
+
+        canvasRef.current.setNodes(rfNodes);
+        canvasRef.current.setEdges(rfEdges);
+        if (generatedWorkflow.name) {
+          setName(generatedWorkflow.name);
+        }
+        setHasChanges(true);
+        setShowAIModal(false);
+        setAiDescription('');
+        toast.success('Workflow generated! Review and customize as needed.');
+      }
+    } catch (error) {
+      toast.error(`Generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
   // Test workflow execution
   const handleTest = async () => {
     if (isNew || !workspaceId) {
@@ -259,6 +321,18 @@ export default function WorkflowEditor() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setShowAIModal(true)}
+            disabled={generateWorkflow.isPending}
+            className="btn btn-secondary inline-flex items-center gap-2 disabled:opacity-50"
+          >
+            {generateWorkflow.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Sparkles className="w-4 h-4" />
+            )}
+            <span className="hidden sm:inline">AI Help</span>
+          </button>
+          <button
             onClick={handleTest}
             disabled={isTesting || isNew}
             className="btn btn-secondary inline-flex items-center gap-2 disabled:opacity-50"
@@ -310,6 +384,65 @@ export default function WorkflowEditor() {
       {!selectedNode && (
         <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg text-sm text-gray-600">
           Click a node to configure • <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Delete</kbd> to remove
+        </div>
+      )}
+
+      {/* AI Help Modal */}
+      {showAIModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-indigo-600" />
+                <h3 className="font-semibold text-gray-900">AI Workflow Builder</h3>
+              </div>
+              <button
+                onClick={() => setShowAIModal(false)}
+                className="p-1 text-gray-400 hover:text-gray-600 rounded"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-sm text-gray-600">
+                Describe what your workflow should do. Be specific about triggers, actions, and any conditions.
+              </p>
+              <textarea
+                value={aiDescription}
+                onChange={(e) => setAiDescription(e.target.value)}
+                placeholder="Example: When a contact form is submitted, send a welcome email to the lead and notify the sales team via email. If the lead is from California, also add them to the 'West Coast' tag."
+                className="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+              />
+              <div className="text-xs text-gray-500">
+                <strong>Tip:</strong> You can use variables like <code className="bg-gray-100 px-1 rounded">{"{{contact.email}}"}</code>, <code className="bg-gray-100 px-1 rounded">{"{{owner.email}}"}</code>, or <code className="bg-gray-100 px-1 rounded">{"{{trigger_data.form_data.message}}"}</code>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t bg-gray-50 rounded-b-xl">
+              <button
+                onClick={() => setShowAIModal(false)}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAIGenerate}
+                disabled={generateWorkflow.isPending || !aiDescription.trim()}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 inline-flex items-center gap-2"
+              >
+                {generateWorkflow.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    Generate Workflow
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

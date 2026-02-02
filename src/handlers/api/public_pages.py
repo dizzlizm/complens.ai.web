@@ -38,9 +38,48 @@ from complens.utils.rate_limiter import (
     get_client_ip,
     rate_limit_response,
 )
-from complens.utils.responses import created, error, not_found, success, validation_error
+from complens.utils.responses import (
+    created,
+    error,
+    not_found,
+    public_created,
+    public_error,
+    public_success,
+    success,
+    validation_error,
+)
 
 logger = structlog.get_logger()
+
+
+def handle_options_preflight(event: dict) -> dict:
+    """Handle OPTIONS preflight requests for public endpoints.
+
+    Returns CORS headers that allow requests from any HTTPS origin.
+    This enables form submissions from custom domain landing pages.
+    """
+    headers = event.get("headers", {}) or {}
+    # Get origin (case-insensitive header lookup)
+    origin = None
+    for key, value in headers.items():
+        if key.lower() == "origin":
+            origin = value
+            break
+
+    # Allow the requesting origin if it's HTTPS, otherwise use wildcard
+    allow_origin = origin if origin and origin.startswith("https://") else "*"
+
+    return {
+        "statusCode": 200,
+        "headers": {
+            "Access-Control-Allow-Origin": allow_origin,
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, X-Requested-With",
+            "Access-Control-Max-Age": "600",
+            "Content-Type": "application/json",
+        },
+        "body": "{}",
+    }
 
 
 def handler(event: dict[str, Any], context: Any) -> dict:
@@ -67,6 +106,10 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         domain = path_params.get("domain")
         subdomain = path_params.get("subdomain")
         workspace_id = query_params.get("ws")
+
+        # Handle OPTIONS preflight for public submit endpoints (custom domain CORS)
+        if http_method == "OPTIONS" and "/public/submit/" in path:
+            return handle_options_preflight(event)
 
         # Route to appropriate handler
         if "/public/submit/page/" in path and http_method == "POST":
@@ -393,12 +436,24 @@ def get_public_form(form_id: str, workspace_id: str | None) -> dict:
     return success(form_data)
 
 
+def _get_origin(event: dict) -> str | None:
+    """Extract Origin header from request (case-insensitive)."""
+    headers = event.get("headers", {}) or {}
+    # Headers can be mixed case
+    for key, value in headers.items():
+        if key.lower() == "origin":
+            return value
+    return None
+
+
 def submit_page_form(page_id: str, event: dict) -> dict:
     """Submit a form from a page.
 
     This endpoint handles form submissions that come through pages.
     It validates the form, creates/updates a contact, and triggers workflows.
     """
+    origin = _get_origin(event)
+
     # Rate limit: 5 submissions per minute, 30 per hour per IP
     client_ip = get_client_ip(event)
     rate_check = check_rate_limit(
@@ -413,24 +468,24 @@ def submit_page_form(page_id: str, event: dict) -> dict:
     try:
         body = json.loads(event.get("body", "{}"))
     except json.JSONDecodeError:
-        return error("Invalid JSON body", 400)
+        return public_error("Invalid JSON body", origin, 400)
 
     # Honeypot check - if filled, bot detected
     honeypot = body.get("_honeypot") or body.get("honeypot")
     if honeypot:
         logger.debug("Honeypot triggered on page form")
-        return success({
+        return public_success({
             "success": True,
             "message": "Thank you for your submission!",
-        })
+        }, origin)
 
     form_id = body.get("form_id")
     if not form_id:
-        return error("form_id is required", 400)
+        return public_error("form_id is required", origin, 400)
 
     workspace_id = body.get("workspace_id")
     if not workspace_id:
-        return error("workspace_id is required", 400)
+        return public_error("workspace_id is required", origin, 400)
 
     # Get page and form
     page_repo = PageRepository()
@@ -438,19 +493,19 @@ def submit_page_form(page_id: str, event: dict) -> dict:
 
     page = page_repo.get_by_id(workspace_id, page_id)
     if not page:
-        return not_found("Page", page_id)
+        return public_error(f"Page with ID '{page_id}' not found", origin, 404, "NOT_FOUND")
 
     # Verify workspace consistency
     if page.workspace_id != workspace_id:
-        return error("Invalid workspace", 400)
+        return public_error("Invalid workspace", origin, 400)
 
     form = form_repo.get_by_id(workspace_id, form_id)
     if not form:
-        return not_found("Form", form_id)
+        return public_error(f"Form with ID '{form_id}' not found", origin, 404, "NOT_FOUND")
 
     # Check form is attached to this page
     if form_id not in page.form_ids:
-        return error("Form not associated with this page", 400)
+        return public_error("Form not associated with this page", origin, 400)
 
     # Process the submission
     return _process_form_submission(
@@ -458,11 +513,14 @@ def submit_page_form(page_id: str, event: dict) -> dict:
         data=body.get("data", {}),
         page_id=page_id,
         event=event,
+        origin=origin,
     )
 
 
 def submit_form(form_id: str, event: dict) -> dict:
     """Submit a form directly (not through a page)."""
+    origin = _get_origin(event)
+
     # Rate limit: 5 submissions per minute, 30 per hour per IP
     client_ip = get_client_ip(event)
     rate_check = check_rate_limit(
@@ -478,31 +536,34 @@ def submit_form(form_id: str, event: dict) -> dict:
         body = json.loads(event.get("body", "{}"))
         request = SubmitFormRequest.model_validate(body)
     except PydanticValidationError as e:
-        return validation_error([
-            {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
-            for err in e.errors()
-        ])
+        return public_error(
+            "Validation failed",
+            origin,
+            400,
+            "VALIDATION_ERROR",
+            {"errors": [{"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]} for err in e.errors()]},
+        )
     except json.JSONDecodeError:
-        return error("Invalid JSON body", 400)
+        return public_error("Invalid JSON body", origin, 400)
 
     # Honeypot check
     if request.honeypot:
         # Bot detected, silently succeed
         logger.info("Honeypot triggered", form_id=form_id)
-        return success({
+        return public_success({
             "success": True,
             "message": "Thank you for your submission!",
-        })
+        }, origin)
 
     workspace_id = body.get("workspace_id")
     if not workspace_id:
-        return error("workspace_id is required", 400)
+        return public_error("workspace_id is required", origin, 400)
 
     # Get form
     form_repo = FormRepository()
     form = form_repo.get_by_id(workspace_id, form_id)
     if not form:
-        return not_found("Form", form_id)
+        return public_error(f"Form with ID '{form_id}' not found", origin, 404, "NOT_FOUND")
 
     # Process the submission
     return _process_form_submission(
@@ -510,6 +571,7 @@ def submit_form(form_id: str, event: dict) -> dict:
         data=request.data,
         page_id=None,
         event=event,
+        origin=origin,
     )
 
 
@@ -522,6 +584,7 @@ def _process_form_submission(
     data: dict,
     page_id: str | None,
     event: dict,
+    origin: str | None = None,
 ) -> dict:
     """Process a form submission.
 
@@ -534,7 +597,7 @@ def _process_form_submission(
     # Check total payload size
     total_size = sum(len(str(v)) for v in data.values())
     if total_size > MAX_TOTAL_SIZE:
-        return error("Submission too large", 400)
+        return public_error("Submission too large", origin, 400)
 
     # Validate required fields and check field lengths
     validation_errors = []
@@ -562,7 +625,13 @@ def _process_form_submission(
             sanitized_data[field.name] = str(value).strip()[:MAX_FIELD_LENGTH]
 
     if validation_errors:
-        return validation_error(validation_errors)
+        return public_error(
+            "Validation failed",
+            origin,
+            400,
+            "VALIDATION_ERROR",
+            {"errors": validation_errors},
+        )
 
     # Extract visitor info from request
     headers = event.get("headers", {}) or {}
@@ -616,13 +685,13 @@ def _process_form_submission(
         page_id=page_id,
     )
 
-    return success({
+    return public_success({
         "success": True,
         "message": form.success_message,
         "redirect_url": form.redirect_url,
         "submission_id": submission.id,
         "contact_id": contact_id,
-    })
+    }, origin)
 
 
 def _create_or_update_contact(form: Any, data: dict) -> str | None:
@@ -713,31 +782,33 @@ def _create_or_update_contact(form: Any, data: dict) -> str | None:
 
 
 def _trigger_workflow(form: Any, submission: Any, contact_id: str | None) -> None:
-    """Trigger workflow via EventBridge."""
-    eventbridge = boto3.client("events")
-    event_bus_name = os.environ.get("EVENT_BUS_NAME", "default")
+    """Trigger workflow directly via SQS (bypassing EventBridge for reliability)."""
+    sqs = boto3.client("sqs")
+    queue_url = os.environ.get("WORKFLOW_QUEUE_URL")
 
-    event_detail = {
-        "trigger_type": "form_submitted",
-        "workspace_id": form.workspace_id,
-        "form_id": form.id,
-        "submission_id": submission.id,
-        "contact_id": contact_id,
-        "data": submission.data,
-        "page_id": submission.page_id,
-        "created_at": submission.created_at.isoformat(),
+    if not queue_url:
+        logger.warning("WORKFLOW_QUEUE_URL not configured, skipping workflow trigger")
+        return
+
+    # Build the message in the same format the queue processor expects
+    message_body = {
+        "detail": {
+            "trigger_type": "trigger_form_submitted",
+            "workspace_id": form.workspace_id,
+            "form_id": form.id,
+            "submission_id": submission.id,
+            "contact_id": contact_id,
+            "data": submission.data,
+            "page_id": submission.page_id,
+            "created_at": submission.created_at.isoformat(),
+        }
     }
 
     try:
-        eventbridge.put_events(
-            Entries=[
-                {
-                    "Source": "complens.form",
-                    "DetailType": "form.submitted",
-                    "Detail": json.dumps(event_detail),
-                    "EventBusName": event_bus_name,
-                }
-            ]
+        response = sqs.send_message(
+            QueueUrl=queue_url,
+            MessageBody=json.dumps(message_body),
+            MessageGroupId="workflow-triggers",
         )
 
         # Mark submission as workflow triggered
@@ -746,13 +817,14 @@ def _trigger_workflow(form: Any, submission: Any, contact_id: str | None) -> Non
             form_id=form.id,
             submission_id=submission.id,
             created_at=submission.created_at.isoformat(),
-            workflow_run_id=f"pending-{uuid.uuid4().hex[:8]}",
+            workflow_run_id=f"pending-{response.get('MessageId', uuid.uuid4().hex)[:8]}",
         )
 
         logger.info(
             "Workflow triggered for form submission",
             form_id=form.id,
             submission_id=submission.id,
+            message_id=response.get("MessageId"),
         )
     except Exception as e:
         logger.exception(

@@ -28,7 +28,7 @@
       "Resource": "${WorkflowExecutorFunctionArn}",
       "Parameters": {
         "action": "execute_node",
-        "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_run_id.$": "$.execution_context.workflow_run_id",
         "workflow_id.$": "$.workflow_id",
         "workspace_id.$": "$.workspace_id",
         "contact_id.$": "$.contact_id",
@@ -88,7 +88,7 @@
       "Resource": "${WorkflowExecutorFunctionArn}",
       "Parameters": {
         "action": "schedule_resume",
-        "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_run_id.$": "$.execution_context.workflow_run_id",
         "workflow_id.$": "$.workflow_id",
         "workspace_id.$": "$.workspace_id",
         "contact_id.$": "$.contact_id",
@@ -111,7 +111,7 @@
       "Resource": "${WorkflowExecutorFunctionArn}",
       "Parameters": {
         "action": "resume_after_wait",
-        "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_run_id.$": "$.execution_context.workflow_run_id",
         "workflow_id.$": "$.workflow_id",
         "workspace_id.$": "$.workspace_id",
         "contact_id.$": "$.contact_id",
@@ -153,11 +153,11 @@
     "PrepareNextNode": {
       "Type": "Pass",
       "Parameters": {
-        "workflow_run_id.$": "$.workflow_run_id",
         "workflow_id.$": "$.workflow_id",
         "workspace_id.$": "$.workspace_id",
         "contact_id.$": "$.contact_id",
         "execution_context": {
+          "workflow_run_id.$": "$.execution_context.workflow_run_id",
           "current_node_id.$": "$.node_result.next_node_id",
           "variables.$": "$.node_result.variables"
         }
@@ -169,7 +169,7 @@
       "Resource": "${WorkflowExecutorFunctionArn}",
       "Parameters": {
         "action": "complete",
-        "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_run_id.$": "$.execution_context.workflow_run_id",
         "workflow_id.$": "$.workflow_id",
         "workspace_id.$": "$.workspace_id",
         "status": "completed",
@@ -182,7 +182,7 @@
       "Resource": "${WorkflowExecutorFunctionArn}",
       "Parameters": {
         "action": "complete",
-        "workflow_run_id.$": "$.workflow_run_id",
+        "workflow_run_id.$": "$.execution_context.workflow_run_id",
         "workflow_id.$": "$.workflow_id",
         "workspace_id.$": "$.workspace_id",
         "status": "failed",

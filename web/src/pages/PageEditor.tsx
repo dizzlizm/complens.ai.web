@@ -1,6 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { usePage, useUpdatePage, checkSubdomainAvailability, type UpdatePageInput, type ChatConfig } from '../lib/hooks/usePages';
+
+// Auto-save delay in milliseconds
+const AUTO_SAVE_DELAY = 3000;
 import { usePageForms, useCreatePageForm, useDeletePageForm, type Form, type FormField } from '../lib/hooks/useForms';
 import { usePageWorkflows, useDeletePageWorkflow } from '../lib/hooks/useWorkflows';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
@@ -92,6 +95,7 @@ export default function PageEditor() {
   const [activeTab, setActiveTab] = useState<Tab>('content');
   const [formData, setFormData] = useState<UpdatePageInput>({});
   const [hasChanges, setHasChanges] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   // AI Generate modal state - using unified block generator
   const [showAIGenerator, setShowAIGenerator] = useState(false);
@@ -99,6 +103,69 @@ export default function PageEditor() {
 
   // Blocks state for the visual builder
   const [blocks, setBlocks] = useState<PageBlock[]>([]);
+
+  // Auto-save timer ref
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Track latest form/blocks data for auto-save callback
+  const formDataRef = useRef(formData);
+  const blocksRef = useRef(blocks);
+  formDataRef.current = formData;
+  blocksRef.current = blocks;
+
+  // Auto-save function
+  const performAutoSave = useCallback(async () => {
+    if (!workspaceId || !pageId) return;
+
+    setAutoSaveStatus('saving');
+    try {
+      await updatePage.mutateAsync({
+        ...formDataRef.current,
+        blocks: blocksRef.current,
+      });
+      setHasChanges(false);
+      setAutoSaveStatus('saved');
+      // Reset to idle after showing "saved" briefly
+      setTimeout(() => setAutoSaveStatus('idle'), 2000);
+    } catch (err) {
+      console.error('Auto-save failed:', err);
+      setAutoSaveStatus('error');
+    }
+  }, [workspaceId, pageId, updatePage]);
+
+  // Auto-save effect - triggers after changes with debounce
+  useEffect(() => {
+    if (hasChanges && page) {
+      // Clear existing timer
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+      // Set new timer for auto-save
+      autoSaveTimerRef.current = setTimeout(() => {
+        performAutoSave();
+      }, AUTO_SAVE_DELAY);
+    }
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [hasChanges, page, formData, blocks, performAutoSave]);
+
+  // Warn user before leaving with unsaved changes
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasChanges]);
 
   // Initialize form data when page loads
   useEffect(() => {
@@ -333,12 +400,30 @@ export default function PageEditor() {
             </svg>
             Preview
           </a>
+          {/* Auto-save status indicator */}
+          <span className="text-sm text-gray-500 flex items-center gap-1">
+            {autoSaveStatus === 'saving' && (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Saving...
+              </>
+            )}
+            {autoSaveStatus === 'saved' && (
+              <span className="text-green-600">✓ Saved</span>
+            )}
+            {autoSaveStatus === 'error' && (
+              <span className="text-red-600">Save failed</span>
+            )}
+            {autoSaveStatus === 'idle' && hasChanges && (
+              <span className="text-amber-600">Unsaved changes</span>
+            )}
+          </span>
           <button
             onClick={handleSave}
-            disabled={!hasChanges || updatePage.isPending}
+            disabled={!hasChanges || updatePage.isPending || autoSaveStatus === 'saving'}
             className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"
           >
-            {updatePage.isPending ? 'Saving...' : 'Save Draft'}
+            {updatePage.isPending || autoSaveStatus === 'saving' ? 'Saving...' : 'Save Draft'}
           </button>
           <button
             onClick={handlePublish}
