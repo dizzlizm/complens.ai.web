@@ -1131,8 +1131,16 @@ export default function PageEditor() {
             pageId={pageId || ''}
             pageSlug={page.slug}
             subdomain={formData.subdomain ?? page.subdomain ?? ''}
-            onSubdomainChange={(subdomain) => handleChange('subdomain', subdomain)}
-            onSave={handleSave}
+            onSaveSubdomain={async (newSubdomain) => {
+              try {
+                await updatePage.mutateAsync({ subdomain: newSubdomain });
+                handleChange('subdomain', newSubdomain);
+                toast.success('Subdomain saved!');
+              } catch (err: any) {
+                const errorMessage = err?.response?.data?.message || 'Failed to save subdomain';
+                toast.error(errorMessage);
+              }
+            }}
             isSaving={updatePage.isPending}
           />
         )}
@@ -1156,8 +1164,7 @@ interface DomainTabProps {
   pageId: string;
   pageSlug: string;
   subdomain: string;
-  onSubdomainChange: (subdomain: string) => void;
-  onSave: () => void;
+  onSaveSubdomain: (subdomain: string) => void;
   isSaving: boolean;
 }
 
@@ -1166,8 +1173,7 @@ function DomainTab({
   pageId,
   pageSlug,
   subdomain,
-  onSubdomainChange,
-  onSave,
+  onSaveSubdomain,
   isSaving,
 }: DomainTabProps) {
   const [newDomain, setNewDomain] = useState('');
@@ -1220,9 +1226,8 @@ function DomainTab({
     if (subdomainStatus.available === false && subdomainInput !== subdomain) {
       return;
     }
-    onSubdomainChange(subdomainInput);
-    // Trigger save after state update
-    setTimeout(onSave, 0);
+    // Call the save callback with the new subdomain value
+    onSaveSubdomain(subdomainInput);
   };
 
   const allDomains = domainsData?.items || [];
