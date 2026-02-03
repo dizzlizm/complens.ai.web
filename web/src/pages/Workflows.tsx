@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2, AlertTriangle } from 'lucide-react';
+import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2, AlertTriangle, X, History } from 'lucide-react';
 import { useWorkflows, useCurrentWorkspace, useDeleteWorkflow, type Workflow } from '../lib/hooks';
 import api from '../lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../components/Toast';
 import DropdownMenu, { DropdownItem } from '../components/ui/DropdownMenu';
+import WorkflowRuns from '../components/WorkflowRuns';
 
 // Format trigger type for display
 function formatTriggerType(triggerType: string): string {
@@ -42,6 +43,7 @@ export default function Workflows() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [viewingRunsWorkflow, setViewingRunsWorkflow] = useState<Workflow | null>(null);
 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -239,8 +241,13 @@ export default function Workflows() {
                       {workflow.status}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">
-                    {(workflow.runs_count || 0).toLocaleString()}
+                  <td className="px-6 py-4 text-sm">
+                    <button
+                      onClick={() => setViewingRunsWorkflow(workflow)}
+                      className="text-indigo-600 hover:text-indigo-800 hover:underline"
+                    >
+                      {(workflow.runs_count || 0).toLocaleString()}
+                    </button>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-500">
                     {formatRelativeTime(workflow.last_run_at)}
@@ -271,6 +278,9 @@ export default function Workflows() {
                         <DropdownItem onClick={() => navigate(`/workflows/${workflow.id}`)}>
                           Edit
                         </DropdownItem>
+                        <DropdownItem onClick={() => setViewingRunsWorkflow(workflow)}>
+                          View Runs
+                        </DropdownItem>
                         <DropdownItem
                           variant="danger"
                           onClick={() => handleDelete(workflow.id)}
@@ -285,6 +295,37 @@ export default function Workflows() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Workflow Runs Modal */}
+      {viewingRunsWorkflow && workspaceId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div className="flex items-center gap-3">
+                <History className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    {viewingRunsWorkflow.name}
+                  </h2>
+                  <p className="text-sm text-gray-500">Execution History</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setViewingRunsWorkflow(null)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <WorkflowRuns
+                workspaceId={workspaceId}
+                workflowId={viewingRunsWorkflow.id}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

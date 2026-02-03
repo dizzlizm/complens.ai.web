@@ -153,6 +153,57 @@ export function useExecuteWorkflow(workspaceId: string, workflowId: string) {
   });
 }
 
+// Workflow Run types
+export interface WorkflowStep {
+  id: string;
+  run_id: string;
+  node_id: string;
+  node_type: string;
+  sequence: number;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  started_at?: string;
+  completed_at?: string;
+  duration_ms?: number;
+  input_data?: Record<string, unknown>;
+  output_data?: Record<string, unknown>;
+  error_message?: string;
+  next_node_id?: string;
+}
+
+export interface WorkflowRun {
+  id: string;
+  workflow_id: string;
+  workspace_id: string;
+  contact_id?: string;
+  status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
+  trigger_type: string;
+  trigger_data?: Record<string, unknown>;
+  current_node_id?: string;
+  started_at?: string;
+  completed_at?: string;
+  error_message?: string;
+  error_node_id?: string;
+  steps_completed: number;
+  step_function_execution_arn?: string;
+  variables?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+// Fetch workflow runs
+export function useWorkflowRuns(workspaceId: string | undefined, workflowId: string | undefined) {
+  return useQuery({
+    queryKey: ['workflow-runs', workspaceId, workflowId],
+    queryFn: async () => {
+      const { data } = await api.get<{ items: WorkflowRun[] }>(
+        `/workspaces/${workspaceId}/workflows/${workflowId}/runs`
+      );
+      return data.items;
+    },
+    enabled: !!workspaceId && !!workflowId,
+  });
+}
+
 // =============================================================================
 // Page-scoped workflow hooks (Page-specific workflows)
 // =============================================================================
