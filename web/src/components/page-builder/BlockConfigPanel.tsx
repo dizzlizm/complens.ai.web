@@ -159,8 +159,8 @@ export default function BlockConfigPanel({
   );
 }
 
-// Field Components
-function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
+// Field Components - exported for reuse in BlockSettingsModal
+export function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
       <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
@@ -169,7 +169,7 @@ function FieldGroup({ label, children }: { label: string; children: React.ReactN
   );
 }
 
-function TextInput({
+export function TextInput({
   value,
   onChange,
   placeholder,
@@ -189,16 +189,18 @@ function TextInput({
   );
 }
 
-function TextArea({
+export function TextArea({
   value,
   onChange,
   placeholder,
   rows = 3,
+  className = '',
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   rows?: number;
+  className?: string;
 }) {
   return (
     <textarea
@@ -206,12 +208,12 @@ function TextArea({
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       rows={rows}
-      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200 text-sm resize-none"
+      className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200 text-sm resize-none ${className}`}
     />
   );
 }
 
-function SelectInput({
+export function SelectInput({
   value,
   onChange,
   options,
@@ -235,7 +237,7 @@ function SelectInput({
   );
 }
 
-function ColorInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+export function ColorInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
     <div className="flex items-center gap-2">
       <input
@@ -254,7 +256,7 @@ function ColorInput({ value, onChange }: { value: string; onChange: (value: stri
   );
 }
 
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label: string }) {
+export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label: string }) {
   return (
     <label className="flex items-center gap-3 cursor-pointer">
       <div className="relative">
@@ -334,9 +336,9 @@ function BackgroundImageField({ value, onChange }: { value: string; onChange: (v
   );
 }
 
-// Block-specific config forms
+// Block-specific config forms - exported for reuse in BlockSettingsModal
 
-function HeroConfigFields({
+export function HeroConfigFields({
   config,
   onChange,
 }: {
@@ -419,7 +421,7 @@ function HeroConfigFields({
   );
 }
 
-function FeaturesConfigFields({
+export function FeaturesConfigFields({
   config,
   onChange,
 }: {
@@ -530,7 +532,7 @@ function FeaturesConfigFields({
   );
 }
 
-function CtaConfigFields({
+export function CtaConfigFields({
   config,
   onChange,
 }: {
@@ -573,7 +575,7 @@ function CtaConfigFields({
   );
 }
 
-function FormConfigFields({
+export function FormConfigFields({
   config,
   onChange,
   forms,
@@ -612,7 +614,7 @@ function FormConfigFields({
   );
 }
 
-function TestimonialsConfigFields({
+export function TestimonialsConfigFields({
   config,
   onChange,
 }: {
@@ -697,7 +699,7 @@ function TestimonialsConfigFields({
   );
 }
 
-function FaqConfigFields({
+export function FaqConfigFields({
   config,
   onChange,
 }: {
@@ -772,7 +774,7 @@ function FaqConfigFields({
   );
 }
 
-function PricingConfigFields({
+export function PricingConfigFields({
   config,
   onChange,
 }: {
@@ -884,7 +886,7 @@ function PricingConfigFields({
   );
 }
 
-function TextConfigFields({
+export function TextConfigFields({
   config,
   onChange,
 }: {
@@ -912,7 +914,7 @@ function TextConfigFields({
   );
 }
 
-function ImageConfigFields({
+export function ImageConfigFields({
   config,
   onChange,
   onGenerateImage,
@@ -1021,7 +1023,7 @@ function ImageConfigFields({
   );
 }
 
-function VideoConfigFields({
+export function VideoConfigFields({
   config,
   onChange,
 }: {
@@ -1043,7 +1045,7 @@ function VideoConfigFields({
   );
 }
 
-function StatsConfigFields({
+export function StatsConfigFields({
   config,
   onChange,
 }: {
@@ -1117,7 +1119,7 @@ function StatsConfigFields({
   );
 }
 
-function DividerConfigFields({
+export function DividerConfigFields({
   config,
   onChange,
 }: {
@@ -1153,7 +1155,7 @@ function DividerConfigFields({
   );
 }
 
-function ChatConfigFields({
+export function ChatConfigFields({
   config,
   onChange,
 }: {
