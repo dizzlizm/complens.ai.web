@@ -1019,6 +1019,7 @@ def render_full_page(
   try {{
     var WS_URL = '{ws_url_safe}';
     var PAGE_ID = '{page_id}';
+    var WORKSPACE_ID = '{_escape_js_string(workspace_id)}';
     var ws = null;
     var visitorId = localStorage.getItem('complens_vid');
     if (!visitorId) {{
@@ -1061,7 +1062,7 @@ def render_full_page(
     function connectWS() {{
       try {{
         console.log('[Complens Chat] Connecting to', WS_URL);
-        ws = new WebSocket(WS_URL + '?page_id=' + PAGE_ID + '&visitor_id=' + visitorId);
+        ws = new WebSocket(WS_URL + '?page_id=' + PAGE_ID + '&workspace_id=' + WORKSPACE_ID + '&visitor_id=' + visitorId);
         ws.onopen = function() {{
           console.log('[Complens Chat] Connected');
           var initial = '{chat_initial_message}';
@@ -1100,7 +1101,7 @@ def render_full_page(
           return;
         }}
         addMessage(msg, 'user');
-        ws.send(JSON.stringify({{ action: 'public_chat', page_id: PAGE_ID, message: msg, visitor_id: visitorId }}));
+        ws.send(JSON.stringify({{ action: 'public_chat', page_id: PAGE_ID, workspace_id: WORKSPACE_ID, message: msg, visitor_id: visitorId }}));
         input.value = '';
       }} catch (err) {{
         console.error('[Complens Chat] Error sending:', err);

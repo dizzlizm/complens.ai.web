@@ -361,6 +361,20 @@ export default function ContentTabV2({
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
               />
             </div>
+            {pageUrl && (
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    pageUrl.startsWith('http') ? pageUrl : `${window.location.origin}${pageUrl}`
+                  );
+                }}
+                className="mt-1.5 text-xs text-indigo-600 hover:text-indigo-800 truncate max-w-full text-left"
+                title="Click to copy public URL"
+              >
+                {pageUrl.startsWith('http') ? pageUrl : `${window.location.origin}${pageUrl}`} — click to copy
+              </button>
+            )}
           </div>
         </div>
 

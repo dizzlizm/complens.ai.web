@@ -14,6 +14,12 @@ interface BlockAIToolbarProps {
   };
   supportsImage?: boolean;
   imageField?: string;  // e.g., 'backgroundImage', 'url'
+  pageDesign?: {
+    style?: string;
+    primaryColor?: string;
+    secondaryColor?: string;
+    accentColor?: string;
+  };
 }
 
 // Functional editing options only - tone/voice comes from the business profile
@@ -33,6 +39,7 @@ export default function BlockAIToolbar({
   pageContext,
   supportsImage = false,
   imageField = 'url',
+  pageDesign,
 }: BlockAIToolbarProps) {
   const { workspaceId } = useCurrentWorkspace();
   const [showOptions, setShowOptions] = useState(false);
@@ -66,7 +73,12 @@ export default function BlockAIToolbar({
     try {
       const result = await generateImage.mutateAsync({
         context: imagePrompt,
-        style: 'professional',
+        style: pageDesign?.style || 'professional',
+        colors: pageDesign?.primaryColor ? {
+          primary: pageDesign.primaryColor,
+          secondary: pageDesign.secondaryColor,
+          accent: pageDesign.accentColor,
+        } : undefined,
       });
 
       // For hero blocks, also set backgroundType to 'image' so it displays

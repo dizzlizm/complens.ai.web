@@ -143,6 +143,11 @@ export interface GenerateImageInput {
   style?: string;
   width?: number;
   height?: number;
+  colors?: {
+    primary?: string;
+    secondary?: string;
+    accent?: string;
+  };
 }
 
 export interface GeneratedImage {

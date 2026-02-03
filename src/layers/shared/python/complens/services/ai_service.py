@@ -422,6 +422,7 @@ def generate_image_prompt(
     workspace_id: str,
     context: str,
     style: str = "professional",
+    colors: dict | None = None,
 ) -> str:
     """Generate an image prompt based on business context.
 
@@ -429,6 +430,7 @@ def generate_image_prompt(
         workspace_id: The workspace ID for business context.
         context: What the image should represent.
         style: Visual style.
+        colors: Optional color palette dict with primary, secondary, accent hex values.
 
     Returns:
         Detailed image generation prompt.
@@ -439,16 +441,29 @@ Create detailed, specific prompts that result in professional, brand-appropriate
 Guidelines:
 - Be specific about composition, lighting, colors
 - Match the brand personality from the business context
+- If brand colors are provided, incorporate them into the color palette and mood
 - Avoid text in images (AI struggles with text)
 - Focus on mood and emotion
 - Include technical quality modifiers
 
 Return ONLY the image prompt, nothing else."""
 
+    color_info = ""
+    if colors:
+        parts = []
+        if colors.get("primary"):
+            parts.append(f"primary: {colors['primary']}")
+        if colors.get("secondary"):
+            parts.append(f"secondary: {colors['secondary']}")
+        if colors.get("accent"):
+            parts.append(f"accent: {colors['accent']}")
+        if parts:
+            color_info = f"\n\nBrand color palette: {', '.join(parts)}. Use these colors or complementary tones in the image."
+
     prompt = f"""Create an image generation prompt for:
 {context}
 
-Visual style: {style}
+Visual style: {style}{color_info}
 
 The image should align with the brand and appeal to the target audience."""
 
