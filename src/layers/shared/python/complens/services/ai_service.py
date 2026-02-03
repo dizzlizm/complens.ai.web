@@ -327,27 +327,93 @@ def generate_workflow_from_description(
     system = f"""You are an expert at creating marketing automation workflows.
 You create workflows that align with the business goals and target audience.
 
-Available trigger types: {', '.join(triggers)}
-Available action types: {', '.join(actions)}
-Logic nodes: logic_branch (if/else), logic_filter, logic_ab_split
+## Available node types
 
-Create a workflow that:
-1. Starts with an appropriate trigger
-2. Uses actions that make sense for the business
-3. Includes smart logic for personalization
-4. Considers the target audience from the business context
+### Triggers (start of workflow)
+{', '.join(triggers)}
 
+Trigger config fields by type:
+- trigger_form_submitted: {{"form_id": "optional-form-id"}}
+- trigger_tag_added: {{"tag_name": "tag-name", "tag_operation": "added|removed|any"}}
+- trigger_webhook: {{"webhook_path": "/path", "webhook_secret": "optional"}}
+- trigger_schedule: {{"cron_expression": "0 9 * * 1", "timezone": "UTC"}}
+- trigger_chat_message: {{"body_contains": "optional keyword filter"}}
+- trigger_sms_received: {{"from_pattern": "optional", "body_contains": "optional"}}
+- trigger_email_received: {{"from_pattern": "optional", "body_contains": "optional"}}
+- trigger_page_visit: {{"page_id": "optional-page-id"}}
+
+### Actions
+{', '.join(actions)}
+
+Action config fields by type (populate ALL relevant fields):
+- action_send_email:
+    email_to: "{{{{contact.email}}}}" (default, or specific address)
+    email_subject: "Subject line" (REQUIRED - always provide a real subject)
+    email_body: "Email body text with {{{{contact.first_name}}}} variables" (REQUIRED)
+    email_from: null (optional, uses workspace default)
+
+- action_send_sms:
+    sms_to: "{{{{contact.phone}}}}" (default, or specific number)
+    sms_message: "SMS text with {{{{contact.first_name}}}} variables" (REQUIRED - always provide real message content)
+
+- action_ai_respond:
+    ai_prompt: "Respond to the customer inquiry about..." (REQUIRED)
+    ai_respond_via: "same_channel" | "sms" | "email"
+    ai_max_tokens: 500 (integer)
+    ai_system_prompt: "You are a helpful assistant for..." (optional)
+
+- action_update_contact:
+    add_tags: ["tag1", "tag2"] (list of tags to add)
+    remove_tags: ["tag3"] (list of tags to remove)
+    update_fields: {{"field_name": "value"}} (contact fields to update)
+
+- action_wait:
+    wait_duration: 300 (REQUIRED - integer seconds, e.g. 300=5min, 3600=1hr, 86400=1day)
+    OR wait_until: "2024-01-01T09:00:00Z" (ISO datetime)
+
+- action_webhook:
+    webhook_url: "https://..." (REQUIRED)
+    webhook_method: "POST" | "GET" | "PUT"
+    webhook_headers: {{"Authorization": "Bearer ..."}}
+    webhook_body: {{"key": "{{{{contact.email}}}}"}}
+
+- action_create_task:
+    task_title: "Follow up with {{{{contact.first_name}}}}" (REQUIRED)
+    task_description: "Details..."
+    task_assigned_to: "owner"
+    task_due_in_hours: 24 (integer)
+
+### Logic nodes
+- logic_branch: {{"conditions": [{{"field": "contact.tags", "operator": "contains", "value": "vip", "output_handle": "yes"}}, {{"field": "contact.tags", "operator": "not_contains", "value": "vip", "output_handle": "no"}}], "default_output": "no"}}
+- logic_filter: {{"filter_conditions": [{{"field": "contact.email", "operator": "exists"}}], "filter_operator": "and"}}
+- logic_ab_split: {{"split_percentages": {{"a": 50, "b": 50}}}}
+
+## Template variables
+Use these in text fields: {{{{contact.email}}}}, {{{{contact.first_name}}}}, {{{{contact.last_name}}}}, {{{{contact.phone}}}}, {{{{contact.custom_fields.company}}}},
+{{{{trigger_data.form_data.message}}}}, {{{{trigger_data.data.field_name}}}}, {{{{workspace.notification_email}}}}, {{{{owner.email}}}}
+
+## Node structure
+Each node must have: id, type, data (with label and config), position (x, y).
+The "data" object MUST contain "label" (display name) and "config" (all config fields for that node type).
+
+IMPORTANT: Always populate config fields with real, specific content matching the user's description.
+- For emails: write actual subject lines and body text
+- For SMS: write actual message content
+- For waits: convert time descriptions to seconds (5 min = 300, 1 hour = 3600, 1 day = 86400)
+- For tags: use descriptive tag names based on the workflow purpose
+
+## Output format
 Return JSON with:
 - name: workflow name
 - description: what it does
-- nodes: array of node objects with id, type, label, position (x, y), config
-- edges: array of edge objects with id, source, target"""
+- nodes: array of node objects
+- edges: array of {{id, source, target}} objects connecting nodes"""
 
     prompt = f"""Create a workflow for:
 
 {description}
 
-Return the workflow as a JSON object."""
+Return the workflow as a JSON object. Make sure every node's data.config has all required fields populated with real content."""
 
     return invoke_claude_json(prompt, system, workspace_id)
 

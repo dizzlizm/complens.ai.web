@@ -50,8 +50,8 @@ class SendSmsAction(BaseNode):
 
         # Get from number from config or workspace settings
         from_number = self._get_config_value("sms_from")
-        if not from_number and hasattr(context, "workspace"):
-            from_number = getattr(context.workspace, "twilio_phone_number", None)
+        if not from_number:
+            from_number = context.workspace_settings.get("twilio_phone_number") or None
 
         self.logger.info(
             "Sending SMS",
@@ -351,9 +351,10 @@ Task:
                 )
 
             twilio = get_twilio_service()
+            from_number = self._get_config_value("sms_from") or context.workspace_settings.get("twilio_phone_number") or None
             if twilio.is_configured:
                 try:
-                    result = twilio.send_sms(to=to_number, body=ai_response)
+                    result = twilio.send_sms(to=to_number, body=ai_response, from_number=from_number)
                     send_result = {
                         "channel": "sms",
                         "message_sid": result["message_sid"],
