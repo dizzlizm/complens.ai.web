@@ -364,6 +364,7 @@ Resources:
       FifoQueue: true
       ContentBasedDeduplication: false
       MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 300  # Must be >= Lambda timeout (120s)
       Tags:
         - Key: Service
           Value: complens
@@ -2039,6 +2040,18 @@ Resources:
             FunctionName: !Ref WorkflowExecutorFunction
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+              Resource: "*"
       Tracing:
         Enabled: true
       Type: EXPRESS
