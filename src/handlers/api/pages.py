@@ -725,6 +725,45 @@ def create_complete_page(
     page = repo.create_page(page)
     logger.info("Page created for complete package", page_id=page.id, workspace_id=workspace_id)
 
+    # Auto-generate OG (social sharing) image — abstract design using page colors
+    try:
+        from complens.services.image_generator import ImageGeneratorService
+
+        og_color_desc = f"primary color {colors.get('primary', '#6366f1')}"
+        if colors.get("secondary"):
+            og_color_desc += f", secondary color {colors['secondary']}"
+        if colors.get("accent"):
+            og_color_desc += f", accent color {colors['accent']}"
+
+        style_desc = request.style or "professional"
+        business_desc = business_info.get("business_name", request.name)
+        industry = business_info.get("industry", "")
+        industry_hint = f" in the {industry} industry" if industry else ""
+
+        og_prompt = (
+            f"Abstract {style_desc} geometric design with smooth gradients using {og_color_desc}. "
+            f"Modern, clean composition suitable for a social media sharing card for {business_desc}{industry_hint}. "
+            f"No text, no logos, no words. Subtle shapes, flowing lines, and professional feel. "
+            f"Wide landscape format, high quality."
+        )[:512]  # Titan 512 char limit
+
+        img_service = ImageGeneratorService()
+        og_result = img_service.generate_and_upload(
+            prompt=og_prompt,
+            folder=f"og-images/{workspace_id}",
+            width=1024,   # Closest Titan-supported size to 1200x630
+            height=512,
+        )
+
+        if "image_url" in og_result:
+            page.og_image_url = og_result["image_url"]
+            repo.update_page(page)
+            logger.info("OG image generated", page_id=page.id, url=og_result["image_url"])
+        else:
+            logger.warning("OG image generation returned no URL", result=og_result)
+    except Exception as e:
+        logger.warning("Failed to generate OG image", error=str(e), page_id=page.id)
+
     result = {
         "page": page.model_dump(mode="json"),
         "form": None,

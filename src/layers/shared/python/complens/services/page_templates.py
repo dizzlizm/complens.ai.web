@@ -985,6 +985,7 @@ def render_full_page(
     meta_title = _escape_html(page.get("meta_title") or page.get("name", ""))
     meta_description = _escape_html(page.get("meta_description") or page.get("subheadline", ""))
     primary_color = _sanitize_color(page.get("primary_color"), "#6366f1")
+    og_image_url = _escape_html(page.get("og_image_url") or "")
     # SECURITY: Sanitize custom CSS to prevent injection attacks
     custom_css = sanitize_css(page.get("custom_css", ""))
     page_id = _escape_js_string(page.get("id", ""))
@@ -1196,6 +1197,14 @@ def render_full_page(
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{meta_title}</title>
     <meta name="description" content="{meta_description}">
+    <meta property="og:title" content="{meta_title}">
+    <meta property="og:description" content="{meta_description}">
+    <meta property="og:type" content="website">{f"""
+    <meta property="og:image" content="{og_image_url}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="{og_image_url}">""" if og_image_url else ""}
+    <meta name="twitter:title" content="{meta_title}">
+    <meta name="twitter:description" content="{meta_description}">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {{
