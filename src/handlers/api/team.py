@@ -145,29 +145,56 @@ def invite_member(
 
     invite_repo.create_invitation(invitation)
 
+    # Build accept URL based on environment
+    stage = os.environ.get("STAGE", "dev")
+    if stage == "prod":
+        base_url = "https://complens.ai"
+    else:
+        base_url = f"https://{stage}.complens.ai"
+    accept_url = f"{base_url}/accept-invite?token={invitation.token}"
+
     # Send invitation email via SES
+    email_sent = False
+    email_error_msg = None
     try:
         from complens.services.email_service import get_email_service
 
+        inviter = auth.email or "A team member"
         email_service = get_email_service()
         email_service.send_email(
             to=request.email,
-            subject="You've been invited to join a workspace on Complens.ai",
+            subject=f"{inviter} invited you to join their workspace on Complens.ai",
             body_html=f"""
-            <h2>You've been invited!</h2>
-            <p>{auth.email or 'A team member'} has invited you to join their workspace on Complens.ai.</p>
-            <p>Role: <strong>{request.role}</strong></p>
-            <p><a href="https://complens.ai/accept-invite?token={invitation.token}">Accept Invitation</a></p>
-            <p>This invitation expires in 7 days.</p>
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 0;">
+                <h2 style="color: #111827; margin-bottom: 16px;">You've been invited!</h2>
+                <p style="color: #4b5563; line-height: 1.6;">{inviter} has invited you to join their workspace on Complens.ai as a <strong>{request.role}</strong>.</p>
+                <p style="margin: 24px 0;">
+                    <a href="{accept_url}" style="display: inline-block; padding: 12px 24px; background-color: #4f46e5; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600;">Accept Invitation</a>
+                </p>
+                <p style="color: #9ca3af; font-size: 14px;">This invitation expires in 7 days.</p>
+            </div>
             """,
-            body_text=f"You've been invited to join a workspace on Complens.ai. Accept at: https://complens.ai/accept-invite?token={invitation.token}",
+            body_text=f"{inviter} invited you to join their workspace on Complens.ai as a {request.role}. Accept at: {accept_url}",
         )
+        email_sent = True
     except Exception as e:
-        logger.warning("Failed to send invitation email", error=str(e), email=request.email)
+        email_error_msg = str(e)
+        logger.error("Failed to send invitation email", error=email_error_msg, email=request.email)
 
-    logger.info("Team member invited", workspace_id=workspace_id, email=request.email, role=request.role)
+    logger.info(
+        "Team member invited",
+        workspace_id=workspace_id,
+        email=request.email,
+        role=request.role,
+        email_sent=email_sent,
+    )
 
-    return created(invitation.model_dump(mode="json"))
+    result = invitation.model_dump(mode="json")
+    result["email_sent"] = email_sent
+    if not email_sent:
+        result["email_error"] = email_error_msg
+
+    return created(result)
 
 
 def update_role(
