@@ -72,7 +72,7 @@ export default function Workflows() {
     }
   };
 
-  // Toggle workflow status (active <-> paused)
+  // Toggle workflow status (draft/paused -> active, active -> paused)
   const handleToggleStatus = async (workflow: Workflow) => {
     if (!workspaceId || togglingId) return;
 
@@ -85,7 +85,8 @@ export default function Workflows() {
       });
       // Invalidate queries to refresh the list
       queryClient.invalidateQueries({ queryKey: ['workflows', workspaceId] });
-      toast.success(`Workflow ${newStatus === 'active' ? 'activated' : 'paused'}`);
+      const label = newStatus === 'active' ? 'activated' : 'paused';
+      toast.success(`Workflow ${label}`);
     } catch (error) {
       console.error('Failed to toggle workflow status:', error);
       toast.error('Failed to update workflow status');
@@ -304,9 +305,9 @@ export default function Workflows() {
                     <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => handleToggleStatus(workflow)}
-                        disabled={togglingId === workflow.id || workflow.status === 'draft'}
+                        disabled={togglingId === workflow.id}
                         className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                        title={workflow.status === 'active' ? 'Pause workflow' : workflow.status === 'draft' ? 'Publish to enable' : 'Activate workflow'}
+                        title={workflow.status === 'active' ? 'Pause workflow' : 'Activate workflow'}
                       >
                         {togglingId === workflow.id ? (
                           <Loader2 className="w-5 h-5 animate-spin" />
