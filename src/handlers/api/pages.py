@@ -345,6 +345,10 @@ def create_page(
                 "type": block_data.type,
                 "config": block_data.config,
                 "order": block_data.order,
+                # Include 12-column layout fields
+                "row": block_data.row,
+                "colSpan": block_data.colSpan,
+                "colStart": block_data.colStart,
             }
             if block_data.id:
                 block_dict["id"] = block_data.id
@@ -461,6 +465,10 @@ def update_page(
                 "config": block_data.config,
                 "order": block_data.order,
                 "width": block_data.width,
+                # Include 12-column layout fields
+                "row": block_data.row,
+                "colSpan": block_data.colSpan,
+                "colStart": block_data.colStart,
             }
             if block_data.id:
                 block_dict["id"] = block_data.id

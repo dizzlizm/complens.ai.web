@@ -464,7 +464,13 @@ export default function PageEditor() {
         </div>
         <div className="flex items-center gap-3">
           <a
-            href={`/p/${page.slug}?ws=${workspaceId}`}
+            href={
+              page.custom_domain
+                ? `https://${page.custom_domain}`
+                : page.subdomain
+                  ? `https://${page.subdomain}.${SUBDOMAIN_SUFFIX}`
+                  : `/p/${page.slug}?ws=${workspaceId}`
+            }
             target="_blank"
             rel="noopener noreferrer"
             className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2"
