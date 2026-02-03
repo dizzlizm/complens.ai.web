@@ -1,6 +1,10 @@
 """Workflow trigger worker.
 
-Handles DynamoDB stream events and publishes workflow triggers to EventBridge.
+Handles DynamoDB stream events and publishes workflow triggers.
+
+Supports two routing modes based on feature flags:
+1. EventBridge (legacy): Routes through EventBridge → FIFO queue
+2. Direct routing (new): Routes directly to sharded queues via WorkflowRouter
 """
 
 import json
@@ -9,6 +13,12 @@ from typing import Any
 
 import boto3
 import structlog
+
+from complens.queue.feature_flags import FeatureFlag, is_flag_enabled
+from complens.queue.workflow_router import (
+    WorkflowTriggerMessage,
+    get_workflow_router,
+)
 
 logger = structlog.get_logger()
 
@@ -98,13 +108,16 @@ def _deserialize_image(image: dict) -> dict:
 def _create_tag_events(event_name: str, new_data: dict, old_data: dict) -> list[dict]:
     """Create EventBridge events for tag changes.
 
+    If sharded queues are enabled for the workspace, routes directly
+    to the sharded queue instead of returning EventBridge events.
+
     Args:
         event_name: INSERT, MODIFY, REMOVE.
         new_data: New contact data.
         old_data: Old contact data.
 
     Returns:
-        List of EventBridge events.
+        List of EventBridge events (empty if routed directly to sharded queue).
     """
     if event_name not in ("INSERT", "MODIFY"):
         return []
@@ -121,6 +134,22 @@ def _create_tag_events(event_name: str, new_data: dict, old_data: dict) -> list[
     if not workspace_id or not contact_id:
         return []
 
+    # Check if we should route directly to sharded queues
+    use_direct_routing = is_flag_enabled(FeatureFlag.USE_SHARDED_QUEUES, workspace_id)
+
+    if use_direct_routing:
+        # Route directly to sharded queue
+        _route_tag_events_directly(
+            workspace_id=workspace_id,
+            contact_id=contact_id,
+            added_tags=added_tags,
+            removed_tags=removed_tags,
+            old_tags=old_tags,
+            new_tags=new_tags,
+        )
+        return []  # No EventBridge events needed
+
+    # Fall back to EventBridge routing
     events = []
 
     # Create events for added tags
@@ -172,6 +201,73 @@ def _create_tag_events(event_name: str, new_data: dict, old_data: dict) -> list[
         )
 
     return events
+
+
+def _route_tag_events_directly(
+    workspace_id: str,
+    contact_id: str,
+    added_tags: set,
+    removed_tags: set,
+    old_tags: set,
+    new_tags: set,
+) -> None:
+    """Route tag events directly to sharded queue.
+
+    Args:
+        workspace_id: Workspace ID.
+        contact_id: Contact ID.
+        added_tags: Tags that were added.
+        removed_tags: Tags that were removed.
+        old_tags: Previous tag set.
+        new_tags: Current tag set.
+    """
+    router = get_workflow_router()
+
+    for tag in added_tags:
+        message = WorkflowTriggerMessage(
+            workspace_id=workspace_id,
+            trigger_type="trigger_tag_added",
+            trigger_data={
+                "tag": tag,
+                "operation": "added",
+                "previous_tags": list(old_tags),
+                "current_tags": list(new_tags),
+            },
+            contact_id=contact_id,
+        )
+        result = router.route_trigger(message)
+
+        logger.info(
+            "Routed tag added event directly",
+            workspace_id=workspace_id,
+            contact_id=contact_id,
+            tag=tag,
+            method=result.method,
+            success=result.success,
+        )
+
+    for tag in removed_tags:
+        message = WorkflowTriggerMessage(
+            workspace_id=workspace_id,
+            trigger_type="trigger_tag_added",  # Same trigger type handles both
+            trigger_data={
+                "tag": tag,
+                "operation": "removed",
+                "previous_tags": list(old_tags),
+                "current_tags": list(new_tags),
+            },
+            contact_id=contact_id,
+        )
+        result = router.route_trigger(message)
+
+        logger.info(
+            "Routed tag removed event directly",
+            workspace_id=workspace_id,
+            contact_id=contact_id,
+            tag=tag,
+            method=result.method,
+            success=result.success,
+        )
 
 
 def publish_to_eventbridge(events: list[dict]) -> None:
@@ -277,3 +373,117 @@ def create_inbound_message_event(
         }),
         "EventBusName": os.environ.get("EVENT_BUS_NAME"),
     }
+
+
+def trigger_form_submitted(
+    workspace_id: str,
+    contact_id: str | None,
+    form_id: str,
+    form_name: str,
+    submission_data: dict,
+) -> bool:
+    """Trigger a form submitted workflow event.
+
+    Automatically routes to sharded queue or EventBridge based on feature flags.
+
+    Args:
+        workspace_id: Workspace ID.
+        contact_id: Contact ID (may be None if no contact created).
+        form_id: Form ID.
+        form_name: Form name.
+        submission_data: Form submission data.
+
+    Returns:
+        True if trigger was routed successfully.
+    """
+    if is_flag_enabled(FeatureFlag.USE_SHARDED_QUEUES, workspace_id):
+        # Route directly to sharded queue
+        router = get_workflow_router()
+        message = WorkflowTriggerMessage(
+            workspace_id=workspace_id,
+            trigger_type="trigger_form_submitted",
+            trigger_data={
+                "form_id": form_id,
+                "form_name": form_name,
+                "data": submission_data,
+            },
+            contact_id=contact_id,
+        )
+        result = router.route_trigger(message)
+
+        logger.info(
+            "Form submitted trigger routed",
+            workspace_id=workspace_id,
+            form_id=form_id,
+            method=result.method,
+            success=result.success,
+        )
+        return result.success
+
+    # Fall back to EventBridge
+    event = create_form_submitted_event(
+        workspace_id=workspace_id,
+        contact_id=contact_id or "",
+        form_id=form_id,
+        form_name=form_name,
+        submission_data=submission_data,
+    )
+    publish_to_eventbridge([event])
+    return True
+
+
+def trigger_inbound_message(
+    workspace_id: str,
+    contact_id: str,
+    channel: str,
+    message_body: str,
+    message_metadata: dict,
+) -> bool:
+    """Trigger an inbound message workflow event.
+
+    Automatically routes to sharded queue or EventBridge based on feature flags.
+
+    Args:
+        workspace_id: Workspace ID.
+        contact_id: Contact ID.
+        channel: Channel (sms, email, etc.).
+        message_body: Message body.
+        message_metadata: Additional message metadata.
+
+    Returns:
+        True if trigger was routed successfully.
+    """
+    if is_flag_enabled(FeatureFlag.USE_SHARDED_QUEUES, workspace_id):
+        # Route directly to sharded queue
+        router = get_workflow_router()
+        message = WorkflowTriggerMessage(
+            workspace_id=workspace_id,
+            trigger_type=f"trigger_{channel}_inbound",
+            trigger_data={
+                "channel": channel,
+                "message_body": message_body,
+                **message_metadata,
+            },
+            contact_id=contact_id,
+        )
+        result = router.route_trigger(message)
+
+        logger.info(
+            "Inbound message trigger routed",
+            workspace_id=workspace_id,
+            channel=channel,
+            method=result.method,
+            success=result.success,
+        )
+        return result.success
+
+    # Fall back to EventBridge
+    event = create_inbound_message_event(
+        workspace_id=workspace_id,
+        contact_id=contact_id,
+        channel=channel,
+        message_body=message_body,
+        message_metadata=message_metadata,
+    )
+    publish_to_eventbridge([event])
+    return True

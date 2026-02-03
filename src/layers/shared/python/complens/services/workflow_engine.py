@@ -2,6 +2,9 @@
 
 Handles the execution of workflow definitions, traversing the graph
 and executing nodes in sequence.
+
+Supports both legacy node types (action_send_sms) and new provider-based
+nodes (twilio.send_sms) through the provider registry system.
 """
 
 import asyncio
@@ -24,13 +27,47 @@ from complens.repositories.workflow import WorkflowRepository, WorkflowRunReposi
 
 logger = structlog.get_logger()
 
-# Combined node registry
+# Combined legacy node registry (built-in node types)
 NODE_REGISTRY: dict[str, type[BaseNode]] = {
     **TRIGGER_NODES,
     **ACTION_NODES,
     **LOGIC_NODES,
     **AI_NODES,
 }
+
+
+def _get_node_for_type(
+    node_id: str,
+    node_type: str,
+    config: dict[str, Any],
+) -> BaseNode | None:
+    """Get the appropriate node implementation for a node type.
+
+    Supports both legacy node types and new provider.action format.
+    Falls back to legacy node registry if not a provider-based type.
+
+    Args:
+        node_id: Node ID.
+        node_type: Node type string.
+        config: Node configuration.
+
+    Returns:
+        BaseNode implementation or None if not found.
+    """
+    # Import here to avoid circular imports
+    from complens.integrations.legacy_adapter import get_node_for_type
+
+    # Try provider-based nodes first (provider.action format or legacy adapter)
+    provider_node = get_node_for_type(node_id, node_type, config)
+    if provider_node:
+        return provider_node
+
+    # Fall back to legacy node registry
+    node_class = NODE_REGISTRY.get(node_type)
+    if node_class:
+        return node_class(node_id=node_id, config=config)
+
+    return None
 
 
 class WorkflowEngine:
@@ -172,9 +209,13 @@ class WorkflowEngine:
             self.logger.error("Node not found", node_id=current_node_id)
             return
 
-        # Get node class
-        node_class = NODE_REGISTRY.get(node_def.node_type)
-        if not node_class:
+        # Get node implementation (supports both legacy and provider-based nodes)
+        node = _get_node_for_type(
+            node_id=current_node_id,
+            node_type=node_def.node_type,
+            config=node_def.get_config(),
+        )
+        if not node:
             self.logger.error("Unknown node type", node_type=node_def.node_type)
             return
 
@@ -189,8 +230,7 @@ class WorkflowEngine:
         step.start()
 
         try:
-            # Create node instance
-            node = node_class(node_id=current_node_id, config=node_def.get_config())
+            # Node instance already created by _get_node_for_type
 
             # Build execution context
             context = NodeContext(
@@ -340,18 +380,43 @@ class WorkflowEngine:
         return run
 
     def get_node_class(self, node_type: str) -> type[BaseNode] | None:
-        """Get the node class for a node type.
+        """Get the node class for a legacy node type.
 
         Args:
             node_type: Node type string.
 
         Returns:
             Node class or None if not found.
+
+        Note:
+            For provider-based nodes, use _get_node_for_type() instead.
         """
         return NODE_REGISTRY.get(node_type)
 
+    def get_node_instance(
+        self,
+        node_id: str,
+        node_type: str,
+        config: dict[str, Any],
+    ) -> BaseNode | None:
+        """Get a node instance for a node type.
+
+        Supports both legacy and provider-based node types.
+
+        Args:
+            node_id: Node ID.
+            node_type: Node type string.
+            config: Node configuration.
+
+        Returns:
+            Node instance or None if not found.
+        """
+        return _get_node_for_type(node_id, node_type, config)
+
     def validate_workflow(self, workflow: Workflow) -> list[str]:
         """Validate a workflow definition.
+
+        Supports both legacy and provider-based node types.
 
         Args:
             workflow: Workflow to validate.
@@ -363,12 +428,37 @@ class WorkflowEngine:
 
         # Validate each node's configuration
         for node_def in workflow.nodes:
-            node_class = NODE_REGISTRY.get(node_def.node_type)
-            if not node_class:
+            node = _get_node_for_type(
+                node_id=node_def.id,
+                node_type=node_def.node_type,
+                config=node_def.get_config(),
+            )
+
+            if not node:
+                # Check if it's a provider-based node that might not be loaded
+                if "." in node_def.node_type:
+                    # Provider-based node - validate through registry
+                    from complens.integrations.registry import get_provider_registry
+
+                    registry = get_provider_registry()
+                    parts = node_def.node_type.split(".", 1)
+                    if len(parts) == 2:
+                        provider_id, action_id = parts
+                        try:
+                            provider = registry.get_provider(provider_id)
+                            action_errors = provider.validate_action_config(
+                                action_id, node_def.get_config()
+                            )
+                            for err in action_errors:
+                                errors.append(f"Node '{node_def.label}': {err}")
+                            continue
+                        except Exception as e:
+                            errors.append(f"Unknown provider: {provider_id}")
+                            continue
+
                 errors.append(f"Unknown node type: {node_def.node_type}")
                 continue
 
-            node = node_class(node_id=node_def.id, config=node_def.get_config())
             node_errors = node.validate_config()
             for err in node_errors:
                 errors.append(f"Node '{node_def.label}': {err}")

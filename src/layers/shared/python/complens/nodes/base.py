@@ -39,6 +39,10 @@ class NodeContext:
     # Node configuration
     node_config: dict[str, Any] = field(default_factory=dict)
 
+    # Provider context (for provider-based nodes)
+    provider_id: str | None = None
+    provider_credentials: Any = None  # ProviderCredentials (avoiding circular import)
+
     def get_variable(self, name: str, default: Any = None) -> Any:
         """Get a variable by name.
 
