@@ -1046,7 +1046,8 @@ def _update_complete_page(
         result["form"] = form.model_dump(mode="json")
         logger.info("Form created for updated page", form_id=form.id, page_id=page.id)
 
-        # Update form block with actual form ID
+        # Update page with form reference AND update form block with actual form ID
+        page.form_ids = [form.id]
         for block in page.blocks:
             if block.type == "form" and not block.config.get("formId"):
                 block.config["formId"] = form.id
@@ -1057,6 +1058,9 @@ def _update_complete_page(
         # Use first existing form for the form block
         existing_form = existing_forms[0]
         result["form"] = existing_form.model_dump(mode="json")
+        # Ensure page.form_ids is set for existing forms
+        if existing_form.id not in (page.form_ids or []):
+            page.form_ids = list(page.form_ids or []) + [existing_form.id]
         for block in page.blocks:
             if block.type == "form" and not block.config.get("formId"):
                 block.config["formId"] = existing_form.id
