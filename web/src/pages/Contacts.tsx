@@ -1,9 +1,15 @@
-import { useState } from 'react';
-import { Plus, Search, Upload, MoreVertical, Mail, Phone, Loader2, Users, Trash2, AlertTriangle } from 'lucide-react';
-import { useInfiniteContacts, useCurrentWorkspace, useCreateContact, useDeleteContact, type Contact, type CreateContactInput } from '../lib/hooks';
+import { useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+import { Plus, Search, Upload, Download, MoreVertical, Mail, Phone, Loader2, Users, Trash2, AlertTriangle, Tag } from 'lucide-react';
+import {
+  useInfiniteContacts, useCurrentWorkspace, useCreateContact, useDeleteContact,
+  useImportContacts, useExportContacts,
+  type Contact, type CreateContactInput,
+} from '../lib/hooks';
 import Modal, { ModalFooter } from '../components/ui/Modal';
 import { useToast } from '../components/Toast';
 import DropdownMenu, { DropdownItem } from '../components/ui/DropdownMenu';
+import CSVImportModal from '../components/contacts/CSVImportModal';
 
 // Format relative time
 function formatRelativeTime(dateString?: string): string {
@@ -16,25 +22,22 @@ function formatRelativeTime(dateString?: string): string {
   const diffDays = Math.floor(diffHours / 24);
 
   if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins} minutes ago`;
-  if (diffHours < 24) return `${diffHours} hours ago`;
-  return `${diffDays} days ago`;
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 30) return `${diffDays}d ago`;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 // Get initials from name or email
 function getInitials(contact: Contact): string {
   if (contact.full_name) {
-    return contact.full_name.split(' ').map(n => n[0]).join('').toUpperCase();
+    return contact.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   }
   if (contact.first_name && contact.last_name) {
     return `${contact.first_name[0]}${contact.last_name[0]}`.toUpperCase();
   }
-  if (contact.first_name) {
-    return contact.first_name[0].toUpperCase();
-  }
-  if (contact.email) {
-    return contact.email[0].toUpperCase();
-  }
+  if (contact.first_name) return contact.first_name[0].toUpperCase();
+  if (contact.email) return contact.email[0].toUpperCase();
   return '?';
 }
 
@@ -50,6 +53,13 @@ function getDisplayName(contact: Contact): string {
   return 'Unknown Contact';
 }
 
+const statusColors: Record<string, string> = {
+  active: 'bg-green-100 text-green-800',
+  inactive: 'bg-gray-100 text-gray-800',
+  unsubscribed: 'bg-red-100 text-red-800',
+  bounced: 'bg-yellow-100 text-yellow-800',
+};
+
 // Empty form state
 const emptyForm: CreateContactInput = {
   email: '',
@@ -63,9 +73,13 @@ export default function Contacts() {
   const [searchQuery, setSearchQuery] = useState('');
   const [tagFilter, setTagFilter] = useState<string>('all');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [formData, setFormData] = useState<CreateContactInput>(emptyForm);
   const [tagInput, setTagInput] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkTagInput, setBulkTagInput] = useState('');
+  const [showBulkTagInput, setShowBulkTagInput] = useState(false);
 
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const {
@@ -79,6 +93,8 @@ export default function Contacts() {
   } = useInfiniteContacts(workspaceId || '');
   const createContact = useCreateContact(workspaceId || '');
   const deleteContact = useDeleteContact(workspaceId || '');
+  const importContacts = useImportContacts(workspaceId || '');
+  const exportContacts = useExportContacts(workspaceId || '');
   const toast = useToast();
 
   // Flatten all pages of contacts
@@ -105,7 +121,6 @@ export default function Contacts() {
 
   // Submit the form
   const handleSubmit = async () => {
-    // Validate: need at least email or phone
     if (!formData.email && !formData.phone) {
       toast.warning('Please provide an email or phone number');
       return;
@@ -116,8 +131,7 @@ export default function Contacts() {
       setIsAddModalOpen(false);
       setFormData(emptyForm);
       toast.success('Contact created successfully');
-    } catch (error) {
-      console.error('Failed to create contact:', error);
+    } catch {
       toast.error('Failed to create contact. Please try again.');
     }
   };
@@ -130,9 +144,10 @@ export default function Contacts() {
 
     try {
       await deleteContact.mutateAsync(contactId);
+      selectedIds.delete(contactId);
+      setSelectedIds(new Set(selectedIds));
       toast.success('Contact deleted');
-    } catch (error) {
-      console.error('Failed to delete contact:', error);
+    } catch {
       toast.error('Failed to delete contact');
     } finally {
       setDeletingId(null);
@@ -146,10 +161,35 @@ export default function Contacts() {
     setIsAddModalOpen(true);
   };
 
-  // Get unique tags from all contacts
-  const allTags = Array.from(new Set(contacts.flatMap(c => c.tags || [])));
+  // Export
+  const handleExport = async () => {
+    try {
+      const result = await exportContacts.mutateAsync();
+      // Trigger download
+      const blob = new Blob([result.csv_data], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${result.count} contacts`);
+    } catch {
+      toast.error('Failed to export contacts');
+    }
+  };
 
-  // Filter contacts
+  // Selection
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Filter contacts (moved up so toggleSelectAll can reference it)
   const filteredContacts = contacts.filter((contact) => {
     const name = getDisplayName(contact).toLowerCase();
     const email = contact.email?.toLowerCase() || '';
@@ -161,6 +201,48 @@ export default function Contacts() {
     return matchesSearch && matchesTag;
   });
 
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredContacts.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredContacts.map(c => c.id)));
+    }
+  };
+
+  // Bulk delete
+  const handleBulkDelete = async () => {
+    if (!confirm(`Delete ${selectedIds.size} contacts?`)) return;
+    for (const id of selectedIds) {
+      try {
+        await deleteContact.mutateAsync(id);
+      } catch { /* continue */ }
+    }
+    setSelectedIds(new Set());
+    toast.success(`Deleted ${selectedIds.size} contacts`);
+  };
+
+  // Bulk tag - we need per-contact update
+  const handleBulkTag = async () => {
+    const tag = bulkTagInput.trim().toLowerCase();
+    if (!tag) return;
+
+    for (const id of selectedIds) {
+      const contact = contacts.find(c => c.id === id);
+      if (contact && !contact.tags.includes(tag)) {
+        try {
+          await updateContactDirect(workspaceId || '', id, { tags: [...contact.tags, tag] });
+        } catch { /* continue */ }
+      }
+    }
+    setBulkTagInput('');
+    setShowBulkTagInput(false);
+    toast.success(`Tagged ${selectedIds.size} contacts with "${tag}"`);
+    refetch();
+  };
+
+  // Get unique tags from all contacts
+  const allTags = Array.from(new Set(contacts.flatMap(c => c.tags || [])));
+
   return (
     <div className="space-y-6">
       {/* Page header */}
@@ -170,9 +252,20 @@ export default function Contacts() {
           <p className="mt-1 text-gray-500">Manage your contact list and segments</p>
         </div>
         <div className="flex gap-2">
-          <button className="btn btn-secondary inline-flex items-center gap-2" disabled>
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className="btn btn-secondary inline-flex items-center gap-2"
+          >
             <Upload className="w-5 h-5" />
             Import
+          </button>
+          <button
+            onClick={handleExport}
+            disabled={exportContacts.isPending || contacts.length === 0}
+            className="btn btn-secondary inline-flex items-center gap-2"
+          >
+            {exportContacts.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+            Export
           </button>
           <button onClick={openAddModal} className="btn btn-primary inline-flex items-center gap-2">
             <Plus className="w-5 h-5" />
@@ -180,6 +273,53 @@ export default function Contacts() {
           </button>
         </div>
       </div>
+
+      {/* Bulk actions bar */}
+      {selectedIds.size > 0 && (
+        <div className="bg-primary-50 border border-primary-200 rounded-lg px-4 py-3 flex items-center justify-between">
+          <span className="text-sm font-medium text-primary-700">
+            {selectedIds.size} contact{selectedIds.size > 1 ? 's' : ''} selected
+          </span>
+          <div className="flex items-center gap-2">
+            {showBulkTagInput ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={bulkTagInput}
+                  onChange={(e) => setBulkTagInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleBulkTag()}
+                  placeholder="Tag name"
+                  className="input text-sm w-32"
+                  autoFocus
+                />
+                <button onClick={handleBulkTag} className="btn btn-primary text-xs px-3 py-1.5">Apply</button>
+                <button onClick={() => setShowBulkTagInput(false)} className="btn btn-secondary text-xs px-3 py-1.5">Cancel</button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowBulkTagInput(true)}
+                className="btn btn-secondary text-sm inline-flex items-center gap-1.5"
+              >
+                <Tag className="w-4 h-4" />
+                Add Tag
+              </button>
+            )}
+            <button
+              onClick={handleBulkDelete}
+              className="btn bg-red-50 text-red-600 hover:bg-red-100 text-sm inline-flex items-center gap-1.5"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="text-sm text-gray-500 hover:text-gray-700 ml-1"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Search and filters */}
       <div className="flex flex-col sm:flex-row gap-4">
@@ -233,10 +373,16 @@ export default function Contacts() {
           <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">No contacts yet</h3>
           <p className="text-gray-500 mb-4">Add your first contact to get started.</p>
-          <button onClick={openAddModal} className="btn btn-primary inline-flex items-center gap-2">
-            <Plus className="w-5 h-5" />
-            Add Contact
-          </button>
+          <div className="flex justify-center gap-3">
+            <button onClick={openAddModal} className="btn btn-primary inline-flex items-center gap-2">
+              <Plus className="w-5 h-5" />
+              Add Contact
+            </button>
+            <button onClick={() => setIsImportModalOpen(true)} className="btn btn-secondary inline-flex items-center gap-2">
+              <Upload className="w-5 h-5" />
+              Import CSV
+            </button>
+          </div>
         </div>
       )}
 
@@ -247,17 +393,28 @@ export default function Contacts() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    <input type="checkbox" className="rounded border-gray-300" />
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
+                    <input
+                      type="checkbox"
+                      className="rounded border-gray-300"
+                      checked={selectedIds.size === filteredContacts.length && filteredContacts.length > 0}
+                      onChange={toggleSelectAll}
+                    />
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Contact
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Tags
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Added
+                    Source
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Last Activity
                   </th>
                   <th className="relative px-6 py-3">
                     <span className="sr-only">Actions</span>
@@ -266,37 +423,49 @@ export default function Contacts() {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredContacts.map((contact) => (
-                  <tr key={contact.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4">
-                      <input type="checkbox" className="rounded border-gray-300" />
+                  <tr key={contact.id} className="hover:bg-gray-50 group">
+                    <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="rounded border-gray-300"
+                        checked={selectedIds.has(contact.id)}
+                        onChange={() => toggleSelect(contact.id)}
+                      />
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-medium">
+                      <Link to={`/contacts/${contact.id}`} className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-medium shrink-0">
                           {getInitials(contact)}
                         </div>
-                        <div>
-                          <p className="font-medium text-gray-900">{getDisplayName(contact)}</p>
+                        <div className="min-w-0">
+                          <p className="font-medium text-gray-900 group-hover:text-primary-600 transition-colors">
+                            {getDisplayName(contact)}
+                          </p>
                           <div className="flex items-center gap-4 text-sm text-gray-500">
                             {contact.email && (
-                              <span className="flex items-center gap-1">
-                                <Mail className="w-4 h-4" />
-                                {contact.email}
+                              <span className="flex items-center gap-1 truncate">
+                                <Mail className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">{contact.email}</span>
                               </span>
                             )}
                             {contact.phone && (
                               <span className="flex items-center gap-1">
-                                <Phone className="w-4 h-4" />
+                                <Phone className="w-3.5 h-3.5 shrink-0" />
                                 {contact.phone}
                               </span>
                             )}
                           </div>
                         </div>
-                      </div>
+                      </Link>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[contact.status] || statusColors.active}`}>
+                        {contact.status}
+                      </span>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-wrap gap-1">
-                        {(contact.tags || []).map((tag) => (
+                        {(contact.tags || []).slice(0, 3).map((tag) => (
                           <span
                             key={tag}
                             className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800"
@@ -304,15 +473,21 @@ export default function Contacts() {
                             {tag}
                           </span>
                         ))}
+                        {(contact.tags || []).length > 3 && (
+                          <span className="text-xs text-gray-400">+{contact.tags.length - 3}</span>
+                        )}
                         {(!contact.tags || contact.tags.length === 0) && (
-                          <span className="text-gray-400 text-sm">No tags</span>
+                          <span className="text-gray-400 text-sm">-</span>
                         )}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500">
-                      {formatRelativeTime(contact.created_at)}
+                      {contact.source || '-'}
                     </td>
-                    <td className="px-6 py-4 text-right text-sm font-medium">
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {formatRelativeTime(contact.last_contacted_at || contact.updated_at)}
+                    </td>
+                    <td className="px-6 py-4 text-right text-sm font-medium" onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu
                         trigger={
                           <button className="p-1 text-gray-400 hover:text-gray-600">
@@ -324,6 +499,11 @@ export default function Contacts() {
                           </button>
                         }
                       >
+                        <DropdownItem
+                          href={`/contacts/${contact.id}`}
+                        >
+                          View Details
+                        </DropdownItem>
                         <DropdownItem
                           variant="danger"
                           onClick={() => handleDelete(contact.id)}
@@ -476,6 +656,20 @@ export default function Contacts() {
           </button>
         </ModalFooter>
       </Modal>
+
+      {/* Import Modal */}
+      <CSVImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImport={importContacts.mutateAsync}
+        isImporting={importContacts.isPending}
+      />
     </div>
   );
+}
+
+// Helper: inline update for bulk tag (can't use hooks in loops)
+async function updateContactDirect(workspaceId: string, contactId: string, data: Record<string, unknown>) {
+  const { default: api } = await import('../lib/api');
+  await api.put(`/workspaces/${workspaceId}/contacts/${contactId}`, data);
 }

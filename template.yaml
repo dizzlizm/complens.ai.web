@@ -874,6 +874,48 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/contacts/{contact_id}
             Method: DELETE
+        GetActivity:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/activity
+            Method: GET
+        ListNotes:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/notes
+            Method: GET
+        CreateNote:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/notes
+            Method: POST
+        UpdateNote:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/notes/{note_id}
+            Method: PUT
+        DeleteNote:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/notes/{note_id}
+            Method: DELETE
+        Import:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/import
+            Method: POST
+        Export:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/export
+            Method: GET
 
   ConversationsFunction:
     Type: AWS::Serverless::Function

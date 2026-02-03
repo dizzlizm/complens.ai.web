@@ -12,8 +12,34 @@ export interface Contact {
   tags: string[];
   custom_fields: Record<string, unknown>;
   source?: string;
+  status: string;
+  total_messages_sent: number;
+  total_messages_received: number;
+  last_contacted_at?: string;
+  last_response_at?: string;
+  sms_opt_in: boolean;
+  email_opt_in: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface ContactNote {
+  id: string;
+  workspace_id: string;
+  contact_id: string;
+  author_id: string;
+  author_name: string;
+  content: string;
+  pinned: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ActivityItem {
+  type: 'conversation' | 'workflow_run' | 'form_submission' | 'note';
+  summary: string;
+  data: Record<string, unknown>;
+  timestamp: string;
 }
 
 export interface CreateContactInput {
@@ -24,6 +50,15 @@ export interface CreateContactInput {
   tags?: string[];
   custom_fields?: Record<string, unknown>;
   source?: string;
+  status?: string;
+  sms_opt_in?: boolean;
+  email_opt_in?: boolean;
+}
+
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+  errors: Array<{ row: number; error: string }>;
 }
 
 // Fetch all contacts for a workspace
@@ -92,6 +127,7 @@ export function useCreateContact(workspaceId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contacts', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['contacts-infinite', workspaceId] });
     },
   });
 }
@@ -110,6 +146,7 @@ export function useUpdateContact(workspaceId: string, contactId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contacts', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['contacts-infinite', workspaceId] });
       queryClient.invalidateQueries({ queryKey: ['contact', workspaceId, contactId] });
     },
   });
@@ -125,6 +162,7 @@ export function useDeleteContact(workspaceId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contacts', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['contacts-infinite', workspaceId] });
     },
   });
 }
@@ -144,6 +182,105 @@ export function useAddContactTag(workspaceId: string, contactId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contact', workspaceId, contactId] });
       queryClient.invalidateQueries({ queryKey: ['contacts', workspaceId] });
+    },
+  });
+}
+
+// ============================================================
+// Contact Notes
+// ============================================================
+
+export function useContactNotes(workspaceId: string, contactId: string) {
+  return useQuery({
+    queryKey: ['contact-notes', workspaceId, contactId],
+    queryFn: async () => {
+      const { data } = await api.get<{ items: ContactNote[] }>(
+        `/workspaces/${workspaceId}/contacts/${contactId}/notes`
+      );
+      return data.items;
+    },
+    enabled: !!workspaceId && !!contactId,
+  });
+}
+
+export function useCreateContactNote(workspaceId: string, contactId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: { content: string; pinned?: boolean }) => {
+      const { data } = await api.post<ContactNote>(
+        `/workspaces/${workspaceId}/contacts/${contactId}/notes`,
+        input
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['contact-notes', workspaceId, contactId] });
+      queryClient.invalidateQueries({ queryKey: ['contact-activity', workspaceId, contactId] });
+    },
+  });
+}
+
+export function useDeleteContactNote(workspaceId: string, contactId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (noteId: string) => {
+      await api.delete(`/workspaces/${workspaceId}/contacts/${contactId}/notes/${noteId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['contact-notes', workspaceId, contactId] });
+      queryClient.invalidateQueries({ queryKey: ['contact-activity', workspaceId, contactId] });
+    },
+  });
+}
+
+// ============================================================
+// Contact Activity
+// ============================================================
+
+export function useContactActivity(workspaceId: string, contactId: string) {
+  return useQuery({
+    queryKey: ['contact-activity', workspaceId, contactId],
+    queryFn: async () => {
+      const { data } = await api.get<{ items: ActivityItem[] }>(
+        `/workspaces/${workspaceId}/contacts/${contactId}/activity`
+      );
+      return data.items;
+    },
+    enabled: !!workspaceId && !!contactId,
+  });
+}
+
+// ============================================================
+// Import / Export
+// ============================================================
+
+export function useImportContacts(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: { csv_data: string; mapping: Record<string, string> }) => {
+      const { data } = await api.post<ImportResult>(
+        `/workspaces/${workspaceId}/contacts/import`,
+        input
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['contacts', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['contacts-infinite', workspaceId] });
+    },
+  });
+}
+
+export function useExportContacts(workspaceId: string) {
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await api.get<{ csv_data: string; count: number }>(
+        `/workspaces/${workspaceId}/contacts/export`
+      );
+      return data;
     },
   });
 }

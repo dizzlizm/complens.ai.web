@@ -192,6 +192,31 @@ class FormSubmissionRepository(BaseRepository[FormSubmission]):
             scan_forward=False,  # Most recent first
         )
 
+    def list_by_contact(
+        self,
+        contact_id: str,
+        limit: int = 50,
+        last_key: dict | None = None,
+    ) -> tuple[list[FormSubmission], dict | None]:
+        """List submissions for a contact using GSI2.
+
+        Args:
+            contact_id: The contact ID.
+            limit: Maximum submissions to return.
+            last_key: Pagination cursor.
+
+        Returns:
+            Tuple of (submissions, next_page_key).
+        """
+        return self.query(
+            pk=f"CONTACT#{contact_id}",
+            sk_begins_with="SUB#",
+            index_name="GSI2",
+            limit=limit,
+            last_key=last_key,
+            scan_forward=False,
+        )
+
     def create_submission(self, submission: FormSubmission) -> FormSubmission:
         """Create a new form submission.
 
@@ -202,6 +227,9 @@ class FormSubmissionRepository(BaseRepository[FormSubmission]):
             The created submission.
         """
         gsi_keys = submission.get_gsi1_keys()
+        gsi2_keys = submission.get_gsi2_keys()
+        if gsi2_keys:
+            gsi_keys.update(gsi2_keys)
         return self.create(submission, gsi_keys=gsi_keys)
 
     def mark_workflow_triggered(
