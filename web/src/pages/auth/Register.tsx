@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 
 export default function Register() {
@@ -13,6 +13,8 @@ export default function Register() {
   const [verificationCode, setVerificationCode] = useState('');
   const { register, confirmRegistration } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirectTo = searchParams.get('redirect');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,7 +49,7 @@ export default function Register() {
 
     try {
       await confirmRegistration(email, verificationCode);
-      navigate('/login');
+      navigate(redirectTo ? `/login?redirect=${encodeURIComponent(redirectTo)}` : '/login');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid verification code');
     } finally {

@@ -245,7 +245,7 @@ POST /public/pages/{page_id}/forms/{form_id}
 
 | Use Case | Model ID |
 |----------|----------|
-| Default | `anthropic.claude-3-sonnet-20240229-v1:0` |
+| Default (Sonnet 4.5) | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` |
 | Fast (Haiku) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
 | Image Generation | `amazon.titan-image-generator-v2:0` (512 char prompt limit) |
 

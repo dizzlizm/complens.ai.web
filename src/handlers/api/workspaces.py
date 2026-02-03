@@ -24,9 +24,15 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         GET    /workspaces/{workspace_id}
         PUT    /workspaces/{workspace_id}
         DELETE /workspaces/{workspace_id}
+        GET    /workspaces/{workspace_id}/integrations
+        PUT    /workspaces/{workspace_id}/integrations/twilio
+        PUT    /workspaces/{workspace_id}/integrations/segment
+        POST   /workspaces/{workspace_id}/integrations/twilio/test
+        DELETE /workspaces/{workspace_id}/integrations/{provider}
     """
     try:
         http_method = event.get("httpMethod", "").upper()
+        path = event.get("path", "")
         path_params = event.get("pathParameters", {}) or {}
         workspace_id = path_params.get("workspace_id")
 
@@ -35,7 +41,23 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
         repo = WorkspaceRepository()
 
-        # Route to appropriate handler
+        # Integration routes
+        if "/integrations" in path and workspace_id:
+            require_workspace_access(auth, workspace_id)
+            if "/twilio/test" in path and http_method == "POST":
+                return test_twilio_connection(repo, workspace_id)
+            elif "/twilio" in path and http_method == "PUT":
+                return save_twilio_config(repo, workspace_id, event)
+            elif "/segment" in path and http_method == "PUT":
+                return save_segment_config(repo, workspace_id, event)
+            elif http_method == "DELETE":
+                return disconnect_integration(repo, workspace_id, path)
+            elif http_method == "GET":
+                return get_integration_status(repo, workspace_id)
+            else:
+                return error("Method not allowed", 405)
+
+        # Standard workspace routes
         if http_method == "GET" and workspace_id:
             require_workspace_access(auth, workspace_id)
             return get_workspace(repo, workspace_id)
@@ -188,3 +210,156 @@ def delete_workspace(repo: WorkspaceRepository, auth, workspace_id: str) -> dict
     logger.info("Workspace deleted", workspace_id=workspace_id)
 
     return success({"deleted": True, "id": workspace_id})
+
+
+# ============================================================================
+# Integration Handlers
+# ============================================================================
+
+
+def get_integration_status(repo: WorkspaceRepository, workspace_id: str) -> dict:
+    """Get status of all integrations for a workspace."""
+    workspace = repo.get_by_id(workspace_id)
+    if not workspace:
+        return not_found("Workspace", workspace_id)
+
+    settings = workspace.settings
+
+    # Build Twilio status
+    twilio_connected = bool(settings.get("twilio_account_sid"))
+    twilio_status = {"connected": twilio_connected}
+    if twilio_connected:
+        sid = settings.get("twilio_account_sid", "")
+        twilio_status["account_sid_masked"] = sid[:6] + "..." + sid[-4:] if len(sid) > 10 else "****"
+        twilio_status["phone_number"] = settings.get("twilio_phone_number", "")
+
+    # Build Segment status
+    segment_connected = bool(settings.get("segment_shared_secret"))
+    segment_status = {"connected": segment_connected}
+    if segment_connected:
+        segment_status["webhook_url"] = f"/webhooks/segment/{workspace_id}"
+
+    return success({
+        "twilio": twilio_status,
+        "segment": segment_status,
+    })
+
+
+def save_twilio_config(repo: WorkspaceRepository, workspace_id: str, event: dict) -> dict:
+    """Save Twilio credentials to workspace settings."""
+    workspace = repo.get_by_id(workspace_id)
+    if not workspace:
+        return not_found("Workspace", workspace_id)
+
+    try:
+        body = json.loads(event.get("body", "{}"))
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    account_sid = body.get("account_sid", "").strip()
+    auth_token = body.get("auth_token", "").strip()
+    phone_number = body.get("phone_number", "").strip()
+
+    if not account_sid or not auth_token or not phone_number:
+        return error("account_sid, auth_token, and phone_number are required", 400)
+
+    workspace.settings = {
+        **workspace.settings,
+        "twilio_account_sid": account_sid,
+        "twilio_auth_token": auth_token,
+        "twilio_phone_number": phone_number,
+    }
+
+    repo.update_workspace(workspace)
+
+    logger.info("Twilio config saved", workspace_id=workspace_id)
+
+    return success({"saved": True, "provider": "twilio"})
+
+
+def save_segment_config(repo: WorkspaceRepository, workspace_id: str, event: dict) -> dict:
+    """Save Segment shared secret to workspace settings."""
+    workspace = repo.get_by_id(workspace_id)
+    if not workspace:
+        return not_found("Workspace", workspace_id)
+
+    try:
+        body = json.loads(event.get("body", "{}"))
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    shared_secret = body.get("shared_secret", "").strip()
+
+    if not shared_secret:
+        return error("shared_secret is required", 400)
+
+    workspace.settings = {
+        **workspace.settings,
+        "segment_shared_secret": shared_secret,
+    }
+
+    repo.update_workspace(workspace)
+
+    logger.info("Segment config saved", workspace_id=workspace_id)
+
+    return success({"saved": True, "provider": "segment"})
+
+
+def test_twilio_connection(repo: WorkspaceRepository, workspace_id: str) -> dict:
+    """Test Twilio credentials by verifying the account."""
+    workspace = repo.get_by_id(workspace_id)
+    if not workspace:
+        return not_found("Workspace", workspace_id)
+
+    account_sid = workspace.settings.get("twilio_account_sid")
+    auth_token = workspace.settings.get("twilio_auth_token")
+
+    if not account_sid or not auth_token:
+        return error("Twilio credentials not configured", 400)
+
+    try:
+        from complens.services.twilio_service import TwilioService
+
+        service = TwilioService(account_sid=account_sid, auth_token=auth_token)
+        # Verify by fetching account info
+        account = service.client.api.accounts(account_sid).fetch()
+
+        return success({
+            "success": True,
+            "message": "Connection successful",
+            "account_name": account.friendly_name,
+        })
+
+    except Exception as e:
+        logger.warning("Twilio connection test failed", error=str(e), workspace_id=workspace_id)
+        return success({
+            "success": False,
+            "message": f"Connection failed: {str(e)}",
+        })
+
+
+def disconnect_integration(repo: WorkspaceRepository, workspace_id: str, path: str) -> dict:
+    """Disconnect an integration by removing its settings."""
+    workspace = repo.get_by_id(workspace_id)
+    if not workspace:
+        return not_found("Workspace", workspace_id)
+
+    if "/twilio" in path:
+        provider = "twilio"
+        prefix = "twilio_"
+    elif "/segment" in path:
+        provider = "segment"
+        prefix = "segment_"
+    else:
+        return error("Unknown integration provider", 400)
+
+    workspace.settings = {
+        k: v for k, v in workspace.settings.items()
+        if not k.startswith(prefix)
+    }
+
+    repo.update_workspace(workspace)
+
+    logger.info("Integration disconnected", workspace_id=workspace_id, provider=provider)
+
+    return success({"disconnected": True, "provider": provider})

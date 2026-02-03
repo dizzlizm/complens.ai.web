@@ -248,7 +248,7 @@ class AIRespondAction(BaseNode):
         respond_via = self._get_config_value("ai_respond_via", "same_channel")
         max_tokens = self._get_config_value("ai_max_tokens", 500)
         model = self._get_config_value(
-            "ai_model", "us.anthropic.claude-3-sonnet-20240229-v1:0"
+            "ai_model", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
         )
         system_prompt = self._get_config_value(
             "ai_system_prompt",

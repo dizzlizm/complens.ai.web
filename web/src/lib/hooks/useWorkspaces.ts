@@ -1,5 +1,8 @@
+import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../api';
+
+const WORKSPACE_STORAGE_KEY = 'complens_current_workspace';
 
 export interface Workspace {
   id: string;
@@ -82,13 +85,34 @@ export function useUpdateWorkspace(workspaceId: string) {
 export function useCurrentWorkspace() {
   const { data: workspaces, isLoading } = useWorkspaces();
 
-  // For now, return the first workspace
-  // TODO: Add workspace selector and persist selection
-  const currentWorkspace = workspaces?.[0];
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(WORKSPACE_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
+
+  const setCurrentWorkspaceId = useCallback((id: string) => {
+    setSelectedId(id);
+    try {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, id);
+    } catch {
+      // localStorage unavailable
+    }
+  }, []);
+
+  // Find workspace by stored ID, fall back to first
+  const currentWorkspace =
+    (selectedId && workspaces?.find((ws) => ws.id === selectedId)) ||
+    workspaces?.[0] ||
+    undefined;
 
   return {
     workspace: currentWorkspace,
     workspaceId: currentWorkspace?.id,
+    workspaces,
     isLoading,
+    setCurrentWorkspaceId,
   };
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useForms, useDeleteForm, useCreateForm, type FormField } from '../lib/hooks/useForms';
+import { useSynthesizePage } from '../lib/hooks/useAI';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import Modal from '../components/ui/Modal';
 import { useToast } from '../components/Toast';
@@ -10,11 +11,53 @@ export default function Forms() {
   const { data: forms, isLoading, error, refetch } = useForms(workspaceId);
   const deleteForm = useDeleteForm(workspaceId || '');
   const createForm = useCreateForm(workspaceId || '');
+  const synthesizePage = useSynthesizePage(workspaceId || '');
   const toast = useToast();
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newFormName, setNewFormName] = useState('');
+  const [aiDescription, setAiDescription] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  const closeCreateModal = () => {
+    setShowCreateModal(false);
+    setNewFormName('');
+    setAiDescription('');
+  };
+
+  const createId = () => Math.random().toString(36).slice(2, 10);
+
+  const mapSynthesizedField = (field: Record<string, unknown>, index: number): FormField => {
+    const allowedTypes: FormField['type'][] = [
+      'text',
+      'email',
+      'phone',
+      'textarea',
+      'select',
+      'checkbox',
+      'radio',
+      'date',
+      'number',
+      'hidden',
+    ];
+
+    const rawType = typeof field.type === 'string' ? field.type : 'text';
+    const type = (allowedTypes.includes(rawType as FormField['type']) ? rawType : 'text') as FormField['type'];
+    const name = typeof field.name === 'string' && field.name.trim() ? field.name : `field_${index + 1}`;
+
+    return {
+      id: createId(),
+      name,
+      label: typeof field.label === 'string' && field.label.trim() ? field.label : name,
+      type,
+      required: typeof field.required === 'boolean' ? field.required : false,
+      placeholder: typeof field.placeholder === 'string' ? field.placeholder : null,
+      options: Array.isArray(field.options) ? field.options.filter((o) => typeof o === 'string') : [],
+      validation_pattern: typeof field.validation_pattern === 'string' ? field.validation_pattern : null,
+      default_value: typeof field.default_value === 'string' ? field.default_value : null,
+      map_to_contact_field: typeof field.map_to_contact_field === 'string' ? field.map_to_contact_field : null,
+    };
+  };
 
   const handleCreateForm = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,8 +84,7 @@ export default function Forms() {
         name: newFormName,
         fields: defaultFields,
       });
-      setShowCreateModal(false);
-      setNewFormName('');
+      closeCreateModal();
       toast.success('Form created successfully');
     } catch (err) {
       console.error('Failed to create form:', err);
@@ -58,6 +100,62 @@ export default function Forms() {
     } catch (err) {
       console.error('Failed to delete form:', err);
       toast.error('Failed to delete form. Please try again.');
+    }
+  };
+
+  const handleAIGenerateForm = async () => {
+    if (!aiDescription.trim()) {
+      toast.warning('Please describe the form you want to create.');
+      return;
+    }
+
+    try {
+      const result = await synthesizePage.mutateAsync({
+        description: aiDescription.trim(),
+        include_form: true,
+        include_chat: false,
+        block_types: ['form'],
+      });
+
+      if (!result.form_config) {
+        toast.error('AI did not return a form configuration. Please try again.');
+        return;
+      }
+
+      const fallbackFields: FormField[] = [
+        {
+          id: createId(),
+          name: 'email',
+          label: 'Email',
+          type: 'email',
+          required: true,
+          placeholder: 'your@email.com',
+          options: [],
+          validation_pattern: null,
+          default_value: null,
+          map_to_contact_field: 'email',
+        },
+      ];
+
+      const fields: FormField[] = result.form_config.fields.length
+        ? result.form_config.fields.map((field, index) => mapSynthesizedField(field, index))
+        : fallbackFields;
+
+      const name = newFormName.trim() || result.form_config.name || 'AI Form';
+
+      await createForm.mutateAsync({
+        name,
+        fields,
+        submit_button_text: result.form_config.submit_button_text,
+        success_message: result.form_config.success_message,
+        add_tags: result.form_config.add_tags,
+      });
+
+      closeCreateModal();
+      toast.success('Form created with AI');
+    } catch (err) {
+      console.error('Failed to generate form with AI:', err);
+      toast.error('Failed to generate form with AI. Please try again.');
     }
   };
 
@@ -220,7 +318,7 @@ export default function Forms() {
       {/* Create Modal */}
       <Modal
         isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
+        onClose={closeCreateModal}
         title="Create New Form"
       >
         <form onSubmit={handleCreateForm} className="space-y-4">
@@ -240,17 +338,40 @@ export default function Forms() {
           <p className="text-sm text-gray-500">
             A default email field will be added. You can customize fields after creation.
           </p>
+          <div className="border-t border-gray-200 pt-4 space-y-3">
+            <div className="text-sm font-medium text-gray-700">Or build with AI</div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Describe your form
+              </label>
+              <textarea
+                value={aiDescription}
+                onChange={(e) => setAiDescription(e.target.value)}
+                placeholder="e.g., A lead capture form for a dental clinic with name, email, phone, and preferred appointment time."
+                rows={3}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleAIGenerateForm}
+              disabled={synthesizePage.isPending || createForm.isPending}
+              className="w-full px-4 py-2 border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-50 disabled:opacity-50"
+            >
+              {synthesizePage.isPending ? 'Generating...' : 'Build Form with AI'}
+            </button>
+          </div>
           <div className="flex gap-3 pt-4">
             <button
               type="button"
-              onClick={() => setShowCreateModal(false)}
+              onClick={closeCreateModal}
               className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={createForm.isPending}
+              disabled={createForm.isPending || synthesizePage.isPending}
               className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
             >
               {createForm.isPending ? 'Creating...' : 'Create Form'}

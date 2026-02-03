@@ -1,5 +1,6 @@
 import { Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
+import { useCurrentWorkspace } from '@/lib/hooks/useWorkspaces';
 import {
   LayoutDashboard,
   GitBranch,
@@ -10,8 +11,11 @@ import {
   LogOut,
   Menu,
   X,
+  ChevronsUpDown,
+  Check,
+  Building2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 // Navigation items - Forms removed (now managed inside Page Editor)
 // AI Profile also removed - profiles are now per-page
@@ -22,6 +26,69 @@ const navigation = [
   { name: 'Pages', href: '/pages', icon: FileText },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
+
+function WorkspaceSwitcher() {
+  const { workspace, workspaces, setCurrentWorkspaceId } = useCurrentWorkspace();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  if (!workspaces || workspaces.length <= 1) {
+    // Single workspace - just show the name, no dropdown
+    return (
+      <div className="flex items-center gap-2 px-3 py-2">
+        <Building2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
+        <span className="text-sm font-medium text-gray-700 truncate">
+          {workspace?.name || 'Workspace'}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left rounded-lg hover:bg-gray-100 transition-colors"
+      >
+        <Building2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
+        <span className="flex-1 text-sm font-medium text-gray-700 truncate">
+          {workspace?.name || 'Workspace'}
+        </span>
+        <ChevronsUpDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 max-h-60 overflow-auto">
+          {workspaces.map((ws) => (
+            <button
+              key={ws.id}
+              onClick={() => {
+                setCurrentWorkspaceId(ws.id);
+                setOpen(false);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors"
+            >
+              <span className="flex-1 truncate text-gray-700">{ws.name}</span>
+              {ws.id === workspace?.id && (
+                <Check className="w-4 h-4 text-primary-600 flex-shrink-0" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AppLayout() {
   const { user, logout } = useAuth();
@@ -54,6 +121,9 @@ export default function AppLayout() {
             <X className="w-6 h-6" />
           </button>
         </div>
+        <div className="px-2 pt-3 pb-1 border-b border-gray-100">
+          <WorkspaceSwitcher />
+        </div>
         <nav className="mt-4 px-2">
           {navigation.map((item) => {
             const isActive = location.pathname === item.href;
@@ -82,6 +152,11 @@ export default function AppLayout() {
           {/* Logo */}
           <div className="flex items-center h-16 px-6 border-b border-gray-200">
             <span className="text-xl font-bold text-primary-600">Complens.ai</span>
+          </div>
+
+          {/* Workspace switcher */}
+          <div className="px-3 pt-3 pb-1 border-b border-gray-100">
+            <WorkspaceSwitcher />
           </div>
 
           {/* Navigation */}

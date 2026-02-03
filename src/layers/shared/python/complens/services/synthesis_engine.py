@@ -12,6 +12,7 @@ cohesive, high-conversion landing pages through a multi-stage pipeline:
 """
 
 import json
+import random
 import re
 from typing import Any
 from uuid import uuid4
@@ -454,7 +455,13 @@ Choose the goal that best matches:
         Makes intelligent decisions about:
         - Which blocks to include based on intent and content quality
         - Block sequence for optimal conversion
-        - Block widths for side-by-side layouts
+        - Block widths for varied layouts (not just full-width)
+
+        Layout widths use 1-4 scale:
+        - width=4 → full width (12 columns)
+        - width=3 → 2/3 width (8 columns)
+        - width=2 → half width (6 columns)
+        - width=1 → 1/3 width (4 columns)
 
         Args:
             intent: Analyzed page intent.
@@ -475,7 +482,7 @@ Choose the goal that best matches:
                 intent, assessment, block_types, include_form, include_chat
             )
 
-        # Start with hero (always included)
+        # Start with hero (always full width)
         planned_blocks.append(
             PlannedBlock(
                 type="hero",
@@ -485,19 +492,53 @@ Choose the goal that best matches:
             )
         )
 
-        # Features block
+        # Features block - can be full or 2/3 width with supporting content
         if "features" in mapping["required"] or "features" in mapping["conditional"]:
+            # For services/portfolio, pair features with stats or image
+            features_width = 4  # Default full width
+            if goal in ["services", "portfolio"] and assessment.stats_score >= 5:
+                features_width = 3  # 2/3 width to pair with stats
+
             planned_blocks.append(
                 PlannedBlock(
                     type="features",
-                    width=4,
+                    width=features_width,
                     emphasis="high" if goal == "portfolio" else "medium",
                     content_source="profile" if assessment.features_score >= 5 else "generated",
                 )
             )
 
-        # Stats block - only if we have real stats
-        if assessment.stats_score >= 5 and "stats" not in mapping["excluded"]:
+            # Add a stats block next to features if we have stats and features is 2/3
+            if features_width == 3 and assessment.stats_score >= 5:
+                planned_blocks.append(
+                    PlannedBlock(
+                        type="stats",
+                        width=1,  # 1/3 width to pair with features
+                        emphasis="high" if assessment.stats_real else "low",
+                        content_source="profile" if assessment.stats_real else "generated",
+                        config_hints={"items": assessment.stats_items},
+                    )
+                )
+        else:
+            # Stats block as standalone - only if we have real stats
+            if assessment.stats_score >= 5 and "stats" not in mapping["excluded"]:
+                planned_blocks.append(
+                    PlannedBlock(
+                        type="stats",
+                        width=4,
+                        emphasis="high" if assessment.stats_real else "low",
+                        content_source="profile" if assessment.stats_real else "generated",
+                        config_hints={"items": assessment.stats_items},
+                    )
+                )
+            elif "stats" in mapping["conditional"]:
+                excluded["stats"] = "No real statistics available (score: {})".format(
+                    assessment.stats_score
+                )
+
+        # Stats block standalone if not already added
+        stats_already_added = any(pb.type == "stats" for pb in planned_blocks)
+        if not stats_already_added and assessment.stats_score >= 5 and "stats" not in mapping["excluded"]:
             planned_blocks.append(
                 PlannedBlock(
                     type="stats",
@@ -507,32 +548,77 @@ Choose the goal that best matches:
                     config_hints={"items": assessment.stats_items},
                 )
             )
-        elif "stats" in mapping["conditional"]:
-            excluded["stats"] = "No real statistics available (score: {})".format(
-                assessment.stats_score
-            )
 
-        # Testimonials - only if quality is sufficient
-        if assessment.testimonials_score >= 5 and "testimonials" not in mapping["excluded"]:
+        # Testimonials + Form side-by-side for lead-gen (half width each)
+        has_testimonials = assessment.testimonials_score >= 5 and "testimonials" not in mapping["excluded"]
+        wants_form = include_form and "form" not in mapping["excluded"]
+
+        if has_testimonials and wants_form and goal == "lead-gen":
+            # Side-by-side: testimonials (half) + form (half)
             planned_blocks.append(
                 PlannedBlock(
                     type="testimonials",
-                    width=4,
+                    width=2,  # Half width
                     emphasis="medium",
                     content_source="profile",
                 )
             )
-        elif "testimonials" in mapping["conditional"]:
-            excluded["testimonials"] = "No real testimonials in profile (score: {})".format(
-                assessment.testimonials_score
+            planned_blocks.append(
+                PlannedBlock(
+                    type="form",
+                    width=2,  # Half width
+                    emphasis="high",
+                    content_source="generated",
+                )
             )
+        else:
+            # Add testimonials full width if available
+            if has_testimonials:
+                planned_blocks.append(
+                    PlannedBlock(
+                        type="testimonials",
+                        width=4,
+                        emphasis="medium",
+                        content_source="profile",
+                    )
+                )
+            elif "testimonials" in mapping["conditional"]:
+                excluded["testimonials"] = "No real testimonials in profile (score: {})".format(
+                    assessment.testimonials_score
+                )
 
-        # FAQ block
+            # Add form separately (consider 2/3 width with CTA)
+            if wants_form:
+                # For non-lead-gen, form can be 2/3 with CTA 1/3
+                form_width = 3 if goal in ["services", "event"] else 4
+                planned_blocks.append(
+                    PlannedBlock(
+                        type="form",
+                        width=form_width,
+                        emphasis="high",
+                        content_source="generated",
+                    )
+                )
+
+                # Add inline CTA next to form if form is 2/3
+                if form_width == 3 and "cta" not in mapping["excluded"]:
+                    planned_blocks.append(
+                        PlannedBlock(
+                            type="cta",
+                            width=1,  # 1/3 width next to form
+                            emphasis="medium",
+                            content_source="generated",
+                        )
+                    )
+
+        # FAQ block - can be half width paired with another block
         if assessment.faq_score >= 3 and "faq" not in mapping["excluded"]:
+            # FAQ is often better at half width for readability
+            faq_width = 2 if goal in ["services", "product-launch"] else 4
             planned_blocks.append(
                 PlannedBlock(
                     type="faq",
-                    width=4,
+                    width=faq_width,
                     emphasis="low",
                     content_source="profile" if assessment.faq_count > 0 else "generated",
                 )
@@ -559,50 +645,24 @@ Choose the goal that best matches:
                 )
             )
 
-        # Form block - side by side with CTA for lead-gen
-        if include_form and "form" not in mapping["excluded"]:
-            # Determine layout strategy
-            if goal == "lead-gen" and assessment.testimonials_score >= 5:
-                # Side-by-side testimonial + form
-                # Find testimonials and update width
-                for pb in planned_blocks:
-                    if pb.type == "testimonials":
-                        pb.width = 2
-                planned_blocks.append(
-                    PlannedBlock(
-                        type="form",
-                        width=2,
-                        emphasis="high",
-                        content_source="generated",
-                    )
-                )
-            else:
-                planned_blocks.append(
-                    PlannedBlock(
-                        type="form",
-                        width=4,
-                        emphasis="high",
-                        content_source="generated",
-                    )
-                )
-
-        # Chat block
+        # Chat block - typically 1/3 width at bottom
         if include_chat and "chat" not in mapping.get("excluded", []):
             planned_blocks.append(
                 PlannedBlock(
                     type="chat",
-                    width=4,
+                    width=1,  # 1/3 width for chat widget
                     emphasis="low",
                     content_source="generated",
                 )
             )
 
-        # CTA block (usually at the end)
-        if "cta" not in mapping["excluded"]:
+        # Final CTA block if not already added inline
+        cta_already_added = any(pb.type == "cta" for pb in planned_blocks)
+        if not cta_already_added and "cta" not in mapping["excluded"]:
             planned_blocks.append(
                 PlannedBlock(
                     type="cta",
-                    width=4,
+                    width=4,  # Full width final CTA
                     emphasis="medium",
                     content_source="generated",
                 )
@@ -613,14 +673,23 @@ Choose the goal that best matches:
             if block_type not in excluded:
                 excluded[block_type] = f"Not relevant for {goal} pages"
 
-        # Determine layout strategy
+        # Determine layout strategy based on block widths
         has_side_by_side = any(pb.width < 4 for pb in planned_blocks)
-        layout_strategy = "side-by-side-cta" if has_side_by_side else "full-width"
+        has_mixed = len(set(pb.width for pb in planned_blocks)) > 1
+
+        if has_mixed:
+            layout_strategy = "mixed"
+        elif has_side_by_side:
+            layout_strategy = "side-by-side-cta"
+        else:
+            layout_strategy = "full-width"
 
         # Build rationale
         rationale_parts = [
             f"Optimized for {goal} goal.",
         ]
+        if has_mixed:
+            rationale_parts.append("Using mixed-width layout for visual interest.")
         if assessment.strengths:
             rationale_parts.append(f"Leveraging: {', '.join(assessment.strengths[:2])}.")
         if excluded:
@@ -644,7 +713,14 @@ Choose the goal that best matches:
         """Plan blocks when specific block types are requested.
 
         This creates a plan with only the requested block types, in a logical
-        order based on typical landing page structure.
+        order based on typical landing page structure. Uses intelligent layout
+        widths based on block combinations.
+
+        Layout widths use 1-4 scale:
+        - width=4 → full width (12 columns)
+        - width=3 → 2/3 width (8 columns)
+        - width=2 → half width (6 columns)
+        - width=1 → 1/3 width (4 columns)
 
         Args:
             intent: Analyzed page intent.
@@ -682,6 +758,9 @@ Choose the goal that best matches:
             key=lambda t: block_order.index(t) if t in block_order else len(block_order),
         )
 
+        # Determine intelligent layout widths based on block combinations
+        block_widths = self._calculate_block_widths(sorted_types, intent)
+
         planned_blocks: list[PlannedBlock] = []
 
         for block_type in sorted_types:
@@ -703,27 +782,13 @@ Choose the goal that best matches:
 
             # Determine emphasis
             emphasis = "medium"
-            if block_type in ["hero", "cta"]:
+            if block_type in ["hero", "cta", "form"]:
                 emphasis = "high"
             elif block_type in ["divider", "chat"]:
                 emphasis = "low"
 
-            # Default to full width
-            width = 4
-
-            # Special case: form and testimonials side-by-side for lead-gen
-            if (
-                block_type == "form"
-                and "testimonials" in sorted_types
-                and intent.goal.value == "lead-gen"
-            ):
-                width = 2
-            if (
-                block_type == "testimonials"
-                and "form" in sorted_types
-                and intent.goal.value == "lead-gen"
-            ):
-                width = 2
+            # Get width from calculated widths
+            width = block_widths.get(block_type, 4)
 
             planned_blocks.append(
                 PlannedBlock(
@@ -744,11 +809,12 @@ Choose the goal that best matches:
         }
 
         has_side_by_side = any(pb.width < 4 for pb in planned_blocks)
-        layout_strategy = "side-by-side-cta" if has_side_by_side else "full-width"
+        has_mixed = len(set(pb.width for pb in planned_blocks)) > 1
+        layout_strategy = "mixed" if has_mixed else ("side-by-side-cta" if has_side_by_side else "full-width")
 
         rationale = (
             f"User-specified blocks: {', '.join(sorted_types)}. "
-            f"Ordered for optimal landing page flow."
+            f"Using {layout_strategy} layout for optimal visual flow."
         )
 
         return BlockPlan(
@@ -757,6 +823,184 @@ Choose the goal that best matches:
             layout_strategy=layout_strategy,
             excluded=excluded,
         )
+
+    def _calculate_block_widths(
+        self,
+        block_types: list[str],
+        intent: PageIntent,
+    ) -> dict[str, int]:
+        """Calculate intelligent widths for a set of blocks WITH VARIANCE.
+
+        Determines which blocks should be full width vs. paired based on:
+        - Block type characteristics (hero always full, chat typically small)
+        - Logical pairings (testimonials + form, features + stats)
+        - Page intent (lead-gen favors prominent forms)
+        - RANDOMIZED VARIANCE for visual interest
+
+        Args:
+            block_types: List of block types to layout.
+            intent: Page intent for context.
+
+        Returns:
+            Dict of block_type -> width (1-4 scale).
+        """
+        widths: dict[str, int] = {}
+        types_set = set(block_types)
+        goal = intent.goal.value
+
+        # Choose a layout pattern for variety
+        layout_pattern = self._choose_layout_pattern(block_types, intent)
+
+        for block_type in block_types:
+            # Default to full width
+            width = 4
+
+            # Blocks that should always be full width
+            if block_type in ["hero", "pricing"]:
+                width = 4
+
+            # Chat is typically small
+            elif block_type == "chat":
+                width = 1  # 1/3 width
+
+            # Divider is small
+            elif block_type == "divider":
+                width = 4  # Full width divider
+
+            # Apply layout pattern for variance
+            elif block_type in layout_pattern:
+                width = layout_pattern[block_type]
+
+            # Fallback: logical pairings
+            elif block_type == "testimonials" and "form" in types_set and goal == "lead-gen":
+                width = 2  # Half width
+
+            elif block_type == "form" and "testimonials" in types_set and goal == "lead-gen":
+                width = 2  # Half width
+
+            elif block_type == "features" and "stats" in types_set:
+                width = 3  # 2/3 width
+
+            elif block_type == "stats" and "features" in types_set:
+                width = 1  # 1/3 width
+
+            elif block_type == "faq" and "cta" in types_set:
+                width = 2  # Half width
+
+            elif block_type == "cta" and "faq" in types_set:
+                width = 2  # Half width
+
+            elif block_type == "image" and "text" in types_set:
+                width = 2  # Half width
+
+            elif block_type == "text" and "image" in types_set:
+                width = 2  # Half width
+
+            elif block_type in ["gallery", "slider", "logo-cloud"]:
+                width = 4
+
+            elif block_type == "video" and "text" in types_set:
+                width = 3
+
+            widths[block_type] = width
+
+        # Ensure minimum variance: at least 2 different widths if 4+ blocks
+        widths = self._ensure_layout_variance(widths, block_types)
+
+        return widths
+
+    def _choose_layout_pattern(
+        self,
+        block_types: list[str],
+        intent: PageIntent,
+    ) -> dict[str, int]:
+        """Choose a randomized layout pattern for visual variety.
+
+        Returns a partial dict of block_type -> width overrides.
+        """
+        types_set = set(block_types)
+
+        # Define layout pattern options
+        patterns: list[dict[str, int]] = []
+
+        # Pattern 1: Features 2/3 + Form 1/3 (conversion focused)
+        if "features" in types_set and "form" in types_set:
+            patterns.append({"features": 3, "form": 1})
+
+        # Pattern 2: Form 2/3 + Chat 1/3 (engagement focused)
+        if "form" in types_set and "chat" in types_set:
+            patterns.append({"form": 3, "chat": 1})
+
+        # Pattern 3: CTA 2/3 + Stats 1/3
+        if "cta" in types_set and "stats" in types_set:
+            patterns.append({"cta": 3, "stats": 1})
+
+        # Pattern 4: Testimonials half + CTA half
+        if "testimonials" in types_set and "cta" in types_set:
+            patterns.append({"testimonials": 2, "cta": 2})
+
+        # Pattern 5: FAQ half + Form half
+        if "faq" in types_set and "form" in types_set:
+            patterns.append({"faq": 2, "form": 2})
+
+        # Pattern 6: Stats full + Features 2/3 + CTA 1/3
+        if "features" in types_set and "cta" in types_set:
+            patterns.append({"features": 3, "cta": 1})
+
+        # Pattern 7: Image 2/3 + Form 1/3 (visual lead capture)
+        if "image" in types_set and "form" in types_set:
+            patterns.append({"image": 3, "form": 1})
+
+        # Pattern 8: Video 2/3 + CTA 1/3
+        if "video" in types_set and "cta" in types_set:
+            patterns.append({"video": 3, "cta": 1})
+
+        # If we have patterns, randomly choose one
+        if patterns:
+            return random.choice(patterns)
+
+        return {}
+
+    def _ensure_layout_variance(
+        self,
+        widths: dict[str, int],
+        block_types: list[str],
+    ) -> dict[str, int]:
+        """Ensure minimum layout variance for visual interest.
+
+        If all blocks are full width (4) and there are 4+ blocks,
+        randomly vary some block widths.
+        """
+        # Skip if few blocks
+        if len(block_types) < 4:
+            return widths
+
+        # Check current variance
+        unique_widths = set(widths.values())
+        if len(unique_widths) > 1:
+            return widths  # Already has variance
+
+        # Blocks that CAN be varied (not hero, pricing, gallery, etc.)
+        variable_blocks = [
+            bt for bt in block_types
+            if bt not in ["hero", "pricing", "gallery", "slider", "divider"]
+            and widths.get(bt, 4) == 4  # Currently full width
+        ]
+
+        if len(variable_blocks) < 2:
+            return widths  # Not enough blocks to vary
+
+        # Randomly select 2 blocks to make half-width (side by side)
+        to_vary = random.sample(variable_blocks, min(2, len(variable_blocks)))
+        for bt in to_vary:
+            widths[bt] = 2  # Half width
+
+        logger.debug(
+            "Applied layout variance",
+            varied_blocks=to_vary,
+        )
+
+        return widths
 
     def _generate_design_system(
         self,
@@ -814,123 +1058,422 @@ Choose the goal that best matches:
         plan: BlockPlan,
         design: DesignSystem,
     ) -> SynthesizedContent:
-        """Stage 5: Generate all block content in a single AI call.
+        """Stage 5: Generate block content using chunked AI calls.
 
-        Creates cohesive content with consistent tone and narrative.
+        Uses an agentic approach - first establishes brand context, then
+        generates each block type in focused batches to prevent content
+        truncation and ensure complete data.
         """
         # Build profile context
         profile_context = profile.get_ai_context() if profile.business_name else ""
 
-        # Build block list for AI
-        block_types = [pb.type for pb in plan.blocks]
+        # Step 1: Generate brand foundation (small, focused call)
+        brand = self._synthesize_brand_foundation(
+            profile, description, intent, design
+        )
 
-        prompt = f"""Generate cohesive landing page content for all these blocks: {', '.join(block_types)}
+        # Step 2: Generate blocks in focused batches
+        block_types = [pb.type for pb in plan.blocks]
+        all_blocks: list[SynthesizedBlockContent] = []
+
+        # Group blocks into logical batches (max 2-3 per call)
+        batches = self._create_block_batches(block_types)
+
+        for batch in batches:
+            batch_blocks = self._synthesize_block_batch(
+                batch, brand, profile_context, description, intent, design
+            )
+            all_blocks.extend(batch_blocks)
+
+        # Step 3: Generate SEO (separate focused call)
+        seo = self._synthesize_seo(brand, intent, design)
+
+        return SynthesizedContent(
+            blocks=all_blocks,
+            business_name=brand.get("business_name", profile.business_name or "Business"),
+            tagline=brand.get("tagline", profile.tagline or ""),
+            tone=brand.get("tone", "professional"),
+            narrative_theme=brand.get("narrative_theme", ""),
+            seo=seo,
+        )
+
+    def _synthesize_brand_foundation(
+        self,
+        profile: BusinessProfile,
+        description: str,
+        intent: PageIntent,
+        design: DesignSystem,
+    ) -> dict[str, Any]:
+        """Generate brand foundation - business name, tagline, tone, theme.
+
+        This is a small, focused AI call that establishes the creative direction
+        for all subsequent block generation.
+        """
+        profile_context = profile.get_ai_context() if profile.business_name else ""
+
+        prompt = f"""Extract/generate brand foundation for a landing page.
 
 BUSINESS CONTEXT:
-{profile_context or "No profile - use description below."}
+{profile_context or "No profile available."}
 
 USER DESCRIPTION:
 {description}
 
-PAGE INTENT:
-- Goal: {intent.goal.value}
-- Audience intent: {intent.audience_intent}
-- Content type: {intent.content_type}
-- Style: {design.style}
-
-IMPORTANT RULES:
-1. ALL content must be consistent in tone and messaging
-2. NO placeholder names like "Sarah M." or "James T." - use realistic full names or job titles
-3. NO fake stats like "100%", "24/7", "5+" unless from the profile
-4. Headlines must be SHORT and PUNCHY (3-6 words)
-5. Features focus on BENEFITS not features
-6. Include a unifying narrative theme across all blocks
+PAGE GOAL: {intent.goal.value}
+STYLE: {design.style}
 
 Return JSON:
 {{
-  "business_name": "Extracted or inferred business name",
-  "tagline": "Short memorable tagline (5-10 words)",
+  "business_name": "The business name (extract from context or infer)",
+  "tagline": "Memorable 5-10 word tagline",
   "tone": "professional|friendly|bold|playful",
-  "narrative_theme": "The unifying story/theme",
-  "seo": {{
-    "meta_title": "SEO title (40-60 chars, include business name and key benefit)",
-    "meta_description": "Compelling SEO description (120-155 chars, include CTA and value prop)"
-  }},
+  "narrative_theme": "The unifying story/message (1 sentence)",
+  "key_benefit": "The #1 benefit for visitors",
+  "target_action": "What visitors should do (e.g., 'schedule a call')"
+}}"""
+
+        system = "Extract brand information. Return only valid JSON."
+
+        try:
+            result = invoke_claude_json(prompt, system, workspace_id=None)
+            logger.info("Brand foundation generated", business_name=result.get("business_name"))
+            return result
+        except Exception as e:
+            logger.warning("Brand foundation failed, using defaults", error=str(e))
+            return {
+                "business_name": profile.business_name or "Business",
+                "tagline": profile.tagline or "",
+                "tone": "professional",
+                "narrative_theme": "",
+                "key_benefit": "quality service",
+                "target_action": "contact us",
+            }
+
+    def _create_block_batches(self, block_types: list[str]) -> list[list[str]]:
+        """Group blocks into logical batches for focused generation.
+
+        Keeps related blocks together while limiting batch size to prevent
+        AI from truncating content.
+        """
+        batches: list[list[str]] = []
+
+        # Define block groupings (related blocks generate better together)
+        block_groups = {
+            "hero": ["hero"],  # Hero alone - it's important
+            "features": ["features", "stats"],  # Often paired
+            "social_proof": ["testimonials", "logo-cloud"],
+            "conversion": ["cta", "form"],  # Conversion blocks
+            "info": ["faq", "pricing"],  # Information blocks
+            "media": ["image", "video", "gallery", "slider"],
+            "content": ["text", "divider"],
+            "engagement": ["chat"],
+        }
+
+        # Track which blocks have been assigned
+        assigned = set()
+
+        # First pass: group related blocks
+        for group_name, group_types in block_groups.items():
+            batch = [bt for bt in block_types if bt in group_types and bt not in assigned]
+            if batch:
+                # Split large batches
+                while len(batch) > 3:
+                    batches.append(batch[:2])
+                    assigned.update(batch[:2])
+                    batch = batch[2:]
+                if batch:
+                    batches.append(batch)
+                    assigned.update(batch)
+
+        # Second pass: catch any remaining blocks
+        remaining = [bt for bt in block_types if bt not in assigned]
+        for i in range(0, len(remaining), 2):
+            batches.append(remaining[i:i+2])
+
+        return batches
+
+    def _synthesize_block_batch(
+        self,
+        block_types: list[str],
+        brand: dict[str, Any],
+        profile_context: str,
+        description: str,
+        intent: PageIntent,
+        design: DesignSystem,
+    ) -> list[SynthesizedBlockContent]:
+        """Generate content for a small batch of blocks.
+
+        Focused AI call with explicit schemas for each block type.
+        """
+        # Build block-specific schemas
+        schemas = self._get_block_schemas(block_types)
+
+        prompt = f"""Generate landing page content for these blocks: {', '.join(block_types)}
+
+BRAND CONTEXT:
+- Business: {brand.get('business_name', 'Business')}
+- Tagline: {brand.get('tagline', '')}
+- Tone: {brand.get('tone', 'professional')}
+- Theme: {brand.get('narrative_theme', '')}
+- Key Benefit: {brand.get('key_benefit', '')}
+- Target Action: {brand.get('target_action', 'contact us')}
+
+BUSINESS DETAILS:
+{profile_context or description}
+
+RULES:
+- Match the {brand.get('tone', 'professional')} tone consistently
+- NO placeholder names - use realistic names or just titles
+- NO fake statistics - only use real numbers if provided
+- Headlines: SHORT (3-6 words), punchy
+- Focus on BENEFITS, not features
+
+Generate COMPLETE content for each block:
+
+{schemas}
+
+Return JSON:
+{{
   "blocks": [
-    {{
-      "block_type": "hero",
-      "content": {{
-        "headline": "Short Punchy Headline",
-        "subheadline": "Compelling value prop (15-25 words)",
-        "buttonText": "CTA Text",
-        "buttonLink": "#contact"
-      }}
-    }},
-    {{
-      "block_type": "features",
-      "content": {{
-        "title": "Section title",
-        "subtitle": "Section subtitle",
-        "items": [
-          {{"icon": "🚀", "title": "Benefit Title", "description": "Benefit description"}}
-        ]
-      }}
-    }},
-    // ... generate content for each block type in the list
+    // One object per block type with complete content
   ]
-}}
+}}"""
 
-SEO GUIDELINES:
-- meta_title: 40-60 characters, format "[Business Name] - [Key Benefit]" or "[Key Benefit] | [Business Name]"
-- meta_description: 120-155 characters, action-oriented, include what the visitor will get
-
-Generate content for: {', '.join(block_types)}"""
-
-        system = """You are an expert copywriter creating high-converting landing page content.
-Your content must be:
-- Cohesive and consistent in tone
-- Benefit-focused, not feature-focused
-- Free of placeholder content
-- Tailored to the specific business and audience
-
+        system = f"""Generate complete, high-quality content for {len(block_types)} landing page blocks.
+Each block must have ALL required fields populated with real, usable content.
 Return only valid JSON."""
 
         try:
             result = invoke_claude_json(prompt, system, workspace_id=None)
 
-            # Parse blocks
             blocks = []
             for block_data in result.get("blocks", []):
-                blocks.append(
-                    SynthesizedBlockContent(
-                        block_type=block_data.get("block_type", ""),
-                        content=block_data.get("content", {}),
+                block_type = block_data.get("block_type", "")
+                content = block_data.get("content", {})
+
+                # Validate content has required fields
+                if block_type and content:
+                    blocks.append(
+                        SynthesizedBlockContent(
+                            block_type=block_type,
+                            content=content,
+                        )
                     )
-                )
+                    logger.debug(f"Generated {block_type} block", keys=list(content.keys()))
 
-            # Parse SEO metadata
-            seo_data = result.get("seo", {})
-            seo = SynthesizedSeo(
-                meta_title=seo_data.get("meta_title", ""),
-                meta_description=seo_data.get("meta_description", ""),
-            )
+            # Log if we didn't get all blocks
+            generated_types = {b.block_type for b in blocks}
+            missing = set(block_types) - generated_types
+            if missing:
+                logger.warning("Some blocks not generated", missing=list(missing))
 
-            return SynthesizedContent(
-                blocks=blocks,
-                business_name=result.get("business_name", ""),
-                tagline=result.get("tagline", ""),
-                tone=result.get("tone", "professional"),
-                narrative_theme=result.get("narrative_theme", ""),
-                seo=seo,
-            )
+            return blocks
 
         except Exception as e:
-            logger.error("Content synthesis failed", error=str(e))
-            # Return minimal content
-            return SynthesizedContent(
-                business_name=profile.business_name or "Business",
-                tagline=profile.tagline or "",
-                tone="professional",
+            logger.error("Block batch synthesis failed", blocks=block_types, error=str(e))
+            return []
+
+    def _get_block_schemas(self, block_types: list[str]) -> str:
+        """Get explicit JSON schemas for block types to guide AI generation."""
+        schemas = []
+
+        schema_templates = {
+            "hero": '''HERO block:
+{
+  "block_type": "hero",
+  "content": {
+    "headline": "3-6 word punchy headline",
+    "subheadline": "15-25 word value proposition",
+    "buttonText": "CTA button text",
+    "buttonLink": "#contact"
+  }
+}''',
+            "features": '''FEATURES block:
+{
+  "block_type": "features",
+  "content": {
+    "title": "Section title",
+    "subtitle": "Section subtitle",
+    "items": [
+      {"icon": "🎯", "title": "Benefit 1", "description": "2-3 sentence description"},
+      {"icon": "⚡", "title": "Benefit 2", "description": "2-3 sentence description"},
+      {"icon": "🛡️", "title": "Benefit 3", "description": "2-3 sentence description"}
+    ]
+  }
+}''',
+            "testimonials": '''TESTIMONIALS block:
+{
+  "block_type": "testimonials",
+  "content": {
+    "title": "What Our Clients Say",
+    "items": [
+      {"quote": "Detailed testimonial quote (2-3 sentences)", "author": "Full Name", "role": "Job Title", "company": "Company Name"},
+      {"quote": "Another testimonial", "author": "Full Name", "role": "Job Title", "company": "Company Name"}
+    ]
+  }
+}''',
+            "cta": '''CTA block:
+{
+  "block_type": "cta",
+  "content": {
+    "headline": "Compelling call to action headline",
+    "description": "1-2 sentence supporting text",
+    "buttonText": "Action button text",
+    "buttonLink": "#contact"
+  }
+}''',
+            "faq": '''FAQ block:
+{
+  "block_type": "faq",
+  "content": {
+    "title": "Frequently Asked Questions",
+    "items": [
+      {"question": "Common question?", "answer": "Detailed helpful answer (2-3 sentences)"},
+      {"question": "Another question?", "answer": "Another helpful answer"},
+      {"question": "Third question?", "answer": "Third answer"}
+    ]
+  }
+}''',
+            "stats": '''STATS block:
+{
+  "block_type": "stats",
+  "content": {
+    "title": "Our Impact",
+    "items": [
+      {"value": "500+", "label": "Happy Clients"},
+      {"value": "10+", "label": "Years Experience"},
+      {"value": "98%", "label": "Satisfaction Rate"}
+    ]
+  }
+}''',
+            "pricing": '''PRICING block:
+{
+  "block_type": "pricing",
+  "content": {
+    "title": "Pricing Plans",
+    "subtitle": "Choose the right plan for you",
+    "items": [
+      {"name": "Starter", "price": "$49/mo", "description": "For individuals", "features": ["Feature 1", "Feature 2"], "highlighted": false},
+      {"name": "Professional", "price": "$99/mo", "description": "For teams", "features": ["All Starter features", "Feature 3"], "highlighted": true}
+    ]
+  }
+}''',
+            "form": '''FORM block:
+{
+  "block_type": "form",
+  "content": {
+    "title": "Get in Touch",
+    "description": "Fill out the form and we'll respond within 24 hours."
+  }
+}''',
+            "chat": '''CHAT block:
+{
+  "block_type": "chat",
+  "content": {
+    "title": "Questions?",
+    "subtitle": "Chat with us for instant answers",
+    "placeholder": "Type your question..."
+  }
+}''',
+            "text": '''TEXT block:
+{
+  "block_type": "text",
+  "content": {
+    "content": "Rich text content with paragraphs...",
+    "alignment": "left"
+  }
+}''',
+            "image": '''IMAGE block:
+{
+  "block_type": "image",
+  "content": {
+    "alt": "Descriptive alt text",
+    "caption": "Optional image caption"
+  }
+}''',
+            "video": '''VIDEO block:
+{
+  "block_type": "video",
+  "content": {
+    "title": "Watch Our Story",
+    "url": ""
+  }
+}''',
+            "divider": '''DIVIDER block:
+{
+  "block_type": "divider",
+  "content": {
+    "style": "line"
+  }
+}''',
+            "gallery": '''GALLERY block:
+{
+  "block_type": "gallery",
+  "content": {
+    "title": "Our Work",
+    "images": []
+  }
+}''',
+            "slider": '''SLIDER block:
+{
+  "block_type": "slider",
+  "content": {
+    "slides": []
+  }
+}''',
+            "logo-cloud": '''LOGO-CLOUD block:
+{
+  "block_type": "logo-cloud",
+  "content": {
+    "title": "Trusted By",
+    "logos": []
+  }
+}''',
+        }
+
+        for bt in block_types:
+            if bt in schema_templates:
+                schemas.append(schema_templates[bt])
+
+        return "\n\n".join(schemas)
+
+    def _synthesize_seo(
+        self,
+        brand: dict[str, Any],
+        intent: PageIntent,
+        design: DesignSystem,
+    ) -> SynthesizedSeo:
+        """Generate SEO metadata in a focused call."""
+        business_name = brand.get("business_name", "Business")
+        tagline = brand.get("tagline", "")
+        key_benefit = brand.get("key_benefit", "")
+
+        prompt = f"""Generate SEO metadata for a {intent.goal.value} landing page.
+
+Business: {business_name}
+Tagline: {tagline}
+Key Benefit: {key_benefit}
+Target Action: {brand.get('target_action', 'contact us')}
+
+Return JSON:
+{{
+  "meta_title": "40-60 chars, format: [Business] - [Benefit] or [Benefit] | [Business]",
+  "meta_description": "120-155 chars, action-oriented, include value prop and CTA"
+}}"""
+
+        system = "Generate SEO metadata. Return only valid JSON."
+
+        try:
+            result = invoke_claude_json(prompt, system, workspace_id=None)
+            return SynthesizedSeo(
+                meta_title=result.get("meta_title", f"{business_name} - {key_benefit}")[:70],
+                meta_description=result.get("meta_description", tagline)[:160],
+            )
+        except Exception as e:
+            logger.warning("SEO synthesis failed", error=str(e))
+            return SynthesizedSeo(
+                meta_title=f"{business_name} - {key_benefit}"[:70],
+                meta_description=tagline[:160] if tagline else f"Learn more about {business_name}",
             )
 
     def _configure_blocks(
@@ -942,6 +1485,7 @@ Return only valid JSON."""
         """Stage 6: Build validated PageBlock list.
 
         Combines synthesized content with design system and plan.
+        Uses the 12-column grid layout for proper responsive design.
         """
         blocks: list[PageBlock] = []
 
@@ -950,7 +1494,24 @@ Return only valid JSON."""
             bc.block_type: bc.content for bc in synthesized.blocks
         }
 
+        # Convert planned widths (1-4 scale) to 12-column grid
+        # and arrange blocks into rows
+        current_row = 0
+        current_col = 0  # Current column position within row
+        row_blocks: list[tuple[int, PlannedBlock]] = []  # (order, planned) pairs in current row
+
         for order, planned in enumerate(plan.blocks):
+            # Convert width (1-4) to colSpan (12-column grid)
+            # width=4 -> full width (12), width=2 -> half (6), width=1 -> third (4)
+            width_to_colspan = {1: 4, 2: 6, 3: 8, 4: 12}
+            col_span = width_to_colspan.get(planned.width, 12)
+
+            # Check if this block fits in the current row
+            if current_col + col_span > 12:
+                # Start a new row
+                current_row += 1
+                current_col = 0
+
             block_id = str(uuid4())[:8]
             content = content_lookup.get(planned.type, {})
 
@@ -964,10 +1525,17 @@ Return only valid JSON."""
                     id=block_id,
                     type=planned.type,
                     order=order,
-                    width=planned.width,
+                    width=planned.width,  # Keep legacy width for backwards compatibility
                     config=config,
+                    # 12-column grid layout
+                    row=current_row,
+                    colSpan=col_span,
+                    colStart=current_col,
                 )
             )
+
+            # Move to next column position
+            current_col += col_span
 
         return blocks
 
@@ -1117,10 +1685,39 @@ Return only valid JSON."""
         intent: PageIntent,
         synthesized: SynthesizedContent,
     ) -> WorkflowConfig:
-        """Create workflow configuration."""
+        """Create workflow configuration with clear form-to-notification connection.
+
+        IMPORTANT: This workflow is the KEY automation that connects form submissions
+        to user notifications. It ensures:
+        1. The page owner gets notified of new leads (notify_owner=True)
+        2. Leads receive a welcome email (send_welcome_email=True)
+        3. Contacts are tagged for segmentation
+
+        The workflow is REQUIRED for lead capture to work properly.
+        """
+        business_name = synthesized.business_name or "Your Business"
+
+        # Generate a contextual welcome message based on intent
+        welcome_messages = {
+            "lead-gen": f"Thanks for reaching out to {business_name}! We've received your message and will get back to you shortly.",
+            "services": f"Thank you for your interest in {business_name}'s services! Our team will contact you within 24 hours.",
+            "event": f"You're registered! We'll send you event details and reminders for {business_name}'s upcoming event.",
+            "product-launch": f"Thanks for your interest in {business_name}! We'll notify you when we launch.",
+            "portfolio": f"Thanks for reaching out to {business_name}! We look forward to discussing your project.",
+            "coming-soon": f"You're on the list! We'll notify you when {business_name} launches.",
+            "comparison": f"Thanks for your interest! We'll help you find the right solution from {business_name}.",
+        }
+
+        welcome_message = welcome_messages.get(
+            intent.goal.value,
+            f"Thanks for contacting {business_name}! We'll be in touch soon."
+        )
+
         return WorkflowConfig(
-            name=f"Lead Automation - {synthesized.business_name}",
+            name=f"Lead Automation - {business_name}",
             send_welcome_email=True,
-            notify_owner=True,
-            add_tags=["lead", intent.goal.value],
+            notify_owner=True,  # CRITICAL: Ensures owner gets notified of new leads
+            owner_email=None,  # Will use workspace notification email
+            welcome_message=welcome_message,
+            add_tags=["lead", "website", intent.goal.value],
         )

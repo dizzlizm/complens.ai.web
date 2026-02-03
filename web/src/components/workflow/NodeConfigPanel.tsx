@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Zap, Play, GitBranch, Sparkles, Loader2, ChevronDown, Variable, Plus, Trash2, FileText } from 'lucide-react';
+import { X, Zap, Play, GitBranch, Sparkles, Loader2, ChevronDown, Variable, Plus, Trash2, FileText, Eye, Settings } from 'lucide-react';
 import { type Node } from '@xyflow/react';
 import { useForms, usePageForms } from '../../lib/hooks/useForms';
 import { usePages, usePage } from '../../lib/hooks/usePages';
 import { useWorkflows } from '../../lib/hooks/useWorkflows';
 import { useContacts } from '../../lib/hooks/useContacts';
+import EmailPreview from '../workflow-builder/EmailPreview';
 
 interface NodeData {
   label: string;
@@ -839,6 +840,7 @@ function getNodeColor(type: string) {
 export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, onUpdate }: NodeConfigPanelProps) {
   const [localLabel, setLocalLabel] = useState('');
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
+  const [activeTab, setActiveTab] = useState<'config' | 'preview'>('config');
   const prevNodeIdRef = useRef<string | null>(null);
 
   // Determine if we're in page-specific context
@@ -925,6 +927,7 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
       const nodeData = node.data as unknown as NodeData;
       setLocalLabel(nodeData.label || '');
       setLocalConfig(nodeData.config || {});
+      setActiveTab('config');
       prevNodeIdRef.current = node.id;
     }
   }, [node]);
@@ -990,41 +993,81 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
         )}
       </div>
 
+      {/* Tab bar for email nodes */}
+      {nodeType === 'action_send_email' && (
+        <div className="flex border-b border-gray-200">
+          <button
+            onClick={() => setActiveTab('config')}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'config'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Settings className="w-4 h-4" />
+            Configure
+          </button>
+          <button
+            onClick={() => setActiveTab('preview')}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'preview'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Eye className="w-4 h-4" />
+            Preview
+          </button>
+        </div>
+      )}
+
       {/* Config fields */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Node label */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Node Label</label>
-          <input
-            type="text"
-            value={localLabel}
-            onChange={(e) => handleLabelChange(e.target.value)}
-            className="input text-sm"
-            placeholder="Node name"
+      {activeTab === 'config' ? (
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Node label */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Node Label</label>
+            <input
+              type="text"
+              value={localLabel}
+              onChange={(e) => handleLabelChange(e.target.value)}
+              className="input text-sm"
+              placeholder="Node name"
+            />
+          </div>
+
+          {config.fields.length > 0 && <hr className="border-gray-200" />}
+
+          {/* Type-specific fields */}
+          {config.fields.map((field) => {
+            const dynamicData = ['dynamic_select', 'tag_input'].includes(field.type)
+              ? getDynamicOptions(field.dataSource)
+              : { options: [], isLoading: false, contextNote: undefined };
+
+            return (
+              <ConfigField
+                key={field.key}
+                field={field}
+                value={localConfig[field.key]}
+                onChange={(value) => handleFieldChange(field.key, value)}
+                dynamicOptions={dynamicData.options}
+                isLoading={dynamicData.isLoading}
+                contextNote={dynamicData.contextNote}
+              />
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto p-4">
+          <EmailPreview
+            workspaceId={workspaceId || ''}
+            workflowId={node.id}
+            subject={(localConfig.email_subject as string) || ''}
+            bodyHtml={(localConfig.email_body as string) || ''}
+            toEmail={(localConfig.email_to as string) || ''}
           />
         </div>
-
-        {config.fields.length > 0 && <hr className="border-gray-200" />}
-
-        {/* Type-specific fields */}
-        {config.fields.map((field) => {
-          const dynamicData = ['dynamic_select', 'tag_input'].includes(field.type)
-            ? getDynamicOptions(field.dataSource)
-            : { options: [], isLoading: false, contextNote: undefined };
-
-          return (
-            <ConfigField
-              key={field.key}
-              field={field}
-              value={localConfig[field.key]}
-              onChange={(value) => handleFieldChange(field.key, value)}
-              dynamicOptions={dynamicData.options}
-              isLoading={dynamicData.isLoading}
-              contextNote={dynamicData.contextNote}
-            />
-          );
-        })}
-      </div>
+      )}
 
       {/* Footer hint */}
       <div className="p-3 border-t border-gray-200 bg-gray-50">

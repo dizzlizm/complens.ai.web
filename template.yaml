@@ -832,6 +832,100 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}
             Method: DELETE
+        GetIntegrations:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations
+            Method: GET
+        SaveTwilio:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations/twilio
+            Method: PUT
+        SaveSegment:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations/segment
+            Method: PUT
+        TestTwilio:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations/twilio/test
+            Method: POST
+        DisconnectTwilio:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations/twilio
+            Method: DELETE
+        DisconnectSegment:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations/segment
+            Method: DELETE
+
+  TeamFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-team"
+      Handler: team.handler
+      CodeUri: src/handlers/api/
+      Description: Team management and invitations
+      Environment:
+        Variables:
+          COGNITO_USER_POOL_ID: !Ref UserPool
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:AdminGetUser
+                - cognito-idp:AdminUpdateUserAttributes
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        ListTeam:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/team
+            Method: GET
+        InviteMember:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/team/invite
+            Method: POST
+        UpdateMember:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/team/{user_id}
+            Method: PUT
+        RemoveMember:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/team/{user_id}
+            Method: DELETE
+        RevokeInvitation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/team/invitations/{email}
+            Method: DELETE
+        AcceptInvitation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /team/accept-invite
+            Method: POST
 
   ContactsFunction:
     Type: AWS::Serverless::Function
@@ -1037,6 +1131,12 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/workflows/{workflow_id}/runs
             Method: GET
+        TestEmail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflows/{workflow_id}/test-email
+            Method: POST
 
   PagesFunction:
     Type: AWS::Serverless::Function
@@ -1969,6 +2069,25 @@ Resources:
   # ============================================
   # Stripe Connect API
   # ============================================
+  AnalyticsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-analytics"
+      Handler: analytics.handler
+      CodeUri: src/handlers/api/
+      Description: Analytics and reporting
+      Timeout: 60
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Events:
+        GetAnalytics:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/analytics
+            Method: GET
+
   StripeFunction:
     Type: AWS::Serverless::Function
     Properties:

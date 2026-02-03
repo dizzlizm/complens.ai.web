@@ -119,7 +119,7 @@ class AIAgentService:
 
     def __init__(
         self,
-        model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0",
+        model_id: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
         max_tokens: int = 1000,
     ):
         """Initialize AI Agent service.

@@ -18,10 +18,9 @@ from complens.repositories.business_profile import BusinessProfileRepository
 logger = structlog.get_logger()
 
 # Bedrock model configuration
-# Using models available in your Bedrock account
-# Haiku 4.5 requires inference profile (us. prefix), Sonnet 3.0 works with direct model ID
-DEFAULT_MODEL = "anthropic.claude-3-sonnet-20240229-v1:0"  # Claude 3 Sonnet
-FAST_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"  # Claude Haiku 4.5 (inference profile)
+# Using cross-region inference profiles (us. prefix) for newer models
+DEFAULT_MODEL = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"  # Claude Sonnet 4.5
+FAST_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"  # Claude Haiku 4.5
 IMAGE_MODEL = "amazon.titan-image-generator-v2:0"  # Amazon Titan Image Generator v2
 
 # Bedrock timeout configuration

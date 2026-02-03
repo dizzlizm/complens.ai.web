@@ -9,6 +9,7 @@ import AuthLayout from './layouts/AuthLayout';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 import ForgotPassword from './pages/auth/ForgotPassword';
+import AcceptInvite from './pages/auth/AcceptInvite';
 
 // App pages
 import Dashboard from './pages/Dashboard';
@@ -60,6 +61,9 @@ function App() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/profile" element={<Profile />} />
           </Route>
+
+          {/* Accept invitation (handles both auth states internally) */}
+          <Route path="/accept-invite" element={<AcceptInvite />} />
 
           {/* Public pages (no auth required) */}
           <Route path="/p/:pageSlug" element={<PublicPage />} />
