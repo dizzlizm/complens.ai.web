@@ -1,4 +1,7 @@
-"""Authentication context helpers."""
+"""Authentication context helpers.
+
+Updated: 2026-02-02 for improved authorizer context extraction.
+"""
 
 from dataclasses import dataclass
 from typing import Any
@@ -56,14 +59,26 @@ def get_auth_context(event: dict[str, Any]) -> AuthContext:
     # depending on payload format version
     context = authorizer
 
-    # Try to get from lambda authorizer context
+    # Try to get from lambda authorizer context (HTTP API v2)
     if "lambda" in authorizer:
         context = authorizer["lambda"]
 
+    # Try to get from JWT claims (Cognito authorizer)
+    if "claims" in authorizer:
+        context = authorizer["claims"]
+
     user_id = context.get("userId") or context.get("user_id") or context.get("sub")
 
+    # Also check principalId as fallback (set by Lambda authorizer)
     if not user_id:
-        logger.warning("No user ID in auth context", authorizer=authorizer)
+        user_id = request_context.get("authorizer", {}).get("principalId")
+
+    if not user_id:
+        logger.warning(
+            "No user ID in auth context",
+            authorizer=authorizer,
+            request_context_keys=list(request_context.keys()),
+        )
         raise ValueError("No user ID in authentication context")
 
     email = context.get("email")

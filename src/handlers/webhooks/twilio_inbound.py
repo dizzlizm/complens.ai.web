@@ -41,10 +41,13 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         else:
             data = {}
 
-        # Validate Twilio signature (optional but recommended)
+        # Validate Twilio signature (required for security)
         if not _validate_twilio_signature(event, body):
-            logger.warning("Invalid Twilio signature")
-            # Continue anyway for now - in production you'd reject
+            logger.warning("Rejecting webhook due to invalid Twilio signature")
+            return {
+                "statusCode": 403,
+                "body": "Invalid signature",
+            }
 
         if "/sms" in path:
             return handle_inbound_sms(data)
@@ -164,23 +167,35 @@ def handle_inbound_voice(data: dict) -> dict:
 def _validate_twilio_signature(event: dict, body: str) -> bool:
     """Validate Twilio webhook signature.
 
+    SECURITY: This function fails closed - if validation cannot be performed,
+    it returns False to reject the request.
+
     Args:
         event: API Gateway event.
         body: Request body.
 
     Returns:
-        True if valid.
+        True if valid, False otherwise.
     """
     auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
     if not auth_token:
-        logger.debug("Twilio auth token not configured, skipping signature validation")
-        return True  # Skip validation if not configured
+        # CONFIGURATION ERROR: Auth token not set - this is a server config issue
+        # Log at error level to ensure ops team is alerted
+        logger.error(
+            "CONFIGURATION ERROR: TWILIO_AUTH_TOKEN not configured",
+            hint="Set TWILIO_AUTH_TOKEN environment variable to enable webhook validation",
+        )
+        return False
 
     headers = event.get("headers", {}) or {}
     signature = headers.get("X-Twilio-Signature") or headers.get("x-twilio-signature")
 
     if not signature:
-        logger.warning("No Twilio signature header found")
+        # SECURITY WARNING: Missing signature could indicate spoofing attempt
+        logger.warning(
+            "SECURITY: Twilio webhook missing signature header - possible spoofing attempt",
+            headers_present=list(headers.keys()),
+        )
         return False
 
     try:
@@ -200,9 +215,9 @@ def _validate_twilio_signature(event: dict, body: str) -> bool:
                 path = path[len(f"/{stage}"):]
             url = f"https://{domain}/{stage}{path}"
         else:
-            # Fallback: cannot validate without URL
-            logger.warning("Cannot determine webhook URL for signature validation")
-            return True
+            # SECURITY: Cannot validate without URL
+            logger.warning("Cannot determine webhook URL for signature validation, rejecting")
+            return False
 
         # Parse the body into params
         params = {}
@@ -214,20 +229,30 @@ def _validate_twilio_signature(event: dict, body: str) -> bool:
         is_valid = validator.validate(url, params, signature)
 
         if not is_valid:
+            # SECURITY WARNING: Invalid signature - webhook rejected
             logger.warning(
-                "Invalid Twilio signature",
+                "SECURITY: Invalid Twilio signature - webhook rejected",
                 url=url,
-                signature=signature[:20] + "...",
+                signature_prefix=signature[:20] + "..." if len(signature) > 20 else signature,
             )
 
         return is_valid
 
     except ImportError:
-        logger.warning("twilio package not available for signature validation")
-        return True
+        # CONFIGURATION ERROR: twilio package not installed
+        logger.error(
+            "CONFIGURATION ERROR: twilio package not available for signature validation",
+            hint="Install twilio package: pip install twilio",
+        )
+        return False
     except Exception as e:
-        logger.error("Signature validation error", error=str(e))
-        return True  # Fail open to avoid blocking webhooks
+        # SECURITY: Fail closed on any validation error
+        logger.error(
+            "SECURITY: Signature validation error - webhook rejected",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return False
 
 
 def _twiml_response(twiml: str) -> dict:

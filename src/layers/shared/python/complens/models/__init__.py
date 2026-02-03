@@ -44,6 +44,21 @@ from complens.models.domain import (
     CreateDomainRequest,
     DomainStatusResponse,
 )
+from complens.models.synthesis import (
+    SynthesisResult,
+    SynthesizePageRequest,
+    PageIntent,
+    PageGoal,
+    ContentAssessment,
+    BlockPlan,
+    DesignSystem,
+    SynthesisMetadata,
+)
+from complens.models.block_schemas import (
+    BLOCK_SCHEMAS,
+    validate_block_config,
+    DEFAULT_BLOCK_CONFIGS,
+)
 
 __all__ = [
     # Base
@@ -103,4 +118,17 @@ __all__ = [
     "DomainStatus",
     "CreateDomainRequest",
     "DomainStatusResponse",
+    # Synthesis
+    "SynthesisResult",
+    "SynthesizePageRequest",
+    "PageIntent",
+    "PageGoal",
+    "ContentAssessment",
+    "BlockPlan",
+    "DesignSystem",
+    "SynthesisMetadata",
+    # Block Schemas
+    "BLOCK_SCHEMAS",
+    "validate_block_config",
+    "DEFAULT_BLOCK_CONFIGS",
 ]

@@ -193,12 +193,15 @@ def create_domain(workspace_id: str, event: dict) -> dict:
         )
 
         # Get validation records (may take a moment to be available)
+        # Use exponential backoff to be efficient while waiting for ACM
         import time
         validation_name = None
         validation_value = None
 
-        for _ in range(5):  # Retry a few times
-            time.sleep(1)
+        # Exponential backoff: 1s, 2s, 4s, 8s, 15s = 30s total max wait
+        backoff_delays = [1, 2, 4, 8, 15]
+
+        for delay in backoff_delays:
             cert_details = acm.describe_certificate(CertificateArn=certificate_arn)
             options = cert_details.get("Certificate", {}).get("DomainValidationOptions", [])
 
@@ -206,10 +209,22 @@ def create_domain(workspace_id: str, event: dict) -> dict:
                 record = options[0]["ResourceRecord"]
                 validation_name = record["Name"]
                 validation_value = record["Value"]
+                logger.info(
+                    "Validation records retrieved",
+                    domain=request.domain,
+                    wait_iterations=backoff_delays.index(delay) + 1,
+                )
                 break
 
+            # Wait before next attempt
+            time.sleep(delay)
+
         if not validation_name:
-            logger.warning("Validation records not yet available", domain=request.domain)
+            logger.warning(
+                "Validation records not available after exponential backoff",
+                domain=request.domain,
+                total_wait_seconds=sum(backoff_delays),
+            )
 
     except Exception as e:
         logger.exception("Failed to request ACM certificate", error=str(e))

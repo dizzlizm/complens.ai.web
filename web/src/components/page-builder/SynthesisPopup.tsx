@@ -1,15 +1,30 @@
 import { useState, useCallback } from 'react';
-import { X, Sparkles, Loader2, ChevronRight, AlertCircle } from 'lucide-react';
+import { X, Sparkles, Loader2, ChevronRight, AlertCircle, FileText, Workflow, Image, Check } from 'lucide-react';
 import { BlockType, BLOCK_TYPES, PageBlock } from './types';
-import { useSynthesizePage, SynthesisResult } from '../../lib/hooks/useAI';
+import { useSynthesizePage, useGenerateImage, SynthesisResult } from '../../lib/hooks/useAI';
 import { useCurrentWorkspace } from '../../lib/hooks/useWorkspaces';
 
 interface SynthesisPopupProps {
   selectedBlockTypes: BlockType[];
+  selectedSlotIds?: string[];  // Optional: slot IDs from visual canvas
   pageId?: string;
   onClose: () => void;
-  onApply: (blocks: PageBlock[], synthesisResult: SynthesisResult) => void;
+  onApply: (blocks: PageBlock[], synthesisResult: SynthesisResult, options: ApplyOptions) => void;
 }
+
+interface ApplyOptions {
+  createForm: boolean;
+  createWorkflow: boolean;
+  generateImages: boolean;
+  // Workflow configuration
+  workflowTags: string[];
+  notifyOwner: boolean;
+  ownerEmail: string;
+  sendWelcomeEmail: boolean;
+}
+
+// Blocks that can benefit from AI-generated images
+const IMAGE_CAPABLE_BLOCKS = ['hero', 'testimonials', 'image', 'gallery', 'slider'];
 
 const STYLE_OPTIONS = [
   { value: 'professional', label: 'Professional', description: 'Clean, corporate, trustworthy' },
@@ -20,6 +35,7 @@ const STYLE_OPTIONS = [
 
 export default function SynthesisPopup({
   selectedBlockTypes,
+  selectedSlotIds: _selectedSlotIds = [],  // Reserved for future slot-specific generation
   pageId,
   onClose,
   onApply,
@@ -30,7 +46,27 @@ export default function SynthesisPopup({
   const [showPreview, setShowPreview] = useState(false);
   const [synthesisResult, setSynthesisResult] = useState<SynthesisResult | null>(null);
 
+  // Options for what to create alongside blocks
+  const [createForm, setCreateForm] = useState(true);
+  const [createWorkflow, setCreateWorkflow] = useState(true);
+  const [generateImages, setGenerateImages] = useState(true);
+  const [isGeneratingImages, setIsGeneratingImages] = useState(false);
+  const [imageProgress, setImageProgress] = useState<string>('');
+
+  // Workflow configuration
+  const [workflowTags, setWorkflowTags] = useState<string>('lead, website');
+  const [notifyOwner, setNotifyOwner] = useState(true);
+  const [ownerEmail, setOwnerEmail] = useState('');
+  const [sendWelcomeEmail, setSendWelcomeEmail] = useState(true);
+
   const synthesizePage = useSynthesizePage(workspaceId || '');
+  const generateImage = useGenerateImage(workspaceId || '');
+
+  // Check if any selected blocks can use images
+  const hasImageCapableBlocks = selectedBlockTypes.some(type => IMAGE_CAPABLE_BLOCKS.includes(type));
+
+  // Check if form/workflow will be created
+  const willHaveForm = selectedBlockTypes.includes('form') || synthesisResult?.form_config;
 
   // Get block labels for display
   const getBlockLabel = (type: BlockType): string => {
@@ -59,12 +95,120 @@ export default function SynthesisPopup({
     }
   }, [workspaceId, synthesizePage, description, style, pageId, selectedBlockTypes]);
 
+  // Generate images for blocks that need them
+  const generateImagesForBlocks = useCallback(async (blocks: SynthesisResult['blocks']): Promise<SynthesisResult['blocks']> => {
+    const updatedBlocks = [...blocks];
+
+    // Extract design context from synthesis result
+    const colors = synthesisResult?.design_system?.colors;
+    const designStyle = synthesisResult?.design_system?.style || style;
+    const businessName = synthesisResult?.business_name || 'business';
+    const tagline = synthesisResult?.tagline || '';
+    const goal = synthesisResult?.intent?.goal || 'professional';
+
+    // Build color description for prompts
+    const colorContext = colors
+      ? `brand colors: ${colors.primary} (primary), ${colors.secondary} (secondary), ${colors.accent} (accent)`
+      : 'professional corporate colors';
+
+    for (let i = 0; i < updatedBlocks.length; i++) {
+      const block = updatedBlocks[i];
+
+      // Hero block - generate abstract background with brand colors
+      if (block.type === 'hero' && !block.config.backgroundImage) {
+        setImageProgress(`Generating hero background...`);
+        try {
+          const result = await generateImage.mutateAsync({
+            context: businessName,
+            prompt: `Abstract gradient background for ${businessName}${tagline ? ` - ${tagline}` : ''}, ${designStyle} style, ${colorContext}, modern minimalist design, subtle geometric patterns, no text, high quality`,
+            style: designStyle === 'playful' ? 'vibrant' : designStyle === 'bold' ? 'dramatic' : 'professional',
+          });
+          updatedBlocks[i] = {
+            ...block,
+            config: {
+              ...block.config,
+              backgroundType: 'image',
+              backgroundImage: result.url,
+            },
+          };
+        } catch (e) {
+          console.warn('Failed to generate hero image:', e);
+        }
+      }
+
+      // Testimonials - generate placeholder avatars with brand aesthetic
+      if (block.type === 'testimonials') {
+        const items = (block.config.items as Array<{ quote: string; author: string; company: string; avatar?: string }>) || [];
+        const updatedItems = [];
+
+        for (let j = 0; j < items.length; j++) {
+          const item = items[j];
+          if (!item.avatar) {
+            setImageProgress(`Generating avatar ${j + 1}/${items.length}...`);
+            try {
+              const result = await generateImage.mutateAsync({
+                prompt: `Professional headshot avatar, abstract geometric style, ${designStyle} aesthetic, ${colors?.primary || 'blue'} accent tones, neutral background, modern corporate portrait`,
+                style: 'portrait',
+                width: 512,
+                height: 512,
+              });
+              updatedItems.push({ ...item, avatar: result.url });
+            } catch (e) {
+              console.warn('Failed to generate testimonial avatar:', e);
+              updatedItems.push(item);
+            }
+          } else {
+            updatedItems.push(item);
+          }
+        }
+
+        updatedBlocks[i] = {
+          ...block,
+          config: { ...block.config, items: updatedItems },
+        };
+      }
+
+      // Image block - generate if no URL with brand context
+      if (block.type === 'image' && !(block.config as { url?: string }).url) {
+        setImageProgress(`Generating image...`);
+        try {
+          const result = await generateImage.mutateAsync({
+            context: businessName,
+            prompt: `Professional ${goal} image for ${businessName}, ${designStyle} style, ${colorContext}, high quality, modern`,
+            style: designStyle,
+          });
+          updatedBlocks[i] = {
+            ...block,
+            config: { ...block.config, url: result.url },
+          };
+        } catch (e) {
+          console.warn('Failed to generate image:', e);
+        }
+      }
+    }
+
+    setImageProgress('');
+    return updatedBlocks;
+  }, [generateImage, synthesisResult, style]);
+
   // Handle apply
-  const handleApply = useCallback(() => {
+  const handleApply = useCallback(async () => {
     if (!synthesisResult) return;
 
+    let finalBlocks = synthesisResult.blocks;
+
+    // Generate images if enabled and there are image-capable blocks
+    if (generateImages && hasImageCapableBlocks) {
+      setIsGeneratingImages(true);
+      try {
+        finalBlocks = await generateImagesForBlocks(finalBlocks);
+      } finally {
+        setIsGeneratingImages(false);
+      }
+    }
+
     // Convert synthesis blocks to PageBlock format
-    const blocks: PageBlock[] = synthesisResult.blocks.map((block, index) => ({
+    const blocks: PageBlock[] = finalBlocks.map((block, index) => ({
       id: block.id,
       type: block.type as BlockType,
       config: block.config,
@@ -72,9 +216,17 @@ export default function SynthesisPopup({
       width: (block.width || 4) as 1 | 2 | 3 | 4,
     }));
 
-    onApply(blocks, synthesisResult);
+    onApply(blocks, synthesisResult, {
+      createForm,
+      createWorkflow,
+      generateImages,
+      workflowTags: workflowTags.split(',').map(t => t.trim()).filter(Boolean),
+      notifyOwner,
+      ownerEmail,
+      sendWelcomeEmail,
+    });
     onClose();
-  }, [synthesisResult, onApply, onClose]);
+  }, [synthesisResult, generateImages, hasImageCapableBlocks, generateImagesForBlocks, onApply, onClose, createForm, createWorkflow, workflowTags, notifyOwner, ownerEmail, sendWelcomeEmail]);
 
   // Render preview content
   const renderPreview = () => {
@@ -184,6 +336,147 @@ export default function SynthesisPopup({
           <span className="text-xs text-gray-500 capitalize">
             {synthesisResult.design_system.style} style
           </span>
+        </div>
+
+        {/* Creation Options */}
+        <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+          <h5 className="text-sm font-medium text-gray-700">Also create:</h5>
+
+          {/* Form option */}
+          {willHaveForm && (
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <div className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${
+                createForm ? 'bg-indigo-600' : 'bg-gray-200 group-hover:bg-gray-300'
+              }`}>
+                {createForm && <Check className="w-3 h-3 text-white" />}
+              </div>
+              <input
+                type="checkbox"
+                checked={createForm}
+                onChange={(e) => setCreateForm(e.target.checked)}
+                className="sr-only"
+              />
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-indigo-600" />
+                <div>
+                  <span className="text-sm text-gray-900">Lead Capture Form</span>
+                  <p className="text-xs text-gray-500">Auto-create form from synthesis</p>
+                </div>
+              </div>
+            </label>
+          )}
+
+          {/* Workflow option */}
+          {willHaveForm && (
+            <div className="space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <div className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${
+                  createWorkflow ? 'bg-indigo-600' : 'bg-gray-200 group-hover:bg-gray-300'
+                }`}>
+                  {createWorkflow && <Check className="w-3 h-3 text-white" />}
+                </div>
+                <input
+                  type="checkbox"
+                  checked={createWorkflow}
+                  onChange={(e) => setCreateWorkflow(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className="flex items-center gap-2">
+                  <Workflow className="w-4 h-4 text-green-600" />
+                  <div>
+                    <span className="text-sm text-gray-900">Lead Automation Workflow</span>
+                    <p className="text-xs text-gray-500">Automate what happens when form is submitted</p>
+                  </div>
+                </div>
+              </label>
+
+              {/* Workflow configuration - shown when workflow is enabled */}
+              {createWorkflow && (
+                <div className="ml-8 pl-4 border-l-2 border-green-200 space-y-3">
+                  {/* Tags */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Add tags to new contacts
+                    </label>
+                    <input
+                      type="text"
+                      value={workflowTags}
+                      onChange={(e) => setWorkflowTags(e.target.value)}
+                      placeholder="lead, website, inquiry"
+                      className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                    <p className="text-xs text-gray-400 mt-0.5">Comma-separated list</p>
+                  </div>
+
+                  {/* Send welcome email */}
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={sendWelcomeEmail}
+                      onChange={(e) => setSendWelcomeEmail(e.target.checked)}
+                      className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
+                    />
+                    <span className="text-sm text-gray-700">Send welcome email to lead</span>
+                  </label>
+
+                  {/* Notify owner */}
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={notifyOwner}
+                      onChange={(e) => setNotifyOwner(e.target.checked)}
+                      className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
+                    />
+                    <span className="text-sm text-gray-700">Email me when form is submitted</span>
+                  </label>
+
+                  {/* Owner email - shown when notify owner is enabled */}
+                  {notifyOwner && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Send notifications to
+                      </label>
+                      <input
+                        type="email"
+                        value={ownerEmail}
+                        onChange={(e) => setOwnerEmail(e.target.value)}
+                        placeholder="your@email.com"
+                        className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Image generation option */}
+          {hasImageCapableBlocks && (
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <div className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${
+                generateImages ? 'bg-indigo-600' : 'bg-gray-200 group-hover:bg-gray-300'
+              }`}>
+                {generateImages && <Check className="w-3 h-3 text-white" />}
+              </div>
+              <input
+                type="checkbox"
+                checked={generateImages}
+                onChange={(e) => setGenerateImages(e.target.checked)}
+                className="sr-only"
+              />
+              <div className="flex items-center gap-2">
+                <Image className="w-4 h-4 text-purple-600" />
+                <div>
+                  <span className="text-sm text-gray-900">Generate AI Images</span>
+                  <p className="text-xs text-gray-500">Hero backgrounds, avatars, etc.</p>
+                </div>
+              </div>
+            </label>
+          )}
+
+          {!willHaveForm && !hasImageCapableBlocks && (
+            <p className="text-sm text-gray-500 italic">No additional resources needed for these blocks.</p>
+          )}
         </div>
       </div>
     );
@@ -329,15 +622,16 @@ export default function SynthesisPopup({
             <>
               <button
                 onClick={() => setShowPreview(false)}
-                className="px-4 py-2 text-gray-700 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors"
+                disabled={isGeneratingImages}
+                className="px-4 py-2 text-gray-700 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
               >
                 Back to Options
               </button>
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleSynthesize}
-                  disabled={synthesizePage.isPending}
-                  className="px-4 py-2 text-purple-700 hover:text-purple-900 hover:bg-purple-100 rounded-lg transition-colors"
+                  disabled={synthesizePage.isPending || isGeneratingImages}
+                  className="px-4 py-2 text-purple-700 hover:text-purple-900 hover:bg-purple-100 rounded-lg transition-colors disabled:opacity-50"
                 >
                   {synthesizePage.isPending ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -347,10 +641,20 @@ export default function SynthesisPopup({
                 </button>
                 <button
                   onClick={handleApply}
-                  className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md shadow-purple-500/25"
+                  disabled={isGeneratingImages}
+                  className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md shadow-purple-500/25 disabled:opacity-70"
                 >
-                  Apply to Page
-                  <ChevronRight className="w-4 h-4" />
+                  {isGeneratingImages ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {imageProgress || 'Generating...'}
+                    </>
+                  ) : (
+                    <>
+                      Apply to Page
+                      <ChevronRight className="w-4 h-4" />
+                    </>
+                  )}
                 </button>
               </div>
             </>

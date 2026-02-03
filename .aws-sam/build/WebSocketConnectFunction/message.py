@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 from typing import Any
 
 import boto3
@@ -74,21 +75,41 @@ def handle_public_chat(
         connection_id: WebSocket connection ID.
         domain: API Gateway domain.
         stage: API Gateway stage.
-        body: Message body with page_id, message, visitor_id.
+        body: Message body with page_id, workspace_id, message, visitor_id.
 
     Returns:
         Response.
     """
     page_id = body.get("page_id")
+    workspace_id = body.get("workspace_id")
     message = body.get("message", "")
     visitor_id = body.get("visitor_id", "anonymous")
 
+    # PERFORMANCE: workspace_id is now required to avoid O(n) table scan
+    # The frontend should always include workspace_id from the page config
     if not page_id or not message:
         return {"statusCode": 400, "body": "page_id and message are required"}
+
+    if not workspace_id:
+        logger.warning(
+            "PERFORMANCE: workspace_id not provided for public chat - rejecting to avoid table scan",
+            page_id=page_id,
+        )
+        send_to_connection(
+            connection_id,
+            domain,
+            stage,
+            {
+                "action": "ai_response",
+                "message": "Configuration error. Please refresh the page and try again.",
+            },
+        )
+        return {"statusCode": 400, "body": "workspace_id is required"}
 
     logger.info(
         "Public chat message",
         page_id=page_id,
+        workspace_id=workspace_id,
         visitor_id=visitor_id,
         message_length=len(message),
     )
@@ -96,9 +117,9 @@ def handle_public_chat(
     # Look up page to get AI persona and context
     try:
         page_repo = PageRepository()
-        # We need workspace_id to look up the page - get it from the page_id
-        # For now, we'll do a scan to find the page (not ideal but works for MVP)
-        page = _find_page_by_id(page_repo, page_id)
+
+        # Direct query by workspace_id + page_id is O(1)
+        page = page_repo.get_by_id(workspace_id, page_id)
 
         if not page:
             logger.warning("Page not found", page_id=page_id)
@@ -225,38 +246,6 @@ def _fire_chat_event(
         logger.warning("Failed to fire chat event", error=str(e))
 
 
-def _find_page_by_id(page_repo: PageRepository, page_id: str):
-    """Find a page by ID (scans all workspaces - not ideal but works for MVP).
-
-    Args:
-        page_repo: Page repository.
-        page_id: Page ID to find.
-
-    Returns:
-        Page if found, None otherwise.
-    """
-    # This is a simple scan - for production, we'd add a GSI for page_id lookup
-    dynamodb = boto3.resource("dynamodb")
-    table = dynamodb.Table(os.environ.get("TABLE_NAME", "complens-dev"))
-
-    # Note: Removed Limit=1 as it limits items evaluated, not returned.
-    # The scan continues until it finds a match or exhausts the table.
-    response = table.scan(
-        FilterExpression="SK = :sk",
-        ExpressionAttributeValues={":sk": f"PAGE#{page_id}"},
-    )
-
-    items = response.get("Items", [])
-    if not items:
-        return None
-
-    item = items[0]
-    # Extract workspace_id from PK (format: WS#{workspace_id})
-    workspace_id = item.get("PK", "").replace("WS#", "")
-
-    return page_repo.get_by_id(workspace_id, page_id)
-
-
 def _generate_chat_response(system_prompt: str, user_message: str) -> str:
     """Generate AI response using Bedrock.
 
@@ -318,13 +307,19 @@ def handle_subscribe(connection_id: str, data: dict) -> dict:
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ.get("CONNECTIONS_TABLE", "complens-dev-connections"))
 
-    # Add subscription to connection
+    # Build update expression
+    update_expr = "ADD subscriptions :sub"
+    expr_values = {":sub": {f"{channel}:{resource_id}" if resource_id else channel}}
+
+    # If subscribing to a workflow channel with workspace resource_id, set workspaceId for GSI
+    if channel == "workflow" and resource_id:
+        update_expr += " SET workspaceId = if_not_exists(workspaceId, :ws)"
+        expr_values[":ws"] = resource_id
+
     table.update_item(
         Key={"connectionId": connection_id},
-        UpdateExpression="ADD subscriptions :sub",
-        ExpressionAttributeValues={
-            ":sub": {f"{channel}:{resource_id}" if resource_id else channel}
-        },
+        UpdateExpression=update_expr,
+        ExpressionAttributeValues=expr_values,
     )
 
     return {"statusCode": 200}
@@ -431,43 +426,143 @@ def _remove_stale_connection(connection_id: str) -> None:
         pass
 
 
-def broadcast_to_workspace(workspace_id: str, message: dict) -> None:
+def broadcast_to_workspace(
+    workspace_id: str,
+    message: dict,
+    endpoint: str | None = None,
+) -> int:
     """Broadcast message to all connections subscribed to a workspace.
 
     Args:
         workspace_id: Workspace ID.
         message: Message to broadcast.
+        endpoint: WebSocket endpoint URL (optional, uses env var if not provided).
+
+    Returns:
+        Number of connections that received the message.
     """
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ.get("CONNECTIONS_TABLE", "complens-dev-connections"))
 
-    # Query connections by workspace (using GSI)
-    response = table.query(
-        IndexName="UserIdIndex",
-        KeyConditionExpression="userId = :uid",
-        FilterExpression="contains(workspaceIds, :ws)",
-        ExpressionAttributeValues={
-            ":uid": "*",  # Would need proper query
-            ":ws": workspace_id,
-        },
-    )
+    # Use WorkspaceIdIndex GSI for O(n) query instead of full table scan
+    # This is much more efficient as table grows
+    try:
+        response = table.query(
+            IndexName="WorkspaceIdIndex",
+            KeyConditionExpression="workspaceId = :ws",
+            ExpressionAttributeValues={":ws": workspace_id},
+        )
+        items = response.get("Items", [])
 
-    # Get WebSocket endpoint from environment
-    endpoint = os.environ.get("WEBSOCKET_ENDPOINT")
-    if not endpoint:
-        return
+        # Handle pagination
+        while "LastEvaluatedKey" in response:
+            response = table.query(
+                IndexName="WorkspaceIdIndex",
+                KeyConditionExpression="workspaceId = :ws",
+                ExpressionAttributeValues={":ws": workspace_id},
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            items.extend(response.get("Items", []))
+
+    except Exception as e:
+        # Fallback to scan if GSI doesn't exist yet (during deployment transition)
+        logger.warning("GSI query failed, falling back to scan", error=str(e))
+        response = table.scan(
+            FilterExpression="contains(workspaceIds, :ws)",
+            ExpressionAttributeValues={":ws": workspace_id},
+        )
+        items = response.get("Items", [])
+
+        while "LastEvaluatedKey" in response:
+            response = table.scan(
+                FilterExpression="contains(workspaceIds, :ws)",
+                ExpressionAttributeValues={":ws": workspace_id},
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            items.extend(response.get("Items", []))
+
+    if not items:
+        logger.debug("No connections for workspace", workspace_id=workspace_id)
+        return 0
+
+    # Get WebSocket endpoint from environment or parameter
+    ws_endpoint = endpoint or os.environ.get("WEBSOCKET_ENDPOINT")
+    if not ws_endpoint:
+        logger.warning("No WebSocket endpoint configured")
+        return 0
 
     apigw = boto3.client(
         "apigatewaymanagementapi",
-        endpoint_url=endpoint,
+        endpoint_url=ws_endpoint,
     )
 
-    for item in response.get("Items", []):
+    sent_count = 0
+    stale_connections = []
+
+    for item in items:
         connection_id = item.get("connectionId")
+        if not connection_id:
+            continue
+
         try:
             apigw.post_to_connection(
                 ConnectionId=connection_id,
                 Data=json.dumps(message).encode("utf-8"),
             )
-        except Exception:
-            pass
+            sent_count += 1
+        except apigw.exceptions.GoneException:
+            # Connection is stale, mark for cleanup
+            stale_connections.append(connection_id)
+        except Exception as e:
+            logger.warning(
+                "Failed to send to connection",
+                connection_id=connection_id,
+                error=str(e),
+            )
+
+    # Clean up stale connections
+    for stale_id in stale_connections:
+        _remove_stale_connection(stale_id)
+
+    logger.info(
+        "Broadcast complete",
+        workspace_id=workspace_id,
+        sent=sent_count,
+        stale_removed=len(stale_connections),
+    )
+
+    return sent_count
+
+
+def broadcast_workflow_event(
+    workspace_id: str,
+    event_type: str,
+    workflow_id: str,
+    run_id: str | None = None,
+    data: dict | None = None,
+    endpoint: str | None = None,
+) -> int:
+    """Broadcast a workflow event to all workspace connections.
+
+    Args:
+        workspace_id: Workspace ID.
+        event_type: Event type (e.g., "workflow.started", "workflow.completed", "step.completed").
+        workflow_id: Workflow ID.
+        run_id: Workflow run ID (optional).
+        data: Additional event data.
+        endpoint: WebSocket endpoint URL (optional).
+
+    Returns:
+        Number of connections that received the message.
+    """
+    message = {
+        "action": "workflow_event",
+        "event": event_type,
+        "workflow_id": workflow_id,
+        "run_id": run_id,
+        "workspace_id": workspace_id,
+        "data": data or {},
+        "timestamp": int(time.time() * 1000),
+    }
+
+    return broadcast_to_workspace(workspace_id, message, endpoint)

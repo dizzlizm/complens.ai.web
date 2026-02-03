@@ -18,6 +18,14 @@ from complens.repositories.contact import ContactRepository
 from complens.repositories.workflow import WorkflowRepository, WorkflowRunRepository
 from complens.repositories.workspace import WorkspaceRepository
 from complens.services.workflow_engine import WorkflowEngine
+from complens.services.workflow_events import (
+    emit_node_completed,
+    emit_node_executing,
+    emit_node_failed,
+    emit_workflow_completed,
+    emit_workflow_failed,
+    emit_workflow_started,
+)
 
 logger = structlog.get_logger()
 
@@ -115,6 +123,15 @@ def initialize_workflow(event: dict) -> dict:
         contact_id=contact_id,
     )
 
+    # Emit workflow started event
+    emit_workflow_started(
+        workspace_id=workspace_id,
+        workflow_id=workflow_id,
+        run_id=run.id,
+        contact_id=contact_id,
+        trigger_type=trigger_type,
+    )
+
     return {
         "workflow_run_id": run.id,
         "current_node_id": trigger_node.id,
@@ -201,6 +218,17 @@ def execute_node(event: dict) -> dict:
         node_config=node_def.get_config(),
     )
 
+    # Emit node executing event
+    node_label = node_def.data.get("label") if node_def.data else None
+    emit_node_executing(
+        workspace_id=workspace_id,
+        workflow_id=workflow_id,
+        run_id=workflow_run_id,
+        node_id=current_node_id,
+        node_type=node_def.node_type,
+        node_label=node_label,
+    )
+
     # Run async execution
     loop = asyncio.new_event_loop()
     try:
@@ -215,6 +243,26 @@ def execute_node(event: dict) -> dict:
         success=result.success,
         status=result.status,
     )
+
+    # Emit node completed/failed event
+    if result.success:
+        emit_node_completed(
+            workspace_id=workspace_id,
+            workflow_id=workflow_id,
+            run_id=workflow_run_id,
+            node_id=current_node_id,
+            node_type=node_def.node_type,
+            result={"output": result.output, "variables": result.variables},
+        )
+    else:
+        emit_node_failed(
+            workspace_id=workspace_id,
+            workflow_id=workflow_id,
+            run_id=workflow_run_id,
+            node_id=current_node_id,
+            node_type=node_def.node_type,
+            error=result.error or "Unknown error",
+        )
 
     # Determine next node
     next_node_id = result.next_node_id
@@ -277,9 +325,10 @@ def complete_workflow(event: dict) -> dict:
     run = run_repo.get_by_id(workflow_id, workflow_run_id)
 
     if run:
+        error_message = error.get("Error") if isinstance(error, dict) else str(error) if error else None
         run.complete(
             success=(status == "completed"),
-            error_message=error.get("Error") if isinstance(error, dict) else str(error) if error else None,
+            error_message=error_message,
         )
         run.variables = variables
         run_repo.update_run(run)
@@ -290,6 +339,24 @@ def complete_workflow(event: dict) -> dict:
             status=status,
             success=(status == "completed"),
         )
+
+        # Emit workflow completed/failed event
+        if status == "completed":
+            emit_workflow_completed(
+                workspace_id=workspace_id,
+                workflow_id=workflow_id,
+                run_id=workflow_run_id,
+                contact_id=run.contact_id,
+                result={"variables": variables},
+            )
+        else:
+            emit_workflow_failed(
+                workspace_id=workspace_id,
+                workflow_id=workflow_id,
+                run_id=workflow_run_id,
+                error=error_message or "Unknown error",
+                contact_id=run.contact_id,
+            )
 
     return {
         "status": status,

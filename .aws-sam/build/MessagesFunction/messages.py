@@ -10,7 +10,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from complens.models.message import CreateMessageRequest, Message, MessageDirection, MessageSender
 from complens.utils.auth import get_auth_context
-from complens.utils.exceptions import NotFoundError, ValidationError
+from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
 
 logger = structlog.get_logger()
@@ -83,7 +83,11 @@ def list_messages(conversation_id: str, event: dict) -> dict:
 
 
 def create_message(conversation_id: str, auth, event: dict) -> dict:
-    """Create a new message in a conversation."""
+    """Create a new message in a conversation.
+
+    SECURITY: This endpoint verifies workspace access by looking up the conversation
+    first and validating access to the conversation's workspace.
+    """
     try:
         body = json.loads(event.get("body", "{}"))
         request = CreateMessageRequest.model_validate(body)
@@ -95,21 +99,43 @@ def create_message(conversation_id: str, auth, event: dict) -> dict:
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
-    # Get conversation to get workspace_id and contact_id
-    import boto3
+    # SECURITY: Get workspace_id and contact_id from the conversation, not from request body
+    # This prevents attackers from creating messages in unauthorized workspaces
+    from complens.repositories.conversation import ConversationRepository
+    from complens.utils.auth import require_workspace_access
+
+    conv_repo = ConversationRepository()
+
+    # Look up the conversation to get its workspace_id
+    # First try with workspace_id from body if provided (faster lookup)
+    body_workspace_id = body.get("workspace_id")
+    if body_workspace_id:
+        conversation = conv_repo.get_by_id(body_workspace_id, conversation_id)
+    else:
+        # Fall back to scan-based lookup
+        conversation = conv_repo.get_by_id(conversation_id)
+
+    if not conversation:
+        return not_found("Conversation", conversation_id)
+
+    # SECURITY: Verify the authenticated user has access to this workspace
+    try:
+        require_workspace_access(auth, conversation.workspace_id)
+    except (ForbiddenError, ValueError):
+        logger.warning(
+            "Message creation denied - workspace access",
+            conversation_id=conversation_id,
+            workspace_id=conversation.workspace_id,
+            user_id=auth.user_id if auth else None,
+        )
+        return error("Access denied", 403)
+
+    # Use verified workspace_id and contact_id from the conversation
+    workspace_id = conversation.workspace_id
+    contact_id = conversation.contact_id
 
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ.get("TABLE_NAME", "complens-dev"))
-
-    # We need to find the conversation - this is a simplified approach
-    # In production, you'd use a GSI or cache
-    # For now, we'll assume workspace_id and contact_id are provided in the body
-
-    workspace_id = body.get("workspace_id")
-    contact_id = body.get("contact_id")
-
-    if not workspace_id or not contact_id:
-        return error("workspace_id and contact_id are required", 400)
 
     # Create message
     message = Message(

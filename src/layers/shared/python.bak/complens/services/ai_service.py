@@ -10,6 +10,7 @@ from typing import Any
 
 import boto3
 import structlog
+from botocore.config import Config
 
 from complens.models.business_profile import BusinessProfile
 from complens.repositories.business_profile import BusinessProfileRepository
@@ -23,8 +24,19 @@ DEFAULT_MODEL = "anthropic.claude-3-sonnet-20240229-v1:0"  # Claude 3 Sonnet
 FAST_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"  # Claude Haiku 4.5 (inference profile)
 IMAGE_MODEL = "amazon.titan-image-generator-v2:0"  # Amazon Titan Image Generator v2
 
-# Initialize clients
-bedrock = boto3.client("bedrock-runtime")
+# Bedrock timeout configuration
+# Prevents hung requests from blocking Lambda execution indefinitely
+BEDROCK_CONFIG = Config(
+    read_timeout=60,      # 60 second read timeout for response streaming
+    connect_timeout=10,   # 10 second connection timeout
+    retries={
+        "max_attempts": 2,           # Retry once on transient failures
+        "mode": "adaptive",          # Use adaptive retry mode for better backoff
+    },
+)
+
+# Initialize clients with timeout configuration
+bedrock = boto3.client("bedrock-runtime", config=BEDROCK_CONFIG)
 
 
 def get_business_context(workspace_id: str, page_id: str | None = None) -> str:
@@ -534,6 +546,191 @@ Return the extracted information as JSON."""
 
     # Sanitize the extracted data to match expected types
     return _sanitize_extracted_profile(extracted)
+
+
+def generate_page_content_from_description(
+    workspace_id: str,
+    business_description: str,
+    page_id: str | None = None,
+) -> dict:
+    """Generate rich page content from a business description.
+
+    This is the core AI generation for the wizard. It extracts business info
+    and generates all the marketing copy needed for a landing page.
+
+    Args:
+        workspace_id: The workspace ID for business context.
+        business_description: Free-form description of the business.
+        page_id: Optional page ID for page-specific profile.
+
+    Returns:
+        Dict with business_info and generated content.
+    """
+    system = """You are an expert marketing copywriter and business analyst.
+
+IMPORTANT: If BUSINESS CONTEXT is provided above, use it as your PRIMARY source of information.
+The business context contains verified details about the business - use these exact values for:
+- Business name, tagline, description
+- Industry and business type
+- Target audience and customer pain points
+- Value proposition and key benefits
+- Products/services and pricing
+- Achievements, testimonials, and social proof
+- Brand voice and personality
+
+The user's description below may provide ADDITIONAL context or focus for this specific page,
+but the business context should inform all your copy. Match the brand voice exactly.
+
+If no business context is provided, analyze the user's description to extract this information.
+
+Return a JSON object with this exact structure:
+{
+  "business_info": {
+    "business_name": "Name of the business or person",
+    "business_type": "saas|agency|freelancer|ecommerce|consultant|coach|creator|other",
+    "industry": "technology|consulting|healthcare|finance|education|real_estate|marketing|creative|professional_services|retail|hospitality|other",
+    "products": ["Product or service 1", "Product or service 2"],
+    "audience": "Description of target audience",
+    "tone": "professional|friendly|bold|playful|authoritative|casual|inspirational"
+  },
+  "content": {
+    "headlines": [
+      "Punchy headline option 1 (3-6 words)",
+      "Punchy headline option 2 (3-6 words)",
+      "Punchy headline option 3 (3-6 words)"
+    ],
+    "tagline": "Memorable tagline (5-10 words)",
+    "value_props": [
+      "Key benefit 1 - what they get",
+      "Key benefit 2 - what they get",
+      "Key benefit 3 - what they get"
+    ],
+    "features": [
+      {"title": "Feature 1", "description": "What this does and why it matters", "icon": "🚀"},
+      {"title": "Feature 2", "description": "What this does and why it matters", "icon": "⚡"},
+      {"title": "Feature 3", "description": "What this does and why it matters", "icon": "✨"}
+    ],
+    "testimonial_concepts": [
+      "What a happy customer might say about benefit 1",
+      "What a happy customer might say about benefit 2"
+    ],
+    "faq": [
+      {"q": "Common question 1?", "a": "Helpful answer that addresses concerns"},
+      {"q": "Common question 2?", "a": "Helpful answer that addresses concerns"},
+      {"q": "Common question 3?", "a": "Helpful answer that addresses concerns"}
+    ],
+    "cta_text": "Primary call-to-action (2-3 words)",
+    "hero_subheadline": "Compelling subheadline for hero (15-25 words)",
+    "social_proof": "A credibility statement (e.g., 'Trusted by 1000+ businesses')"
+  },
+  "suggested_colors": {
+    "primary": "#hex color that fits the brand",
+    "secondary": "#complementary hex color",
+    "accent": "#accent hex color"
+  }
+}
+
+Guidelines:
+- Headlines must be SHORT and PUNCHY. No filler words. Use power words.
+- Features focus on BENEFITS, not just features
+- FAQ should address real customer concerns and objections
+- Tone should match the business type
+- Use appropriate emojis for icons: 🚀 ⚡ ✨ 💎 🎯 📈 💡 🔒 ⭐ 🛠️ 💰 🔥 ✅ 🏆 💪 🎨 📱 🌟 ❤️
+
+COLOR GUIDELINES - Choose colors that match the industry and brand personality:
+- Technology/SaaS: Blues (#3B82F6), purples (#8B5CF6), teals (#14B8A6)
+- Healthcare/Wellness: Greens (#10B981), calming blues (#0EA5E9), soft teals
+- Finance: Navy blues (#1E3A8A), golds (#F59E0B), deep greens (#047857)
+- Creative/Design: Pinks (#EC4899), purples (#A855F7), vibrant colors
+- Food/Restaurant: Warm oranges (#F97316), reds (#EF4444), warm yellows (#EAB308)
+- Real Estate: Earth tones (#78716C), forest greens (#166534), warm browns
+- Education: Friendly blues (#3B82F6), oranges (#F97316), greens
+- Professional Services: Navy (#1E40AF), charcoal (#374151), sophisticated tones
+- Retail/Ecommerce: Bold reds (#DC2626), energetic oranges, bright colors
+- Fitness: Energetic oranges (#EA580C), bold reds (#DC2626), electric blues
+
+DO NOT default to indigo/purple (#6366f1) - choose colors specific to this business!
+
+Return ONLY valid JSON, no markdown."""
+
+    prompt = f"""Additional context or focus for this page:
+
+{business_description}
+
+Using the BUSINESS CONTEXT above (if provided) combined with this description,
+generate compelling marketing copy that will convert visitors into leads.
+Prioritize information from the business context - it contains verified details."""
+
+    try:
+        result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+
+        # Validate and ensure required structure
+        if "business_info" not in result:
+            result["business_info"] = {}
+        if "content" not in result:
+            result["content"] = {}
+        if "suggested_colors" not in result:
+            result["suggested_colors"] = {
+                "primary": "#6366f1",
+                "secondary": "#818cf8",
+                "accent": "#c7d2fe"
+            }
+
+        return result
+
+    except Exception as e:
+        logger.error("Failed to generate page content", error=str(e))
+        raise
+
+
+def refine_page_content(
+    workspace_id: str,
+    current_content: dict,
+    feedback: str,
+    section: str | None = None,
+    page_id: str | None = None,
+) -> dict:
+    """Refine generated page content based on user feedback.
+
+    Args:
+        workspace_id: The workspace ID for business context.
+        current_content: The current generated content.
+        feedback: User's feedback or refinement request.
+        section: Optional section to refine (headlines, features, faq, etc.)
+        page_id: Optional page ID for page-specific profile.
+
+    Returns:
+        Updated content dict with refinements applied.
+    """
+    section_note = f"\nFocus on refining the '{section}' section." if section else ""
+
+    system = f"""You are an expert marketing copywriter.
+You're refining landing page content based on user feedback.
+{section_note}
+
+IMPORTANT: If BUSINESS CONTEXT is provided above, ensure all refinements stay consistent with:
+- The brand voice and personality
+- The target audience
+- The unique value proposition
+- Any specific products, achievements, or testimonials mentioned
+
+Return the COMPLETE updated content structure in the same JSON format.
+Apply the user's feedback while maintaining consistency with the business context.
+
+Return ONLY valid JSON, no markdown."""
+
+    prompt = f"""Current content:
+{json.dumps(current_content, indent=2)}
+
+User feedback: {feedback}
+
+Generate the updated content with the feedback applied."""
+
+    try:
+        return invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+    except Exception as e:
+        logger.error("Failed to refine page content", error=str(e))
+        raise
 
 
 def _sanitize_extracted_profile(data: dict) -> dict:

@@ -1,4 +1,4 @@
-import { BarChart2 } from 'lucide-react';
+import { BarChart2, Plus, X } from 'lucide-react';
 import { StatsConfig, StatItem } from '../types';
 
 interface StatsBlockProps {
@@ -27,6 +27,23 @@ export default function StatsBlock({ config, isEditing, onConfigChange }: StatsB
     }
   };
 
+  const handleAddItem = () => {
+    if (onConfigChange) {
+      const newItem: StatItem = {
+        value: '0',
+        label: 'New Stat',
+      };
+      onConfigChange({ ...config, items: [...items, newItem] });
+    }
+  };
+
+  const handleRemoveItem = (index: number) => {
+    if (onConfigChange) {
+      const newItems = items.filter((_, i) => i !== index);
+      onConfigChange({ ...config, items: newItems });
+    }
+  };
+
   return (
     <div className="py-16 px-8 bg-indigo-600">
       <div className="max-w-6xl mx-auto">
@@ -48,9 +65,20 @@ export default function StatsBlock({ config, isEditing, onConfigChange }: StatsB
         )}
 
         {/* Stats Grid */}
-        <div className={`grid grid-cols-2 md:grid-cols-${Math.min(items.length, 4)} gap-8`}>
+        <div className={`grid grid-cols-2 md:grid-cols-${Math.min(items.length + (isEditing ? 1 : 0), 4)} gap-8`}>
           {items.map((item, index) => (
-            <div key={index} className="text-center">
+            <div key={index} className="text-center relative group">
+              {/* Remove button */}
+              {isEditing && (
+                <button
+                  onClick={() => handleRemoveItem(index)}
+                  className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10 hover:bg-red-600"
+                  title="Remove stat"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+
               {isEditing ? (
                 <>
                   <input
@@ -76,6 +104,17 @@ export default function StatsBlock({ config, isEditing, onConfigChange }: StatsB
               )}
             </div>
           ))}
+
+          {/* Add stat button */}
+          {isEditing && (
+            <button
+              onClick={handleAddItem}
+              className="text-center p-6 rounded-xl border-2 border-dashed border-indigo-400 hover:border-white hover:bg-white/10 transition-colors flex flex-col items-center justify-center gap-2 min-h-[100px]"
+            >
+              <Plus className="w-8 h-8 text-indigo-300" />
+              <span className="text-sm text-indigo-200 font-medium">Add Stat</span>
+            </button>
+          )}
         </div>
 
         {/* Empty state */}

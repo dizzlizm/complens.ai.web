@@ -42,7 +42,7 @@ class SendSmsAction(BaseNode):
         if not to_number:
             return NodeResult.failed(
                 error="No phone number available",
-                error_details={"contact_id": context.contact.id},
+                error_details={"contact_id": context.contact.id if context.contact else None},
             )
 
         if not message:
@@ -135,7 +135,7 @@ class SendEmailAction(BaseNode):
         if not to_email:
             return NodeResult.failed(
                 error="No email address available",
-                error_details={"contact_id": context.contact.id},
+                error_details={"contact_id": context.contact.id if context.contact else None},
             )
 
         # Get subject and body
@@ -263,12 +263,24 @@ class AIRespondAction(BaseNode):
             trigger_channel = context.trigger_data.get("channel", "email")
             respond_via = trigger_channel
 
-        # Build context for AI
-        contact_info = f"""Contact Information:
+        # Build context for AI - handle case where contact may be None
+        if context.contact:
+            contact_info = f"""Contact Information:
 - Name: {context.contact.full_name}
 - Email: {context.contact.email or 'N/A'}
 - Phone: {context.contact.phone or 'N/A'}
 - Tags: {', '.join(context.contact.tags) if context.contact.tags else 'None'}"""
+        else:
+            # No contact - extract from form submission data if available
+            form_data = context.trigger_data.get("data", {})
+            email = form_data.get("email", "N/A")
+            name = form_data.get("first_name", form_data.get("name", "Unknown"))
+            phone = form_data.get("phone", "N/A")
+            contact_info = f"""Contact Information:
+- Name: {name}
+- Email: {email}
+- Phone: {phone}
+- Tags: None (no contact created)"""
 
         # Get any message being responded to
         incoming_message = context.variables.get("message_content") or context.trigger_data.get("body", "")
@@ -328,10 +340,14 @@ Task:
         if respond_via == "sms":
             from complens.services.twilio_service import TwilioError, get_twilio_service
 
-            to_number = context.contact.phone
+            # Get phone from contact or fall back to trigger data
+            to_number = context.contact.phone if context.contact else None
+            if not to_number:
+                form_data = context.trigger_data.get("data", {})
+                to_number = form_data.get("phone", form_data.get("Phone", form_data.get("phone_number")))
             if not to_number:
                 return NodeResult.failed(
-                    error="Contact has no phone number for SMS response"
+                    error="No phone number available for SMS response"
                 )
 
             twilio = get_twilio_service()
@@ -352,10 +368,14 @@ Task:
         elif respond_via == "email":
             from complens.services.email_service import EmailError, get_email_service
 
-            to_email = context.contact.email
+            # Get email from contact or fall back to trigger data
+            to_email = context.contact.email if context.contact else None
+            if not to_email:
+                form_data = context.trigger_data.get("data", {})
+                to_email = form_data.get("email", form_data.get("Email", form_data.get("email_address")))
             if not to_email:
                 return NodeResult.failed(
-                    error="Contact has no email address for email response"
+                    error="No email address available for email response"
                 )
 
             email_service = get_email_service()
@@ -410,6 +430,18 @@ class UpdateContactAction(BaseNode):
         Returns:
             NodeResult with update status.
         """
+        # This action requires a contact to exist
+        if not context.contact:
+            self.logger.warning("Cannot update contact - no contact available")
+            return NodeResult.completed(
+                output={
+                    "contact_id": None,
+                    "changes": [],
+                    "skipped": True,
+                    "reason": "No contact available to update",
+                }
+            )
+
         update_fields = self._get_config_value("update_fields", {})
         add_tags = self._get_config_value("add_tags", [])
         remove_tags = self._get_config_value("remove_tags", [])
@@ -640,13 +672,319 @@ class CreateTaskAction(BaseNode):
                 "description": description,
                 "assigned_to": assigned_to,
                 "due_date": due_date.isoformat() if due_date else None,
-                "contact_id": context.contact.id,
+                "contact_id": context.contact.id if context.contact else None,
             }
         )
 
     def get_required_config(self) -> list[str]:
         """Get required configuration."""
         return ["task_title"]
+
+
+# =============================================================================
+# Stripe Payment Actions
+# =============================================================================
+
+
+class StripeCheckoutAction(BaseNode):
+    """Create a Stripe Checkout session for one-time payment.
+
+    Configuration:
+        product_name: Name of the product
+        amount: Amount in dollars (e.g., 49.99)
+        currency: Currency code (default: usd)
+        success_url: URL to redirect after successful payment
+        cancel_url: URL to redirect if cancelled
+        description: Optional product description
+    """
+
+    node_type = "action_stripe_checkout"
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Create checkout session.
+
+        Args:
+            context: Execution context.
+
+        Returns:
+            NodeResult with checkout URL.
+        """
+        from complens.services.stripe_service import StripeError, create_checkout_session
+        from complens.repositories.workspace import WorkspaceRepository
+
+        # Get workspace settings for Stripe connected account
+        workspace_repo = WorkspaceRepository()
+        workspace = workspace_repo.get_by_id(context.workspace_id)
+
+        if not workspace:
+            return NodeResult.failed(error="Workspace not found")
+
+        # Get connected Stripe account from workspace settings
+        stripe_account_id = workspace.settings.get("stripe_account_id")
+        if not stripe_account_id:
+            return NodeResult.failed(
+                error="Stripe not connected for this workspace",
+                error_details={"workspace_id": context.workspace_id},
+            )
+
+        # Get configuration
+        product_name = context.render_template(
+            self._get_config_value("product_name", "Payment")
+        )
+        amount = float(self._get_config_value("amount", 0))
+        currency = self._get_config_value("currency", "usd")
+        description = context.render_template(
+            self._get_config_value("description", "")
+        )
+        success_url = context.render_template(
+            self._get_config_value("success_url", "")
+        )
+        cancel_url = context.render_template(
+            self._get_config_value("cancel_url", "")
+        )
+
+        if amount <= 0:
+            return NodeResult.failed(error="Amount must be greater than 0")
+
+        if not success_url or not cancel_url:
+            return NodeResult.failed(error="Success and cancel URLs are required")
+
+        self.logger.info(
+            "Creating Stripe checkout",
+            product=product_name,
+            amount=amount,
+            currency=currency,
+        )
+
+        try:
+            # Get customer email from contact or trigger data
+            customer_email = context.contact.email if context.contact else None
+            if not customer_email:
+                form_data = context.trigger_data.get("data", {})
+                customer_email = form_data.get("email", form_data.get("Email"))
+
+            result = create_checkout_session(
+                connected_account_id=stripe_account_id,
+                workspace_id=context.workspace_id,
+                price_data={
+                    "product_name": product_name,
+                    "amount": amount,
+                    "currency": currency,
+                    "description": description,
+                },
+                success_url=success_url,
+                cancel_url=cancel_url,
+                customer_email=customer_email,
+                metadata={
+                    "contact_id": context.contact.id if context.contact else None,
+                    "workflow_run_id": context.workflow_run.id,
+                },
+                mode="payment",
+            )
+
+            return NodeResult.completed(
+                output={
+                    "checkout_url": result["url"],
+                    "session_id": result["session_id"],
+                    "status": result["status"],
+                }
+            )
+
+        except StripeError as e:
+            return NodeResult.failed(
+                error=f"Stripe error: {e.message}",
+                error_details={"code": e.code},
+            )
+
+    def get_required_config(self) -> list[str]:
+        """Get required configuration."""
+        return ["product_name", "amount", "success_url", "cancel_url"]
+
+
+class StripeSubscriptionAction(BaseNode):
+    """Create a Stripe Checkout session for subscription.
+
+    Configuration:
+        product_name: Name of the subscription product
+        amount: Monthly amount in dollars
+        currency: Currency code (default: usd)
+        interval: Billing interval (month, year, week, day)
+        success_url: URL to redirect after successful subscription
+        cancel_url: URL to redirect if cancelled
+    """
+
+    node_type = "action_stripe_subscription"
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Create subscription checkout session.
+
+        Args:
+            context: Execution context.
+
+        Returns:
+            NodeResult with checkout URL.
+        """
+        from complens.services.stripe_service import StripeError, create_checkout_session
+        from complens.repositories.workspace import WorkspaceRepository
+
+        # Get workspace settings for Stripe connected account
+        workspace_repo = WorkspaceRepository()
+        workspace = workspace_repo.get_by_id(context.workspace_id)
+
+        if not workspace:
+            return NodeResult.failed(error="Workspace not found")
+
+        stripe_account_id = workspace.settings.get("stripe_account_id")
+        if not stripe_account_id:
+            return NodeResult.failed(
+                error="Stripe not connected for this workspace",
+            )
+
+        # Get configuration
+        product_name = context.render_template(
+            self._get_config_value("product_name", "Subscription")
+        )
+        amount = float(self._get_config_value("amount", 0))
+        currency = self._get_config_value("currency", "usd")
+        interval = self._get_config_value("interval", "month")
+        success_url = context.render_template(
+            self._get_config_value("success_url", "")
+        )
+        cancel_url = context.render_template(
+            self._get_config_value("cancel_url", "")
+        )
+
+        if amount <= 0:
+            return NodeResult.failed(error="Amount must be greater than 0")
+
+        if not success_url or not cancel_url:
+            return NodeResult.failed(error="Success and cancel URLs are required")
+
+        self.logger.info(
+            "Creating Stripe subscription",
+            product=product_name,
+            amount=amount,
+            interval=interval,
+        )
+
+        try:
+            # Get customer email from contact or trigger data
+            customer_email = context.contact.email if context.contact else None
+            if not customer_email:
+                form_data = context.trigger_data.get("data", {})
+                customer_email = form_data.get("email", form_data.get("Email"))
+
+            result = create_checkout_session(
+                connected_account_id=stripe_account_id,
+                workspace_id=context.workspace_id,
+                price_data={
+                    "product_name": product_name,
+                    "amount": amount,
+                    "currency": currency,
+                    "interval": interval,
+                },
+                success_url=success_url,
+                cancel_url=cancel_url,
+                customer_email=customer_email,
+                metadata={
+                    "contact_id": context.contact.id if context.contact else None,
+                    "workflow_run_id": context.workflow_run.id,
+                },
+                mode="subscription",
+            )
+
+            return NodeResult.completed(
+                output={
+                    "checkout_url": result["url"],
+                    "session_id": result["session_id"],
+                    "status": result["status"],
+                }
+            )
+
+        except StripeError as e:
+            return NodeResult.failed(
+                error=f"Stripe error: {e.message}",
+                error_details={"code": e.code},
+            )
+
+    def get_required_config(self) -> list[str]:
+        """Get required configuration."""
+        return ["product_name", "amount", "success_url", "cancel_url"]
+
+
+class StripeCancelSubscriptionAction(BaseNode):
+    """Cancel a Stripe subscription.
+
+    Configuration:
+        subscription_id: Subscription ID to cancel (template variable)
+        immediately: If true, cancel immediately; otherwise at period end
+    """
+
+    node_type = "action_stripe_cancel_subscription"
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Cancel subscription.
+
+        Args:
+            context: Execution context.
+
+        Returns:
+            NodeResult with cancellation details.
+        """
+        from complens.services.stripe_service import StripeError, cancel_subscription
+        from complens.repositories.workspace import WorkspaceRepository
+
+        # Get workspace settings
+        workspace_repo = WorkspaceRepository()
+        workspace = workspace_repo.get_by_id(context.workspace_id)
+
+        if not workspace:
+            return NodeResult.failed(error="Workspace not found")
+
+        stripe_account_id = workspace.settings.get("stripe_account_id")
+        if not stripe_account_id:
+            return NodeResult.failed(error="Stripe not connected")
+
+        # Get configuration
+        subscription_id = context.render_template(
+            self._get_config_value("subscription_id", "")
+        )
+        immediately = self._get_config_value("immediately", False)
+
+        if not subscription_id:
+            return NodeResult.failed(error="Subscription ID is required")
+
+        self.logger.info(
+            "Cancelling subscription",
+            subscription_id=subscription_id,
+            immediately=immediately,
+        )
+
+        try:
+            result = cancel_subscription(
+                connected_account_id=stripe_account_id,
+                subscription_id=subscription_id,
+                immediately=immediately,
+            )
+
+            return NodeResult.completed(
+                output={
+                    "subscription_id": result["id"],
+                    "status": result["status"],
+                    "cancel_at_period_end": result["cancel_at_period_end"],
+                    "current_period_end": result["current_period_end"],
+                }
+            )
+
+        except StripeError as e:
+            return NodeResult.failed(
+                error=f"Stripe error: {e.message}",
+                error_details={"code": e.code},
+            )
+
+    def get_required_config(self) -> list[str]:
+        """Get required configuration."""
+        return ["subscription_id"]
 
 
 # Registry of action node classes
@@ -658,4 +996,8 @@ ACTION_NODES = {
     "action_wait": WaitAction,
     "action_webhook": WebhookAction,
     "action_create_task": CreateTaskAction,
+    # Stripe payment actions
+    "action_stripe_checkout": StripeCheckoutAction,
+    "action_stripe_subscription": StripeSubscriptionAction,
+    "action_stripe_cancel_subscription": StripeCancelSubscriptionAction,
 }

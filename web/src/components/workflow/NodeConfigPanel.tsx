@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Zap, Play, GitBranch, Sparkles, Loader2 } from 'lucide-react';
+import { X, Zap, Play, GitBranch, Sparkles, Loader2, ChevronDown, Variable, Plus, Trash2, FileText } from 'lucide-react';
 import { type Node } from '@xyflow/react';
-import { useForms } from '../../lib/hooks/useForms';
-import { usePages } from '../../lib/hooks/usePages';
+import { useForms, usePageForms } from '../../lib/hooks/useForms';
+import { usePages, usePage } from '../../lib/hooks/usePages';
 import { useWorkflows } from '../../lib/hooks/useWorkflows';
 import { useContacts } from '../../lib/hooks/useContacts';
 
@@ -15,6 +15,7 @@ interface NodeData {
 interface NodeConfigPanelProps {
   node: Node | null;
   workspaceId: string | undefined;
+  pageId?: string; // When provided, filters forms/pages to this page's context
   onClose: () => void;
   onUpdate: (nodeId: string, data: Partial<NodeData>) => void;
 }
@@ -42,13 +43,12 @@ function useDebouncedCallback<T extends (...args: Parameters<T>) => void>(
 interface FieldConfig {
   key: string;
   label: string;
-  type: 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'dynamic_select';
+  type: 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'dynamic_select' | 'multi_select' | 'tag_input' | 'conditions';
   placeholder?: string;
   options?: { value: string; label: string }[];
-  // For dynamic_select: which data source to use
   dataSource?: 'forms' | 'pages' | 'workflows' | 'tags' | 'contact_fields';
-  // Optional helper text below the field
   helperText?: string;
+  defaultValue?: unknown;
 }
 
 // Standard contact fields for condition builders
@@ -61,89 +61,140 @@ const CONTACT_FIELDS = [
   { value: 'contact.tags', label: 'Tags (contains)' },
   { value: 'contact.source', label: 'Source' },
   { value: 'contact.created_at', label: 'Created Date' },
+  { value: 'variables.', label: 'Workflow Variable...' },
+  { value: 'trigger.', label: 'Trigger Data...' },
 ];
 
-// Config field definitions for each node type
+// Variables available for insertion into text fields
+const INSERTABLE_VARIABLES = [
+  { category: 'Contact', items: [
+    { value: '{{contact.email}}', label: 'Email Address' },
+    { value: '{{contact.phone}}', label: 'Phone Number' },
+    { value: '{{contact.first_name}}', label: 'First Name' },
+    { value: '{{contact.last_name}}', label: 'Last Name' },
+    { value: '{{contact.full_name}}', label: 'Full Name' },
+  ]},
+  { category: 'Form Data', items: [
+    { value: '{{trigger_data.form_data.email}}', label: 'Submitted Email' },
+    { value: '{{trigger_data.form_data.message}}', label: 'Submitted Message' },
+    { value: '{{trigger_data.form_data}}', label: 'All Form Data' },
+  ]},
+  { category: 'Workflow', items: [
+    { value: '{{owner.email}}', label: 'Owner Email' },
+    { value: '{{workspace.name}}', label: 'Workspace Name' },
+    { value: '{{variables.ai_response}}', label: 'Last AI Response' },
+  ]},
+];
+
+// Variable picker dropdown component
+function VariablePicker({ onInsert }: { onInsert: (variable: string) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as HTMLElement)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded border border-indigo-200 transition-colors"
+        title="Insert dynamic value"
+      >
+        <Variable className="w-3 h-3" />
+        Insert
+        <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute right-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 z-50 py-1 max-h-64 overflow-y-auto">
+          {INSERTABLE_VARIABLES.map((category) => (
+            <div key={category.category}>
+              <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">
+                {category.category}
+              </div>
+              {category.items.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => {
+                    onInsert(item.value);
+                    setIsOpen(false);
+                  }}
+                  className="w-full px-3 py-2 text-left text-sm hover:bg-indigo-50 flex items-center justify-between group"
+                >
+                  <span className="text-gray-700">{item.label}</span>
+                  <code className="text-xs text-gray-400 group-hover:text-indigo-500 font-mono">
+                    {item.value.replace(/\{\{|\}\}/g, '')}
+                  </code>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// NODE CONFIGURATIONS - Aligned with Backend
+// ============================================================================
+
 const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
-  // Triggers
+  // ==========================================================================
+  // TRIGGERS
+  // ==========================================================================
   trigger_form_submitted: {
-    title: 'Form Submitted Trigger',
+    title: 'Form Submitted',
     fields: [
-      {
-        key: 'formId',
-        label: 'Select Form',
-        type: 'dynamic_select',
-        dataSource: 'forms',
-        helperText: 'Workflow triggers when this form is submitted'
-      },
+      { key: 'form_id', label: 'Select Form', type: 'dynamic_select', dataSource: 'forms', helperText: 'Triggers when this form is submitted' },
     ],
   },
   trigger_tag_added: {
-    title: 'Tag Added Trigger',
+    title: 'Tag Added',
     fields: [
-      {
-        key: 'tagName',
-        label: 'Select Tag',
-        type: 'dynamic_select',
-        dataSource: 'tags',
-        helperText: 'Triggers when this tag is added to a contact'
-      },
+      { key: 'tag', label: 'Tag Name', type: 'dynamic_select', dataSource: 'tags', helperText: 'Triggers when this tag is added to a contact' },
     ],
   },
   trigger_chat_started: {
-    title: 'Chat Started Trigger',
+    title: 'Chat Started',
     fields: [
-      {
-        key: 'pageId',
-        label: 'On Page (optional)',
-        type: 'dynamic_select',
-        dataSource: 'pages',
-        helperText: 'Trigger only on this page, or leave empty for all pages'
-      },
+      { key: 'page_id', label: 'On Page (optional)', type: 'dynamic_select', dataSource: 'pages', helperText: 'Filter to specific page, or leave empty for all' },
     ],
   },
   trigger_chat_message: {
-    title: 'Chat Message Trigger',
+    title: 'Chat Message',
     fields: [
-      {
-        key: 'pageId',
-        label: 'On Page (optional)',
-        type: 'dynamic_select',
-        dataSource: 'pages',
-        helperText: 'Filter to specific page'
-      },
-      {
-        key: 'chat_keyword',
-        label: 'Keyword Filter (optional)',
-        type: 'text',
-        placeholder: 'e.g., pricing, demo, help',
-        helperText: 'Only trigger if message contains this keyword'
-      },
+      { key: 'page_id', label: 'On Page (optional)', type: 'dynamic_select', dataSource: 'pages', helperText: 'Filter to specific page' },
+      { key: 'chat_keyword', label: 'Keyword Filter', type: 'text', placeholder: 'pricing, demo, help', helperText: 'Only trigger if message contains this keyword' },
     ],
   },
   trigger_page_visit: {
-    title: 'Page Visit Trigger',
+    title: 'Page Visit',
     fields: [
-      {
-        key: 'pageId',
-        label: 'Select Page',
-        type: 'dynamic_select',
-        dataSource: 'pages',
-        helperText: 'Triggers when visitor lands on this page'
-      },
+      { key: 'page_id', label: 'Select Page', type: 'dynamic_select', dataSource: 'pages', helperText: 'Triggers when visitor lands on this page' },
     ],
   },
   trigger_webhook: {
-    title: 'Webhook Trigger',
+    title: 'Webhook',
     fields: [
-      { key: 'webhookPath', label: 'Webhook Path', type: 'text', placeholder: '/my-webhook' },
+      { key: 'webhook_path', label: 'Webhook Path', type: 'text', placeholder: '/my-webhook', helperText: 'The URL path for this webhook' },
       { key: 'secret', label: 'Secret (optional)', type: 'text', placeholder: 'HMAC secret for validation' },
     ],
   },
   trigger_schedule: {
-    title: 'Schedule Trigger',
+    title: 'Schedule',
     fields: [
-      { key: 'schedule', label: 'Cron Expression', type: 'text', placeholder: '0 9 * * *', helperText: 'e.g., "0 9 * * *" for 9 AM daily' },
+      { key: 'cron_expression', label: 'Cron Expression', type: 'text', placeholder: '0 9 * * *', helperText: 'e.g., "0 9 * * *" for 9 AM daily' },
       { key: 'timezone', label: 'Timezone', type: 'select', options: [
         { value: 'UTC', label: 'UTC' },
         { value: 'America/New_York', label: 'Eastern Time' },
@@ -153,168 +204,430 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
       ]},
     ],
   },
+  trigger_sms_received: {
+    title: 'SMS Received',
+    fields: [
+      { key: 'phone_filter', label: 'From Number (optional)', type: 'text', placeholder: '+1555...', helperText: 'Filter by sender phone number' },
+    ],
+  },
+  trigger_email_received: {
+    title: 'Email Received',
+    fields: [
+      { key: 'email_filter', label: 'From Email (optional)', type: 'text', placeholder: 'filter@example.com', helperText: 'Filter by sender email' },
+    ],
+  },
+  trigger_segment_event: {
+    title: 'Segment Event',
+    fields: [
+      { key: 'segment_event_name', label: 'Event Name', type: 'text', placeholder: 'Order Completed', helperText: 'Segment track event name (supports * wildcard)' },
+    ],
+  },
+  trigger_appointment_booked: {
+    title: 'Appointment Booked',
+    fields: [
+      { key: 'calendar_id', label: 'Calendar (optional)', type: 'text', placeholder: 'Filter by calendar ID' },
+    ],
+  },
+  // Stripe triggers (no config needed, they receive data from webhooks)
+  trigger_payment_received: { title: 'Payment Received', fields: [] },
+  trigger_payment_failed: { title: 'Payment Failed', fields: [] },
+  trigger_subscription_created: { title: 'Subscription Created', fields: [] },
+  trigger_subscription_cancelled: { title: 'Subscription Cancelled', fields: [] },
+  trigger_invoice_paid: { title: 'Invoice Paid', fields: [] },
+  trigger_payment_refunded: { title: 'Payment Refunded', fields: [] },
 
-  // Actions
+  // ==========================================================================
+  // ACTIONS
+  // ==========================================================================
   action_send_email: {
     title: 'Send Email',
     fields: [
-      { key: 'to', label: 'To', type: 'text', placeholder: '{{contact.email}}' },
-      { key: 'subject', label: 'Subject', type: 'text', placeholder: 'Email subject line' },
-      { key: 'body', label: 'Body', type: 'textarea', placeholder: 'Email body content...\n\nUse {{contact.name}} for personalization' },
-      { key: 'fromName', label: 'From Name', type: 'text', placeholder: 'Your Company' },
+      { key: 'email_to', label: 'To', type: 'text', placeholder: '{{contact.email}}', helperText: 'Recipient email address' },
+      { key: 'email_subject', label: 'Subject', type: 'text', placeholder: 'Thanks for reaching out!' },
+      { key: 'email_body', label: 'Body', type: 'textarea', placeholder: 'Hi {{contact.first_name}},\n\nThanks for your message!\n\nBest regards' },
+      { key: 'email_from', label: 'From Email', type: 'text', placeholder: 'noreply@complens.ai', helperText: 'Sender email address' },
     ],
   },
   action_send_sms: {
     title: 'Send SMS',
     fields: [
-      { key: 'to', label: 'To', type: 'text', placeholder: '{{contact.phone}}' },
-      { key: 'message', label: 'Message', type: 'textarea', placeholder: 'SMS message content (160 chars recommended)' },
+      { key: 'sms_to', label: 'To', type: 'text', placeholder: '{{contact.phone}}', helperText: 'Recipient phone number' },
+      { key: 'sms_message', label: 'Message', type: 'textarea', placeholder: 'Hi {{contact.first_name}}, thanks for reaching out!', helperText: '160 chars recommended' },
+      { key: 'sms_from', label: 'From Number (optional)', type: 'text', placeholder: '+15551234567' },
     ],
   },
-  action_wait: {
-    title: 'Wait',
+  action_ai_respond: {
+    title: 'AI Respond',
     fields: [
-      { key: 'duration', label: 'Duration', type: 'number', placeholder: '1' },
-      { key: 'unit', label: 'Unit', type: 'select', options: [
-        { value: 'minutes', label: 'Minutes' },
-        { value: 'hours', label: 'Hours' },
-        { value: 'days', label: 'Days' },
+      { key: 'ai_system_prompt', label: 'AI Persona', type: 'textarea', placeholder: 'You are a friendly customer service rep...', helperText: 'Tell the AI how to behave' },
+      { key: 'ai_prompt', label: 'Task/Context', type: 'textarea', placeholder: 'Respond helpfully to the customer inquiry', helperText: 'What should AI do' },
+      { key: 'ai_respond_via', label: 'Send Response Via', type: 'select', options: [
+        { value: 'same_channel', label: 'Same as trigger' },
+        { value: 'email', label: 'Email' },
+        { value: 'sms', label: 'SMS' },
       ]},
-    ],
-  },
-  action_webhook: {
-    title: 'Call Webhook',
-    fields: [
-      { key: 'url', label: 'URL', type: 'text', placeholder: 'https://api.example.com/webhook' },
-      { key: 'method', label: 'Method', type: 'select', options: [
-        { value: 'POST', label: 'POST' },
-        { value: 'GET', label: 'GET' },
-        { value: 'PUT', label: 'PUT' },
-        { value: 'PATCH', label: 'PATCH' },
-      ]},
-      { key: 'headers', label: 'Headers (JSON)', type: 'textarea', placeholder: '{"Authorization": "Bearer token"}' },
-      { key: 'body', label: 'Body (JSON)', type: 'textarea', placeholder: '{"contact_id": "{{contact.id}}"}' },
+      { key: 'ai_max_tokens', label: 'Max Length', type: 'number', placeholder: '500', helperText: 'Maximum response length' },
+      { key: 'ai_email_subject', label: 'Email Subject (if email)', type: 'text', placeholder: 'Response from us' },
     ],
   },
   action_update_contact: {
     title: 'Update Contact',
     fields: [
-      {
-        key: 'addTags',
-        label: 'Add Tags',
-        type: 'dynamic_select',
-        dataSource: 'tags',
-        helperText: 'Select existing tag or type new one'
-      },
-      {
-        key: 'removeTags',
-        label: 'Remove Tags',
-        type: 'dynamic_select',
-        dataSource: 'tags'
-      },
-      { key: 'setFields', label: 'Set Fields (JSON)', type: 'textarea', placeholder: '{"custom_field": "value"}' },
+      { key: 'add_tags', label: 'Add Tags', type: 'tag_input', dataSource: 'tags', helperText: 'Tags to add to the contact' },
+      { key: 'remove_tags', label: 'Remove Tags', type: 'tag_input', dataSource: 'tags', helperText: 'Tags to remove from the contact' },
+      { key: 'update_fields', label: 'Set Fields (JSON)', type: 'textarea', placeholder: '{"company": "Acme Inc"}', helperText: 'JSON object of field:value pairs' },
     ],
   },
-  action_run_workflow: {
-    title: 'Run Workflow',
+  action_wait: {
+    title: 'Wait',
     fields: [
-      {
-        key: 'workflowId',
-        label: 'Select Workflow',
-        type: 'dynamic_select',
-        dataSource: 'workflows',
-        helperText: 'The workflow to trigger'
-      },
-      { key: 'passData', label: 'Pass Contact Data', type: 'checkbox' },
+      { key: 'wait_duration', label: 'Duration (seconds)', type: 'number', placeholder: '3600', helperText: 'Time to wait in seconds (3600 = 1 hour)' },
+      { key: 'wait_until', label: 'Or Wait Until (ISO date)', type: 'text', placeholder: '2024-12-25T09:00:00Z', helperText: 'Alternative: wait until specific time' },
+    ],
+  },
+  action_webhook: {
+    title: 'Call Webhook',
+    fields: [
+      { key: 'webhook_url', label: 'URL', type: 'text', placeholder: 'https://api.example.com/webhook' },
+      { key: 'webhook_method', label: 'Method', type: 'select', options: [
+        { value: 'POST', label: 'POST' },
+        { value: 'GET', label: 'GET' },
+        { value: 'PUT', label: 'PUT' },
+        { value: 'PATCH', label: 'PATCH' },
+        { value: 'DELETE', label: 'DELETE' },
+      ], defaultValue: 'POST' },
+      { key: 'webhook_headers', label: 'Headers (JSON)', type: 'textarea', placeholder: '{"Authorization": "Bearer token"}' },
+      { key: 'webhook_body', label: 'Body (JSON)', type: 'textarea', placeholder: '{"contact_id": "{{contact.id}}"}' },
+    ],
+  },
+  action_create_task: {
+    title: 'Create Task',
+    fields: [
+      { key: 'task_title', label: 'Title', type: 'text', placeholder: 'Follow up with {{contact.first_name}}' },
+      { key: 'task_description', label: 'Description', type: 'textarea', placeholder: 'Task details...' },
+      { key: 'task_assigned_to', label: 'Assign To', type: 'text', placeholder: 'user@example.com' },
+      { key: 'task_due_in_hours', label: 'Due In (hours)', type: 'number', placeholder: '24' },
+    ],
+  },
+  // Stripe actions
+  action_stripe_checkout: {
+    title: 'Stripe Checkout',
+    fields: [
+      { key: 'product_name', label: 'Product Name', type: 'text', placeholder: 'Premium Plan' },
+      { key: 'amount', label: 'Amount ($)', type: 'number', placeholder: '49.99' },
+      { key: 'currency', label: 'Currency', type: 'select', options: [
+        { value: 'usd', label: 'USD' },
+        { value: 'eur', label: 'EUR' },
+        { value: 'gbp', label: 'GBP' },
+      ], defaultValue: 'usd' },
+      { key: 'description', label: 'Description', type: 'text', placeholder: 'Product description' },
+      { key: 'success_url', label: 'Success URL', type: 'text', placeholder: 'https://yoursite.com/success' },
+      { key: 'cancel_url', label: 'Cancel URL', type: 'text', placeholder: 'https://yoursite.com/cancel' },
+    ],
+  },
+  action_stripe_subscription: {
+    title: 'Stripe Subscription',
+    fields: [
+      { key: 'product_name', label: 'Product Name', type: 'text', placeholder: 'Pro Membership' },
+      { key: 'amount', label: 'Amount ($)', type: 'number', placeholder: '29.99' },
+      { key: 'currency', label: 'Currency', type: 'select', options: [
+        { value: 'usd', label: 'USD' },
+        { value: 'eur', label: 'EUR' },
+        { value: 'gbp', label: 'GBP' },
+      ], defaultValue: 'usd' },
+      { key: 'interval', label: 'Billing Interval', type: 'select', options: [
+        { value: 'month', label: 'Monthly' },
+        { value: 'year', label: 'Yearly' },
+        { value: 'week', label: 'Weekly' },
+      ], defaultValue: 'month' },
+      { key: 'success_url', label: 'Success URL', type: 'text', placeholder: 'https://yoursite.com/success' },
+      { key: 'cancel_url', label: 'Cancel URL', type: 'text', placeholder: 'https://yoursite.com/cancel' },
+    ],
+  },
+  action_stripe_cancel_subscription: {
+    title: 'Cancel Subscription',
+    fields: [
+      { key: 'subscription_id', label: 'Subscription ID', type: 'text', placeholder: '{{variables.subscription_id}}', helperText: 'Stripe subscription ID to cancel' },
+      { key: 'immediately', label: 'Cancel Immediately', type: 'checkbox', helperText: 'If unchecked, cancels at period end' },
     ],
   },
 
-  // Logic
+  // ==========================================================================
+  // LOGIC
+  // ==========================================================================
   logic_branch: {
     title: 'If/Else Branch',
     fields: [
-      {
-        key: 'field',
-        label: 'Field to Check',
-        type: 'dynamic_select',
-        dataSource: 'contact_fields'
-      },
-      { key: 'operator', label: 'Operator', type: 'select', options: [
-        { value: 'equals', label: 'Equals' },
-        { value: 'not_equals', label: 'Not Equals' },
-        { value: 'contains', label: 'Contains' },
-        { value: 'not_contains', label: 'Does Not Contain' },
-        { value: 'greater_than', label: 'Greater Than' },
-        { value: 'less_than', label: 'Less Than' },
-        { value: 'is_empty', label: 'Is Empty' },
-        { value: 'is_not_empty', label: 'Is Not Empty' },
-      ]},
-      { key: 'value', label: 'Value', type: 'text', placeholder: 'Value to compare' },
+      { key: 'conditions', label: 'Conditions', type: 'conditions', helperText: 'Add conditions to evaluate' },
+      { key: 'default_output', label: 'Default Branch', type: 'text', placeholder: 'else', helperText: 'Output handle if no conditions match' },
+    ],
+  },
+  logic_ab_split: {
+    title: 'A/B Split',
+    fields: [
+      { key: 'split_percentages', label: 'Split Percentages (JSON)', type: 'textarea', placeholder: '{"a": 50, "b": 50}', helperText: 'Must sum to 100. Keys are output handles.' },
     ],
   },
   logic_filter: {
     title: 'Filter',
     fields: [
-      {
-        key: 'field',
-        label: 'Field to Check',
-        type: 'dynamic_select',
-        dataSource: 'contact_fields'
-      },
-      { key: 'operator', label: 'Operator', type: 'select', options: [
-        { value: 'equals', label: 'Equals' },
-        { value: 'not_equals', label: 'Not Equals' },
-        { value: 'contains', label: 'Contains' },
-        { value: 'not_contains', label: 'Does Not Contain' },
-        { value: 'is_empty', label: 'Is Empty' },
-        { value: 'is_not_empty', label: 'Is Not Empty' },
-      ]},
-      { key: 'value', label: 'Value', type: 'text', placeholder: 'Value to match' },
+      { key: 'filter_conditions', label: 'Filter Conditions', type: 'conditions', helperText: 'Only continue if conditions are met' },
+      { key: 'filter_operator', label: 'Match', type: 'select', options: [
+        { value: 'and', label: 'ALL conditions (AND)' },
+        { value: 'or', label: 'ANY condition (OR)' },
+      ], defaultValue: 'and' },
     ],
   },
   logic_goal: {
     title: 'Goal',
     fields: [
-      { key: 'goalName', label: 'Goal Name', type: 'text', placeholder: 'e.g., Purchased' },
-      {
-        key: 'field',
-        label: 'Field to Check',
-        type: 'dynamic_select',
-        dataSource: 'contact_fields'
-      },
-      { key: 'value', label: 'Expected Value', type: 'text', placeholder: 'true' },
+      { key: 'goal_condition', label: 'Goal Condition (JSON)', type: 'textarea', placeholder: '{"field": "contact.tags", "operator": "contains", "value": "purchased"}', helperText: 'Condition that marks goal as achieved' },
+      { key: 'goal_action', label: 'When Achieved', type: 'select', options: [
+        { value: 'stop', label: 'Stop workflow' },
+        { value: 'continue', label: 'Continue workflow' },
+      ], defaultValue: 'stop' },
     ],
   },
 
+  // ==========================================================================
   // AI
-  ai_respond: {
-    title: 'AI Respond',
-    fields: [
-      { key: 'prompt', label: 'System Prompt', type: 'textarea', placeholder: 'You are a helpful assistant...' },
-      { key: 'channel', label: 'Response Channel', type: 'select', options: [
-        { value: 'same_channel', label: 'Same as trigger' },
-        { value: 'email', label: 'Email' },
-        { value: 'sms', label: 'SMS' },
-      ]},
-      { key: 'maxTokens', label: 'Max Tokens', type: 'number', placeholder: '500' },
-    ],
-  },
+  // ==========================================================================
   ai_decision: {
     title: 'AI Decision',
     fields: [
-      { key: 'prompt', label: 'Decision Prompt', type: 'textarea', placeholder: 'Based on the contact data, decide which path to take...' },
-      { key: 'options', label: 'Options (comma-separated)', type: 'text', placeholder: 'sales, support, marketing' },
+      { key: 'decision_prompt', label: 'Decision Context', type: 'textarea', placeholder: 'Based on the customer inquiry, decide if they need sales or support...', helperText: 'Context for the AI to make a decision' },
+      { key: 'decision_options', label: 'Options (JSON)', type: 'textarea', placeholder: '[{"label": "sales", "description": "Sales inquiry"}, {"label": "support", "description": "Support request"}]', helperText: 'Array of {label, description, output_handle}' },
+      { key: 'max_tokens', label: 'Max Tokens', type: 'number', placeholder: '500' },
     ],
   },
   ai_generate: {
     title: 'AI Generate',
     fields: [
-      { key: 'prompt', label: 'Generation Prompt', type: 'textarea', placeholder: 'Generate a personalized message for {{contact.name}}...' },
-      { key: 'outputVariable', label: 'Output Variable', type: 'text', placeholder: 'generated_content' },
-      { key: 'maxTokens', label: 'Max Tokens', type: 'number', placeholder: '1000' },
+      { key: 'generate_prompt', label: 'Generation Prompt', type: 'textarea', placeholder: 'Write a personalized follow-up email for {{contact.first_name}}...' },
+      { key: 'generate_output_variable', label: 'Save To Variable', type: 'text', placeholder: 'ai_output', helperText: 'Variable name for the generated content' },
+      { key: 'generate_format', label: 'Output Format', type: 'select', options: [
+        { value: 'text', label: 'Text' },
+        { value: 'json', label: 'JSON' },
+      ], defaultValue: 'text' },
+      { key: 'system_prompt', label: 'System Prompt (optional)', type: 'textarea', placeholder: 'You are a professional copywriter...' },
+      { key: 'max_tokens', label: 'Max Tokens', type: 'number', placeholder: '500' },
+      { key: 'temperature', label: 'Temperature', type: 'number', placeholder: '0.7', helperText: '0-1, higher = more creative' },
+    ],
+  },
+  ai_analyze: {
+    title: 'AI Analyze',
+    fields: [
+      { key: 'analyze_type', label: 'Analysis Type', type: 'select', options: [
+        { value: 'sentiment', label: 'Sentiment Analysis' },
+        { value: 'intent', label: 'Intent Detection' },
+        { value: 'summary', label: 'Summarize' },
+        { value: 'custom', label: 'Custom Analysis' },
+      ], defaultValue: 'sentiment' },
+      { key: 'analyze_prompt', label: 'Custom Prompt (if custom)', type: 'textarea', placeholder: 'Analyze this message for...' },
+      { key: 'analyze_output_variable', label: 'Save To Variable', type: 'text', placeholder: 'analysis', helperText: 'Variable name for the analysis result' },
+      { key: 'max_tokens', label: 'Max Tokens', type: 'number', placeholder: '500' },
+    ],
+  },
+  ai_conversation: {
+    title: 'AI Conversation',
+    fields: [
+      { key: 'system_prompt', label: 'AI Persona', type: 'textarea', placeholder: 'You are a helpful marketing assistant...', helperText: 'System prompt for the AI' },
+      { key: 'conversation_context_messages', label: 'History Length', type: 'number', placeholder: '10', helperText: 'Number of previous messages to include' },
+      { key: 'max_tokens', label: 'Max Tokens', type: 'number', placeholder: '500' },
     ],
   },
 };
+
+// ============================================================================
+// FIELD COMPONENTS
+// ============================================================================
+
+interface TagInputProps {
+  value: string[];
+  onChange: (value: string[]) => void;
+  suggestions: string[];
+  isLoading: boolean;
+  placeholder?: string;
+}
+
+function TagInput({ value, onChange, suggestions, isLoading, placeholder }: TagInputProps) {
+  const [inputValue, setInputValue] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const tags = Array.isArray(value) ? value : [];
+
+  const addTag = (tag: string) => {
+    const trimmed = tag.trim();
+    if (trimmed && !tags.includes(trimmed)) {
+      onChange([...tags, trimmed]);
+    }
+    setInputValue('');
+    setShowSuggestions(false);
+  };
+
+  const removeTag = (index: number) => {
+    onChange(tags.filter((_, i) => i !== index));
+  };
+
+  const filteredSuggestions = suggestions.filter(
+    s => s.toLowerCase().includes(inputValue.toLowerCase()) && !tags.includes(s)
+  );
+
+  return (
+    <div className="relative">
+      <div className="flex flex-wrap gap-1 p-2 border border-gray-300 rounded-lg min-h-[42px] bg-white focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-indigo-500">
+        {tags.map((tag, index) => (
+          <span
+            key={index}
+            className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-sm"
+          >
+            {tag}
+            <button
+              type="button"
+              onClick={() => removeTag(index)}
+              className="hover:text-indigo-900"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          type="text"
+          value={inputValue}
+          onChange={(e) => {
+            setInputValue(e.target.value);
+            setShowSuggestions(true);
+          }}
+          onFocus={() => setShowSuggestions(true)}
+          onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && inputValue) {
+              e.preventDefault();
+              addTag(inputValue);
+            } else if (e.key === 'Backspace' && !inputValue && tags.length > 0) {
+              removeTag(tags.length - 1);
+            }
+          }}
+          placeholder={tags.length === 0 ? placeholder : ''}
+          className="flex-1 min-w-[100px] outline-none text-sm"
+        />
+      </div>
+
+      {showSuggestions && filteredSuggestions.length > 0 && (
+        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+          {isLoading ? (
+            <div className="p-2 text-sm text-gray-500 flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Loading...
+            </div>
+          ) : (
+            filteredSuggestions.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                onClick={() => addTag(suggestion)}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-indigo-50"
+              >
+                {suggestion}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface ConditionBuilderProps {
+  value: Array<{ field: string; operator: string; value: string; output_handle?: string }>;
+  onChange: (value: Array<{ field: string; operator: string; value: string; output_handle?: string }>) => void;
+  showOutputHandle?: boolean;
+}
+
+function ConditionBuilder({ value, onChange, showOutputHandle = false }: ConditionBuilderProps) {
+  const conditions = Array.isArray(value) ? value : [];
+
+  const addCondition = () => {
+    onChange([...conditions, { field: '', operator: 'equals', value: '', output_handle: 'then' }]);
+  };
+
+  const updateCondition = (index: number, updates: Partial<typeof conditions[0]>) => {
+    const newConditions = [...conditions];
+    newConditions[index] = { ...newConditions[index], ...updates };
+    onChange(newConditions);
+  };
+
+  const removeCondition = (index: number) => {
+    onChange(conditions.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="space-y-2">
+      {conditions.map((condition, index) => (
+        <div key={index} className="flex gap-2 items-start p-2 bg-gray-50 rounded-lg">
+          <div className="flex-1 grid grid-cols-3 gap-2">
+            <select
+              value={condition.field}
+              onChange={(e) => updateCondition(index, { field: e.target.value })}
+              className="input text-sm"
+            >
+              <option value="">Field...</option>
+              {CONTACT_FIELDS.map(f => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
+            <select
+              value={condition.operator}
+              onChange={(e) => updateCondition(index, { operator: e.target.value })}
+              className="input text-sm"
+            >
+              <option value="equals">Equals</option>
+              <option value="not_equals">Not Equals</option>
+              <option value="contains">Contains</option>
+              <option value="not_contains">Not Contains</option>
+              <option value="greater_than">Greater Than</option>
+              <option value="less_than">Less Than</option>
+              <option value="is_empty">Is Empty</option>
+              <option value="is_not_empty">Is Not Empty</option>
+            </select>
+            <input
+              type="text"
+              value={condition.value}
+              onChange={(e) => updateCondition(index, { value: e.target.value })}
+              placeholder="Value"
+              className="input text-sm"
+            />
+          </div>
+          {showOutputHandle && (
+            <input
+              type="text"
+              value={condition.output_handle || ''}
+              onChange={(e) => updateCondition(index, { output_handle: e.target.value })}
+              placeholder="Output"
+              className="input text-sm w-20"
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => removeCondition(index)}
+            className="p-1 text-gray-400 hover:text-red-500"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={addCondition}
+        className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-700"
+      >
+        <Plus className="w-4 h-4" /> Add Condition
+      </button>
+    </div>
+  );
+}
 
 interface ConfigFieldProps {
   field: FieldConfig;
@@ -322,67 +635,85 @@ interface ConfigFieldProps {
   onChange: (value: unknown) => void;
   dynamicOptions?: { value: string; label: string }[];
   isLoading?: boolean;
+  contextNote?: string; // Additional context for the user
 }
 
-function ConfigField({
-  field,
-  value,
-  onChange,
-  dynamicOptions,
-  isLoading,
-}: ConfigFieldProps) {
+function ConfigField({ field, value, onChange, dynamicOptions, isLoading, contextNote }: ConfigFieldProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const insertVariable = (variable: string, isTextarea: boolean) => {
+    const ref = isTextarea ? textareaRef.current : inputRef.current;
+    if (!ref) {
+      onChange(((value as string) || '') + variable);
+      return;
+    }
+
+    const start = ref.selectionStart || 0;
+    const end = ref.selectionEnd || 0;
+    const currentValue = (value as string) || '';
+    const newValue = currentValue.slice(0, start) + variable + currentValue.slice(end);
+    onChange(newValue);
+
+    setTimeout(() => {
+      ref.focus();
+      ref.setSelectionRange(start + variable.length, start + variable.length);
+    }, 0);
+  };
+
   switch (field.type) {
     case 'textarea':
       return (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-sm font-medium text-gray-700">{field.label}</label>
+            <VariablePicker onInsert={(v) => insertVariable(v, true)} />
+          </div>
           <textarea
+            ref={textareaRef}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder}
-            className="input min-h-[100px] resize-y"
-            rows={4}
+            className="input min-h-[80px] resize-y text-sm"
+            rows={3}
           />
-          {field.helperText && (
-            <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>
-          )}
+          {field.helperText && <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>}
         </div>
       );
+
     case 'number':
       return (
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
           <input
             type="number"
-            value={(value as number) || ''}
+            value={(value as number) ?? ''}
             onChange={(e) => onChange(e.target.value ? Number(e.target.value) : '')}
             placeholder={field.placeholder}
-            className="input"
+            className="input text-sm"
           />
-          {field.helperText && (
-            <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>
-          )}
+          {field.helperText && <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>}
         </div>
       );
+
     case 'select':
       return (
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
           <select
-            value={(value as string) || ''}
+            value={(value as string) || (typeof field.defaultValue === 'string' ? field.defaultValue : '')}
             onChange={(e) => onChange(e.target.value)}
-            className="input"
+            className="input text-sm"
           >
             <option value="">Select...</option>
             {field.options?.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
-          {field.helperText && (
-            <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>
-          )}
+          {field.helperText && <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>}
         </div>
       );
+
     case 'dynamic_select':
       return (
         <div>
@@ -391,7 +722,7 @@ function ConfigField({
             <select
               value={(value as string) || ''}
               onChange={(e) => onChange(e.target.value)}
-              className="input"
+              className="input text-sm"
               disabled={isLoading}
             >
               <option value="">{isLoading ? 'Loading...' : 'Select...'}</option>
@@ -405,14 +736,47 @@ function ConfigField({
               </div>
             )}
           </div>
-          {field.helperText && (
-            <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>
+          {field.helperText && <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>}
+          {contextNote && (
+            <p className="mt-1 text-xs text-indigo-600 flex items-center gap-1">
+              <FileText className="w-3 h-3" />
+              {contextNote}
+            </p>
           )}
           {!isLoading && dynamicOptions?.length === 0 && (
             <p className="mt-1 text-xs text-amber-600">No items found. Create one first.</p>
           )}
         </div>
       );
+
+    case 'tag_input':
+      return (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+          <TagInput
+            value={(value as string[]) || []}
+            onChange={onChange}
+            suggestions={dynamicOptions?.map(o => o.value) || []}
+            isLoading={isLoading || false}
+            placeholder="Type and press Enter"
+          />
+          {field.helperText && <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>}
+        </div>
+      );
+
+    case 'conditions':
+      return (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+          <ConditionBuilder
+            value={(value as Array<{ field: string; operator: string; value: string }>) || []}
+            onChange={onChange}
+            showOutputHandle={field.key === 'conditions'} // Show output handle for branch conditions
+          />
+          {field.helperText && <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>}
+        </div>
+      );
+
     case 'checkbox':
       return (
         <div className="flex items-center gap-2">
@@ -420,29 +784,37 @@ function ConfigField({
             type="checkbox"
             checked={Boolean(value)}
             onChange={(e) => onChange(e.target.checked)}
-            className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
           />
           <label className="text-sm font-medium text-gray-700">{field.label}</label>
+          {field.helperText && <span className="text-xs text-gray-500">({field.helperText})</span>}
         </div>
       );
-    default:
+
+    default: // text
       return (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-sm font-medium text-gray-700">{field.label}</label>
+            <VariablePicker onInsert={(v) => insertVariable(v, false)} />
+          </div>
           <input
+            ref={inputRef}
             type="text"
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder}
-            className="input"
+            className="input text-sm"
           />
-          {field.helperText && (
-            <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>
-          )}
+          {field.helperText && <p className="mt-1 text-xs text-gray-500">{field.helperText}</p>}
         </div>
       );
   }
 }
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
 
 function getNodeIcon(type: string) {
   switch (type) {
@@ -464,15 +836,28 @@ function getNodeColor(type: string) {
   }
 }
 
-export default function NodeConfigPanel({ node, workspaceId, onClose, onUpdate }: NodeConfigPanelProps) {
-  // Local state for smooth editing
+export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, onUpdate }: NodeConfigPanelProps) {
   const [localLabel, setLocalLabel] = useState('');
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
   const prevNodeIdRef = useRef<string | null>(null);
 
-  // Fetch workspace data for dynamic dropdowns
-  const { data: forms, isLoading: isLoadingForms } = useForms(workspaceId);
+  // Determine if we're in page-specific context
+  const isPageContext = !!pageId;
+
+  // Fetch data for dynamic dropdowns
+  // When pageId is provided (page-level workflow), only show forms for that page
+  // When pageId is NOT provided (global workflow), show all workspace forms
+  const { data: allForms, isLoading: isLoadingAllForms } = useForms(workspaceId);
+  const { data: pageForms, isLoading: isLoadingPageForms } = usePageForms(workspaceId, pageId);
+
+  // Use page-specific forms when in page context, otherwise all workspace forms
+  const forms = isPageContext ? pageForms : allForms;
+  const isLoadingForms = isPageContext ? isLoadingPageForms : isLoadingAllForms;
+
+  // Fetch pages - in page context, we might still want to show other pages for reference
   const { data: pages, isLoading: isLoadingPages } = usePages(workspaceId);
+  const { data: currentPage } = usePage(workspaceId, pageId);
+
   const { data: workflows, isLoading: isLoadingWorkflows } = useWorkflows(workspaceId || '');
   const { data: contactsData, isLoading: isLoadingContacts } = useContacts(workspaceId || '', { limit: 100 });
 
@@ -487,14 +872,29 @@ export default function NodeConfigPanel({ node, workspaceId, onClose, onUpdate }
   }, [contactsData]);
 
   // Build dynamic options based on data source
-  const getDynamicOptions = useCallback((dataSource: string | undefined): { options: { value: string; label: string }[], isLoading: boolean } => {
+  const getDynamicOptions = useCallback((dataSource: string | undefined): { options: { value: string; label: string }[], isLoading: boolean, contextNote?: string } => {
     switch (dataSource) {
       case 'forms':
         return {
           options: forms?.map(f => ({ value: f.id, label: f.name })) || [],
           isLoading: isLoadingForms,
+          contextNote: isPageContext && currentPage
+            ? `Showing forms for "${currentPage.name}"`
+            : 'Showing all workspace forms',
         };
       case 'pages':
+        // In page context, show the current page first, then others
+        if (isPageContext && currentPage) {
+          const otherPages = pages?.filter(p => p.id !== pageId) || [];
+          return {
+            options: [
+              { value: currentPage.id, label: `${currentPage.name} (this page)` },
+              ...otherPages.map(p => ({ value: p.id, label: p.name })),
+            ],
+            isLoading: isLoadingPages,
+            contextNote: 'Current page shown first',
+          };
+        }
         return {
           options: pages?.map(p => ({ value: p.id, label: p.name })) || [],
           isLoading: isLoadingPages,
@@ -517,7 +917,7 @@ export default function NodeConfigPanel({ node, workspaceId, onClose, onUpdate }
       default:
         return { options: [], isLoading: false };
     }
-  }, [forms, pages, workflows, allTags, isLoadingForms, isLoadingPages, isLoadingWorkflows, isLoadingContacts]);
+  }, [forms, pages, workflows, allTags, isLoadingForms, isLoadingPages, isLoadingWorkflows, isLoadingContacts, isPageContext, currentPage, pageId]);
 
   // Initialize local state when node changes
   useEffect(() => {
@@ -552,7 +952,7 @@ export default function NodeConfigPanel({ node, workspaceId, onClose, onUpdate }
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>
-        <p className="text-sm text-gray-500">No configuration available for this node type: {nodeType}</p>
+        <p className="text-sm text-gray-500">No configuration available for: <code className="bg-gray-100 px-1 rounded">{nodeType}</code></p>
       </div>
     );
   }
@@ -581,6 +981,13 @@ export default function NodeConfigPanel({ node, workspaceId, onClose, onUpdate }
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>
+        {/* Page context indicator */}
+        {isPageContext && currentPage && (
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-indigo-600 bg-indigo-50 px-2 py-1 rounded">
+            <FileText className="w-3 h-3" />
+            <span>Page workflow: <strong>{currentPage.name}</strong></span>
+          </div>
+        )}
       </div>
 
       {/* Config fields */}
@@ -592,18 +999,18 @@ export default function NodeConfigPanel({ node, workspaceId, onClose, onUpdate }
             type="text"
             value={localLabel}
             onChange={(e) => handleLabelChange(e.target.value)}
-            className="input"
+            className="input text-sm"
             placeholder="Node name"
           />
         </div>
 
-        <hr className="border-gray-200" />
+        {config.fields.length > 0 && <hr className="border-gray-200" />}
 
         {/* Type-specific fields */}
         {config.fields.map((field) => {
-          const dynamicData = field.type === 'dynamic_select'
+          const dynamicData = ['dynamic_select', 'tag_input'].includes(field.type)
             ? getDynamicOptions(field.dataSource)
-            : { options: [], isLoading: false };
+            : { options: [], isLoading: false, contextNote: undefined };
 
           return (
             <ConfigField
@@ -611,17 +1018,18 @@ export default function NodeConfigPanel({ node, workspaceId, onClose, onUpdate }
               field={field}
               value={localConfig[field.key]}
               onChange={(value) => handleFieldChange(field.key, value)}
-              dynamicOptions={field.type === 'dynamic_select' ? dynamicData.options : undefined}
-              isLoading={field.type === 'dynamic_select' ? dynamicData.isLoading : undefined}
+              dynamicOptions={dynamicData.options}
+              isLoading={dynamicData.isLoading}
+              contextNote={dynamicData.contextNote}
             />
           );
         })}
       </div>
 
       {/* Footer hint */}
-      <div className="p-4 border-t border-gray-200 bg-gray-50">
+      <div className="p-3 border-t border-gray-200 bg-gray-50">
         <p className="text-xs text-gray-500">
-          Use <code className="bg-gray-200 px-1 rounded">{'{{contact.field}}'}</code> for dynamic values
+          Click <span className="inline-flex items-center gap-0.5 px-1 bg-indigo-100 text-indigo-600 rounded text-xs"><Variable className="w-3 h-3" /> Insert</span> to add dynamic values
         </p>
       </div>
     </div>

@@ -13,6 +13,9 @@ interface ChatWidgetProps {
   workspaceId: string;
   config: ChatConfig;
   primaryColor?: string;
+  mode?: 'floating' | 'inline';  // 'floating' shows bubble button, 'inline' embeds directly
+  title?: string;
+  subtitle?: string;
 }
 
 const WS_URL = import.meta.env.VITE_WS_URL || '';
@@ -22,8 +25,12 @@ export default function ChatWidget({
   workspaceId,
   config,
   primaryColor = '#6366f1',
+  mode = 'floating',
+  title,
+  subtitle,
 }: ChatWidgetProps) {
-  const [isOpen, setIsOpen] = useState(false);
+  // For inline mode, chat is always "open"
+  const [isOpen, setIsOpen] = useState(mode === 'inline');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -116,6 +123,7 @@ export default function ChatWidget({
         action: 'public_chat',
         message: inputValue.trim(),
         page_id: pageId,
+        workspace_id: workspaceId,
         visitor_id: visitorId.current,
       })
     );
@@ -135,6 +143,118 @@ export default function ChatWidget({
   const positionClasses =
     position === 'bottom-left' ? 'left-4' : 'right-4';
 
+  // Inline mode - renders chat directly embedded in the page
+  if (mode === 'inline') {
+    return (
+      <div className="w-full max-w-2xl mx-auto bg-white rounded-2xl shadow-lg overflow-hidden">
+        {/* Header with title/subtitle */}
+        {(title || subtitle) && (
+          <div className="text-center py-6 px-4 border-b border-gray-100">
+            {title && <h2 className="text-2xl font-bold text-gray-900 mb-2">{title}</h2>}
+            {subtitle && <p className="text-gray-600">{subtitle}</p>}
+          </div>
+        )}
+
+        {/* Chat header bar */}
+        <div
+          className="px-4 py-3 text-white font-medium flex items-center justify-between"
+          style={{ backgroundColor: primaryColor }}
+        >
+          <span>Chat with us</span>
+          <div className="flex items-center gap-2">
+            {isConnected && (
+              <span className="w-2 h-2 bg-green-400 rounded-full" title="Connected" />
+            )}
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div className="h-80 overflow-y-auto p-4 space-y-4 bg-gray-50">
+          {messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`flex ${
+                msg.role === 'user' ? 'justify-end' : 'justify-start'
+              }`}
+            >
+              <div
+                className={`max-w-[80%] px-4 py-2 rounded-lg ${
+                  msg.role === 'user'
+                    ? 'text-white'
+                    : 'bg-white text-gray-800 shadow-sm'
+                }`}
+                style={
+                  msg.role === 'user'
+                    ? { backgroundColor: primaryColor }
+                    : undefined
+                }
+              >
+                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+              </div>
+            </div>
+          ))}
+
+          {isTyping && (
+            <div className="flex justify-start">
+              <div className="bg-white px-4 py-2 rounded-lg shadow-sm">
+                <div className="flex gap-1">
+                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
+                  <span
+                    className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                    style={{ animationDelay: '0.1s' }}
+                  />
+                  <span
+                    className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                    style={{ animationDelay: '0.2s' }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input */}
+        <div className="border-t p-4 bg-white">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Type a message..."
+              className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:border-transparent"
+              style={{ '--tw-ring-color': primaryColor } as React.CSSProperties}
+              disabled={!isConnected}
+            />
+            <button
+              onClick={sendMessage}
+              disabled={!inputValue.trim() || !isConnected}
+              className="px-4 py-3 rounded-xl text-white font-medium disabled:opacity-50 transition-colors"
+              style={{ backgroundColor: primaryColor }}
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Floating mode - renders bubble button + popup
   return (
     <>
       {/* Chat bubble button */}

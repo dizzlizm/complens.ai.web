@@ -1,10 +1,14 @@
 /**
  * Public Block Renderer - renders page blocks for public viewing
+ * Supports 12-column grid layout with row/colSpan positioning
  */
 
 import { useState } from 'react';
+import DOMPurify from 'dompurify';
 import PublicForm from './PublicForm';
-import type { PageBlock, HeroConfig, FeaturesConfig, CtaConfig, FormConfig, TestimonialsConfig, FaqConfig, TextConfig, ImageConfig, StatsConfig, DividerConfig, PricingConfig, VideoConfig, ChatConfig as ChatBlockConfig } from '../page-builder/types';
+import ChatWidget from './ChatWidget';
+import type { PageBlock, ColSpan, HeroConfig, FeaturesConfig, CtaConfig, FormConfig, TestimonialsConfig, FaqConfig, TextConfig, ImageConfig, StatsConfig, DividerConfig, PricingConfig, VideoConfig, ChatConfig as ChatBlockConfig } from '../page-builder/types';
+import { groupBlocksIntoRows, type LayoutRow } from '../page-builder/types';
 
 interface PublicBlockRendererProps {
   blocks: PageBlock[];
@@ -13,20 +17,87 @@ interface PublicBlockRendererProps {
   pageId: string;
 }
 
+// Block types that render as full-bleed sections (ignore grid layout)
+const FULL_BLEED_TYPES = ['hero', 'cta', 'stats'];
+
+// Convert colSpan to Tailwind grid class (responsive: full on mobile, grid on sm+)
+function getColSpanClass(colSpan: ColSpan | undefined): string {
+  const span = colSpan ?? 12;
+  switch (span) {
+    case 4:
+      return 'col-span-12 sm:col-span-4';
+    case 6:
+      return 'col-span-12 sm:col-span-6';
+    case 8:
+      return 'col-span-12 sm:col-span-8';
+    case 12:
+    default:
+      return 'col-span-12';
+  }
+}
+
 export default function PublicBlockRenderer({ blocks, primaryColor, workspaceId, pageId }: PublicBlockRendererProps) {
-  // Sort blocks by order
-  const sortedBlocks = [...blocks].sort((a, b) => a.order - b.order);
+  // Group blocks into rows for layout
+  const rows = groupBlocksIntoRows(blocks);
 
   return (
     <div className="public-blocks">
-      {sortedBlocks.map((block) => (
-        <PublicBlock
-          key={block.id}
-          block={block}
+      {rows.map((row) => (
+        <PublicRow
+          key={row.rowIndex}
+          row={row}
           primaryColor={primaryColor}
           workspaceId={workspaceId}
           pageId={pageId}
         />
+      ))}
+    </div>
+  );
+}
+
+interface PublicRowProps {
+  row: LayoutRow;
+  primaryColor: string;
+  workspaceId: string;
+  pageId: string;
+}
+
+function PublicRow({ row, primaryColor, workspaceId, pageId }: PublicRowProps) {
+  // Check if this row has a single full-bleed block
+  const isSingleFullBleed = row.slots.length === 1 &&
+    FULL_BLEED_TYPES.includes(row.slots[0].type as string) &&
+    (row.slots[0].colSpan === 12 || !row.slots[0].colSpan);
+
+  // Single full-bleed block renders without grid wrapper
+  if (isSingleFullBleed) {
+    const block = row.slots[0];
+    return (
+      <PublicBlock
+        block={block}
+        primaryColor={primaryColor}
+        workspaceId={workspaceId}
+        pageId={pageId}
+        isFullBleed
+      />
+    );
+  }
+
+  // Multiple blocks or non-full-bleed: render in grid
+  return (
+    <div className="grid grid-cols-12 gap-4 sm:gap-6 max-w-7xl mx-auto px-4 py-8">
+      {row.slots.map((block) => (
+        <div
+          key={block.id}
+          className={getColSpanClass(block.colSpan)}
+        >
+          <PublicBlock
+            block={block}
+            primaryColor={primaryColor}
+            workspaceId={workspaceId}
+            pageId={pageId}
+            isFullBleed={false}
+          />
+        </div>
       ))}
     </div>
   );
@@ -37,46 +108,47 @@ interface PublicBlockProps {
   primaryColor: string;
   workspaceId: string;
   pageId: string;
+  isFullBleed?: boolean;
 }
 
-function PublicBlock({ block, primaryColor, workspaceId, pageId }: PublicBlockProps) {
+function PublicBlock({ block, primaryColor, workspaceId, pageId, isFullBleed = false }: PublicBlockProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const config = block.config as any;
 
   switch (block.type) {
     case 'hero':
-      return <HeroBlockPublic config={config} />;
+      return <HeroBlockPublic config={config} isFullBleed={isFullBleed} />;
     case 'features':
-      return <FeaturesBlockPublic config={config} />;
+      return <FeaturesBlockPublic config={config} isFullBleed={isFullBleed} />;
     case 'cta':
-      return <CtaBlockPublic config={config} />;
+      return <CtaBlockPublic config={config} isFullBleed={isFullBleed} />;
     case 'form':
-      return <FormBlockPublic config={config} workspaceId={workspaceId} pageId={pageId} primaryColor={primaryColor} />;
+      return <FormBlockPublic config={config} workspaceId={workspaceId} pageId={pageId} primaryColor={primaryColor} isFullBleed={isFullBleed} />;
     case 'testimonials':
-      return <TestimonialsBlockPublic config={config} />;
+      return <TestimonialsBlockPublic config={config} isFullBleed={isFullBleed} />;
     case 'faq':
-      return <FaqBlockPublic config={config} />;
+      return <FaqBlockPublic config={config} isFullBleed={isFullBleed} />;
     case 'text':
-      return <TextBlockPublic config={config} />;
+      return <TextBlockPublic config={config} isFullBleed={isFullBleed} />;
     case 'image':
-      return <ImageBlockPublic config={config} />;
+      return <ImageBlockPublic config={config} isFullBleed={isFullBleed} />;
     case 'stats':
-      return <StatsBlockPublic config={config} />;
+      return <StatsBlockPublic config={config} isFullBleed={isFullBleed} />;
     case 'divider':
-      return <DividerBlockPublic config={config} />;
+      return <DividerBlockPublic config={config} isFullBleed={isFullBleed} />;
     case 'pricing':
-      return <PricingBlockPublic config={config} primaryColor={primaryColor} />;
+      return <PricingBlockPublic config={config} primaryColor={primaryColor} isFullBleed={isFullBleed} />;
     case 'video':
-      return <VideoBlockPublic config={config} />;
+      return <VideoBlockPublic config={config} isFullBleed={isFullBleed} />;
     case 'chat':
-      return <ChatBlockPublic config={config} workspaceId={workspaceId} pageId={pageId} />;
+      return <ChatBlockPublic config={config} workspaceId={workspaceId} pageId={pageId} isFullBleed={isFullBleed} />;
     default:
       return null;
   }
 }
 
 // Hero Block
-function HeroBlockPublic({ config }: { config: HeroConfig }) {
+function HeroBlockPublic({ config, isFullBleed = true }: { config: HeroConfig; isFullBleed?: boolean }) {
   const getBackground = () => {
     if (config.backgroundType === 'image' && config.backgroundImage) {
       return `linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(${config.backgroundImage}) center/cover`;
@@ -87,65 +159,124 @@ function HeroBlockPublic({ config }: { config: HeroConfig }) {
     return config.backgroundColor || '#6366f1';
   };
 
+  // Full-bleed hero (single block row)
+  if (isFullBleed) {
+    return (
+      <section
+        className="min-h-[80vh] flex items-center justify-center py-20 px-4"
+        style={{ background: getBackground() }}
+      >
+        <div className={`max-w-4xl mx-auto text-${config.textAlign || 'center'}`}>
+          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
+            {config.headline}
+          </h1>
+          {config.subheadline && (
+            <p className="text-xl md:text-2xl text-white/90 mb-8 max-w-2xl mx-auto">
+              {config.subheadline}
+            </p>
+          )}
+          {config.showButton && config.buttonText && (
+            <a
+              href={config.buttonLink || '#'}
+              className="inline-block px-8 py-4 bg-white text-gray-900 font-semibold rounded-lg hover:bg-gray-100 transition-colors"
+            >
+              {config.buttonText}
+            </a>
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  // Grid-contained hero (compact version)
   return (
-    <section
-      className="min-h-[80vh] flex items-center justify-center py-20 px-4"
+    <div
+      className="rounded-lg py-12 px-6 flex items-center justify-center"
       style={{ background: getBackground() }}
     >
-      <div className={`max-w-4xl mx-auto text-${config.textAlign || 'center'}`}>
-        <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
+      <div className={`text-${config.textAlign || 'center'}`}>
+        <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">
           {config.headline}
-        </h1>
+        </h2>
         {config.subheadline && (
-          <p className="text-xl md:text-2xl text-white/90 mb-8 max-w-2xl mx-auto">
+          <p className="text-lg text-white/90 mb-6">
             {config.subheadline}
           </p>
         )}
         {config.showButton && config.buttonText && (
           <a
             href={config.buttonLink || '#'}
-            className="inline-block px-8 py-4 bg-white text-gray-900 font-semibold rounded-lg hover:bg-gray-100 transition-colors"
+            className="inline-block px-6 py-3 bg-white text-gray-900 font-semibold rounded-lg hover:bg-gray-100 transition-colors text-sm"
           >
             {config.buttonText}
           </a>
         )}
       </div>
-    </section>
+    </div>
   );
 }
 
 // Features Block
-function FeaturesBlockPublic({ config }: { config: FeaturesConfig }) {
-  const gridCols = {
+function FeaturesBlockPublic({ config, isFullBleed = true }: { config: FeaturesConfig; isFullBleed?: boolean }) {
+  // For grid items, show fewer columns based on space
+  const gridCols = isFullBleed ? {
     2: 'md:grid-cols-2',
     3: 'md:grid-cols-3',
     4: 'md:grid-cols-4',
-  }[config.columns || 3];
+  }[config.columns || 3] : 'grid-cols-1'; // Single column when in grid
 
-  return (
-    <section className="py-16 px-4 bg-white">
-      <div className="max-w-6xl mx-auto">
-        {(config.title || config.subtitle) && (
-          <div className="text-center mb-12">
-            {config.title && <h2 className="text-3xl font-bold text-gray-900 mb-4">{config.title}</h2>}
-            {config.subtitle && <p className="text-xl text-gray-600">{config.subtitle}</p>}
-          </div>
-        )}
-        <div className={`grid grid-cols-1 ${gridCols} gap-8`}>
-          {config.items?.map((item, i) => (
-            <div key={i} className="text-center p-6">
-              {item.icon && (
-                <div className="w-12 h-12 mx-auto mb-4 bg-primary-100 rounded-lg flex items-center justify-center">
-                  <FeatureIcon icon={item.icon} />
-                </div>
-              )}
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">{item.title}</h3>
-              <p className="text-gray-600">{item.description}</p>
+  // Full-bleed version (section with max-width)
+  if (isFullBleed) {
+    return (
+      <section className="py-16 px-4 bg-white">
+        <div className="max-w-6xl mx-auto">
+          {(config.title || config.subtitle) && (
+            <div className="text-center mb-12">
+              {config.title && <h2 className="text-3xl font-bold text-gray-900 mb-4">{config.title}</h2>}
+              {config.subtitle && <p className="text-xl text-gray-600">{config.subtitle}</p>}
             </div>
-          ))}
+          )}
+          <div className={`grid grid-cols-1 ${gridCols} gap-8`}>
+            {config.items?.map((item, i) => (
+              <div key={i} className="text-center p-6">
+                {item.icon && (
+                  <div className="w-12 h-12 mx-auto mb-4 bg-primary-100 rounded-lg flex items-center justify-center">
+                    <FeatureIcon icon={item.icon} />
+                  </div>
+                )}
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">{item.title}</h3>
+                <p className="text-gray-600">{item.description}</p>
+              </div>
+            ))}
+          </div>
         </div>
+      </section>
+    );
+  }
+
+  // Grid-contained version (compact, no section wrapper)
+  return (
+    <div className="py-6 bg-white rounded-lg">
+      {(config.title || config.subtitle) && (
+        <div className="text-center mb-6">
+          {config.title && <h3 className="text-xl font-bold text-gray-900 mb-2">{config.title}</h3>}
+          {config.subtitle && <p className="text-gray-600">{config.subtitle}</p>}
+        </div>
+      )}
+      <div className={`grid ${gridCols} gap-4`}>
+        {config.items?.map((item, i) => (
+          <div key={i} className="text-center p-4">
+            {item.icon && (
+              <div className="w-10 h-10 mx-auto mb-3 bg-primary-100 rounded-lg flex items-center justify-center">
+                <FeatureIcon icon={item.icon} />
+              </div>
+            )}
+            <h4 className="text-base font-semibold text-gray-900 mb-1">{item.title}</h4>
+            <p className="text-sm text-gray-600">{item.description}</p>
+          </div>
+        ))}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -184,208 +315,405 @@ function FeatureIcon({ icon }: { icon: string }) {
 }
 
 // CTA Block
-function CtaBlockPublic({ config }: { config: CtaConfig }) {
+function CtaBlockPublic({ config, isFullBleed = true }: { config: CtaConfig; isFullBleed?: boolean }) {
   const textColorClass = config.textColor === 'dark' ? 'text-gray-900' : 'text-white';
 
+  // Full-bleed version
+  if (isFullBleed) {
+    return (
+      <section
+        className="py-16 px-4"
+        style={{ backgroundColor: config.backgroundColor || '#6366f1' }}
+      >
+        <div className="max-w-4xl mx-auto text-center">
+          <h2 className={`text-3xl md:text-4xl font-bold mb-4 ${textColorClass}`}>
+            {config.headline}
+          </h2>
+          {config.description && (
+            <p className={`text-xl mb-8 ${config.textColor === 'dark' ? 'text-gray-600' : 'text-white/90'}`}>
+              {config.description}
+            </p>
+          )}
+          {config.buttonText && (
+            <a
+              href={config.buttonLink || '#'}
+              className={`inline-block px-8 py-4 font-semibold rounded-lg transition-colors ${
+                config.textColor === 'dark'
+                  ? 'bg-gray-900 text-white hover:bg-gray-800'
+                  : 'bg-white text-gray-900 hover:bg-gray-100'
+              }`}
+            >
+              {config.buttonText}
+            </a>
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  // Grid-contained version
   return (
-    <section
-      className="py-16 px-4"
+    <div
+      className="py-8 px-6 rounded-lg text-center"
       style={{ backgroundColor: config.backgroundColor || '#6366f1' }}
     >
-      <div className="max-w-4xl mx-auto text-center">
-        <h2 className={`text-3xl md:text-4xl font-bold mb-4 ${textColorClass}`}>
-          {config.headline}
-        </h2>
-        {config.description && (
-          <p className={`text-xl mb-8 ${config.textColor === 'dark' ? 'text-gray-600' : 'text-white/90'}`}>
-            {config.description}
-          </p>
-        )}
-        {config.buttonText && (
-          <a
-            href={config.buttonLink || '#'}
-            className={`inline-block px-8 py-4 font-semibold rounded-lg transition-colors ${
-              config.textColor === 'dark'
-                ? 'bg-gray-900 text-white hover:bg-gray-800'
-                : 'bg-white text-gray-900 hover:bg-gray-100'
-            }`}
-          >
-            {config.buttonText}
-          </a>
-        )}
-      </div>
-    </section>
+      <h3 className={`text-xl md:text-2xl font-bold mb-3 ${textColorClass}`}>
+        {config.headline}
+      </h3>
+      {config.description && (
+        <p className={`mb-6 ${config.textColor === 'dark' ? 'text-gray-600' : 'text-white/90'}`}>
+          {config.description}
+        </p>
+      )}
+      {config.buttonText && (
+        <a
+          href={config.buttonLink || '#'}
+          className={`inline-block px-6 py-3 font-semibold rounded-lg transition-colors text-sm ${
+            config.textColor === 'dark'
+              ? 'bg-gray-900 text-white hover:bg-gray-800'
+              : 'bg-white text-gray-900 hover:bg-gray-100'
+          }`}
+        >
+          {config.buttonText}
+        </a>
+      )}
+    </div>
   );
 }
 
 // Form Block
-function FormBlockPublic({ config, workspaceId, pageId, primaryColor }: { config: FormConfig; workspaceId: string; pageId: string; primaryColor: string }) {
+function FormBlockPublic({ config, workspaceId, pageId, primaryColor, isFullBleed = true }: { config: FormConfig; workspaceId: string; pageId: string; primaryColor: string; isFullBleed?: boolean }) {
   if (!config.formId) {
     return null;
   }
 
-  return (
-    <section className="py-16 px-4 bg-gray-50">
-      <div className="max-w-xl mx-auto">
-        {(config.title || config.description) && (
-          <div className="text-center mb-8">
-            {config.title && <h2 className="text-2xl font-bold text-gray-900 mb-2">{config.title}</h2>}
-            {config.description && <p className="text-gray-600">{config.description}</p>}
+  // Full-bleed version
+  if (isFullBleed) {
+    return (
+      <section className="py-16 px-4 bg-gray-50">
+        <div className="max-w-xl mx-auto">
+          {(config.title || config.description) && (
+            <div className="text-center mb-8">
+              {config.title && <h2 className="text-2xl font-bold text-gray-900 mb-2">{config.title}</h2>}
+              {config.description && <p className="text-gray-600">{config.description}</p>}
+            </div>
+          )}
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <PublicForm
+              formId={config.formId}
+              workspaceId={workspaceId}
+              pageId={pageId}
+              primaryColor={primaryColor}
+            />
           </div>
-        )}
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          <PublicForm
-            formId={config.formId}
-            workspaceId={workspaceId}
-            pageId={pageId}
-            primaryColor={primaryColor}
-          />
         </div>
+      </section>
+    );
+  }
+
+  // Grid-contained version
+  return (
+    <div className="py-6 bg-gray-50 rounded-lg">
+      {(config.title || config.description) && (
+        <div className="text-center mb-4 px-4">
+          {config.title && <h3 className="text-lg font-bold text-gray-900 mb-1">{config.title}</h3>}
+          {config.description && <p className="text-sm text-gray-600">{config.description}</p>}
+        </div>
+      )}
+      <div className="bg-white rounded-lg shadow p-4 mx-2">
+        <PublicForm
+          formId={config.formId}
+          workspaceId={workspaceId}
+          pageId={pageId}
+          primaryColor={primaryColor}
+        />
       </div>
-    </section>
+    </div>
   );
 }
 
 // Testimonials Block
-function TestimonialsBlockPublic({ config }: { config: TestimonialsConfig }) {
-  return (
-    <section className="py-16 px-4 bg-gray-50">
-      <div className="max-w-6xl mx-auto">
-        {config.title && (
-          <h2 className="text-3xl font-bold text-gray-900 text-center mb-12">{config.title}</h2>
-        )}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {config.items?.map((item, i) => (
-            <div key={i} className="bg-white p-6 rounded-lg shadow">
-              <p className="text-gray-600 italic mb-4">"{item.quote}"</p>
-              <div className="flex items-center">
-                {item.avatar ? (
-                  <img src={item.avatar} alt={item.author} className="w-10 h-10 rounded-full mr-3" />
-                ) : (
-                  <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center mr-3">
-                    <span className="text-primary-600 font-semibold">{item.author?.[0]}</span>
+function TestimonialsBlockPublic({ config, isFullBleed = true }: { config: TestimonialsConfig; isFullBleed?: boolean }) {
+  // Full-bleed version
+  if (isFullBleed) {
+    return (
+      <section className="py-16 px-4 bg-gray-50">
+        <div className="max-w-6xl mx-auto">
+          {config.title && (
+            <h2 className="text-3xl font-bold text-gray-900 text-center mb-12">{config.title}</h2>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {config.items?.map((item, i) => (
+              <div key={i} className="bg-white p-6 rounded-lg shadow">
+                <p className="text-gray-600 italic mb-4">"{item.quote}"</p>
+                <div className="flex items-center">
+                  {item.avatar ? (
+                    <img src={item.avatar} alt={item.author} className="w-10 h-10 rounded-full mr-3" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center mr-3">
+                      <span className="text-primary-600 font-semibold">{item.author?.[0]}</span>
+                    </div>
+                  )}
+                  <div>
+                    <p className="font-semibold text-gray-900">{item.author}</p>
+                    {item.company && <p className="text-sm text-gray-500">{item.company}</p>}
                   </div>
-                )}
-                <div>
-                  <p className="font-semibold text-gray-900">{item.author}</p>
-                  {item.company && <p className="text-sm text-gray-500">{item.company}</p>}
                 </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
+      </section>
+    );
+  }
+
+  // Grid-contained version
+  return (
+    <div className="py-6 bg-gray-50 rounded-lg">
+      {config.title && (
+        <h3 className="text-xl font-bold text-gray-900 text-center mb-6">{config.title}</h3>
+      )}
+      <div className="space-y-4 px-4">
+        {config.items?.map((item, i) => (
+          <div key={i} className="bg-white p-4 rounded-lg shadow">
+            <p className="text-sm text-gray-600 italic mb-3">"{item.quote}"</p>
+            <div className="flex items-center">
+              {item.avatar ? (
+                <img src={item.avatar} alt={item.author} className="w-8 h-8 rounded-full mr-2" />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center mr-2">
+                  <span className="text-primary-600 font-semibold text-sm">{item.author?.[0]}</span>
+                </div>
+              )}
+              <div>
+                <p className="font-semibold text-gray-900 text-sm">{item.author}</p>
+                {item.company && <p className="text-xs text-gray-500">{item.company}</p>}
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
-    </section>
+    </div>
   );
 }
 
 // FAQ Block
-function FaqBlockPublic({ config }: { config: FaqConfig }) {
+function FaqBlockPublic({ config, isFullBleed = true }: { config: FaqConfig; isFullBleed?: boolean }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
-  return (
-    <section className="py-16 px-4 bg-white">
-      <div className="max-w-3xl mx-auto">
-        {config.title && (
-          <h2 className="text-3xl font-bold text-gray-900 text-center mb-12">{config.title}</h2>
-        )}
-        <div className="space-y-4">
-          {config.items?.map((item, i) => (
-            <div key={i} className="border border-gray-200 rounded-lg">
-              <button
-                onClick={() => setOpenIndex(openIndex === i ? null : i)}
-                className="w-full flex items-center justify-between p-4 text-left"
-              >
-                <span className="font-medium text-gray-900">{item.question}</span>
-                <svg
-                  className={`w-5 h-5 text-gray-500 transition-transform ${openIndex === i ? 'rotate-180' : ''}`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+  // Full-bleed version
+  if (isFullBleed) {
+    return (
+      <section className="py-16 px-4 bg-white">
+        <div className="max-w-3xl mx-auto">
+          {config.title && (
+            <h2 className="text-3xl font-bold text-gray-900 text-center mb-12">{config.title}</h2>
+          )}
+          <div className="space-y-4">
+            {config.items?.map((item, i) => (
+              <div key={i} className="border border-gray-200 rounded-lg">
+                <button
+                  onClick={() => setOpenIndex(openIndex === i ? null : i)}
+                  className="w-full flex items-center justify-between p-4 text-left"
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              {openIndex === i && (
-                <div className="px-4 pb-4 text-gray-600">
-                  {item.answer}
-                </div>
-              )}
-            </div>
-          ))}
+                  <span className="font-medium text-gray-900">{item.question}</span>
+                  <svg
+                    className={`w-5 h-5 text-gray-500 transition-transform ${openIndex === i ? 'rotate-180' : ''}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {openIndex === i && (
+                  <div className="px-4 pb-4 text-gray-600">
+                    {item.answer}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
+      </section>
+    );
+  }
+
+  // Grid-contained version
+  return (
+    <div className="py-6 bg-white rounded-lg">
+      {config.title && (
+        <h3 className="text-xl font-bold text-gray-900 text-center mb-6">{config.title}</h3>
+      )}
+      <div className="space-y-2 px-2">
+        {config.items?.map((item, i) => (
+          <div key={i} className="border border-gray-200 rounded-lg">
+            <button
+              onClick={() => setOpenIndex(openIndex === i ? null : i)}
+              className="w-full flex items-center justify-between p-3 text-left"
+            >
+              <span className="font-medium text-gray-900 text-sm">{item.question}</span>
+              <svg
+                className={`w-4 h-4 text-gray-500 transition-transform ${openIndex === i ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {openIndex === i && (
+              <div className="px-3 pb-3 text-sm text-gray-600">
+                {item.answer}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
-    </section>
+    </div>
   );
 }
 
 // Text Block
-function TextBlockPublic({ config }: { config: TextConfig }) {
+// SECURITY: Sanitize HTML content with DOMPurify to prevent XSS attacks
+
+// DOMPurify config for text content - more restrictive than page content
+const TEXT_SANITIZE_CONFIG = {
+  ALLOWED_TAGS: [
+    'div', 'p', 'span', 'a', 'strong', 'em', 'b', 'i', 'u',
+    'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'blockquote', 'pre', 'code', 'br', 'hr'
+  ],
+  ALLOWED_ATTR: [
+    'class', 'id', 'href', 'target', 'rel', 'style'
+  ],
+  ALLOW_DATA_ATTR: false,
+};
+
+function TextBlockPublic({ config, isFullBleed = true }: { config: TextConfig; isFullBleed?: boolean }) {
+  // SECURITY: Sanitize content to prevent XSS
+  const sanitizedContent = DOMPurify.sanitize(config.content || '', TEXT_SANITIZE_CONFIG);
+
+  // Full-bleed version
+  if (isFullBleed) {
+    return (
+      <section className="py-12 px-4 bg-white">
+        <div className={`max-w-3xl mx-auto prose prose-lg text-${config.alignment || 'left'}`}>
+          <div dangerouslySetInnerHTML={{ __html: sanitizedContent }} />
+        </div>
+      </section>
+    );
+  }
+
+  // Grid-contained version
   return (
-    <section className="py-12 px-4 bg-white">
-      <div className={`max-w-3xl mx-auto prose prose-lg text-${config.alignment || 'left'}`}>
-        <div dangerouslySetInnerHTML={{ __html: config.content || '' }} />
-      </div>
-    </section>
+    <div className={`py-6 bg-white rounded-lg prose prose-sm text-${config.alignment || 'left'}`}>
+      <div dangerouslySetInnerHTML={{ __html: sanitizedContent }} />
+    </div>
   );
 }
 
 // Image Block
-function ImageBlockPublic({ config }: { config: ImageConfig }) {
+function ImageBlockPublic({ config, isFullBleed = true }: { config: ImageConfig; isFullBleed?: boolean }) {
   if (!config.url) return null;
 
-  const widthClass = {
-    full: 'max-w-full',
-    large: 'max-w-4xl',
-    medium: 'max-w-2xl',
-    small: 'max-w-md',
-  }[config.width || 'large'];
+  // Full-bleed version
+  if (isFullBleed) {
+    const widthClass = {
+      full: 'max-w-full',
+      large: 'max-w-4xl',
+      medium: 'max-w-2xl',
+      small: 'max-w-md',
+    }[config.width || 'large'];
 
+    return (
+      <section className="py-12 px-4 bg-white">
+        <figure className={`${widthClass} mx-auto`}>
+          <img
+            src={config.url}
+            alt={config.alt || ''}
+            className="w-full rounded-lg shadow-lg"
+          />
+          {config.caption && (
+            <figcaption className="mt-3 text-center text-gray-500 text-sm">
+              {config.caption}
+            </figcaption>
+          )}
+        </figure>
+      </section>
+    );
+  }
+
+  // Grid-contained version
   return (
-    <section className="py-12 px-4 bg-white">
-      <figure className={`${widthClass} mx-auto`}>
+    <div className="py-4 bg-white rounded-lg">
+      <figure>
         <img
           src={config.url}
           alt={config.alt || ''}
-          className="w-full rounded-lg shadow-lg"
+          className="w-full rounded-lg shadow"
         />
         {config.caption && (
-          <figcaption className="mt-3 text-center text-gray-500 text-sm">
+          <figcaption className="mt-2 text-center text-gray-500 text-xs">
             {config.caption}
           </figcaption>
         )}
       </figure>
-    </section>
+    </div>
   );
 }
 
 // Stats Block
-function StatsBlockPublic({ config }: { config: StatsConfig }) {
-  return (
-    <section className="py-16 px-4 bg-primary-600">
-      <div className="max-w-6xl mx-auto">
-        {config.title && (
-          <h2 className="text-3xl font-bold text-white text-center mb-12">{config.title}</h2>
-        )}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-          {config.items?.map((item, i) => (
-            <div key={i} className="text-center">
-              <p className="text-4xl md:text-5xl font-bold text-white mb-2">{item.value}</p>
-              <p className="text-white/80">{item.label}</p>
-            </div>
-          ))}
+function StatsBlockPublic({ config, isFullBleed = true }: { config: StatsConfig; isFullBleed?: boolean }) {
+  // Full-bleed version
+  if (isFullBleed) {
+    return (
+      <section className="py-16 px-4 bg-primary-600">
+        <div className="max-w-6xl mx-auto">
+          {config.title && (
+            <h2 className="text-3xl font-bold text-white text-center mb-12">{config.title}</h2>
+          )}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+            {config.items?.map((item, i) => (
+              <div key={i} className="text-center">
+                <p className="text-4xl md:text-5xl font-bold text-white mb-2">{item.value}</p>
+                <p className="text-white/80">{item.label}</p>
+              </div>
+            ))}
+          </div>
         </div>
+      </section>
+    );
+  }
+
+  // Grid-contained version
+  return (
+    <div className="py-8 px-4 bg-primary-600 rounded-lg">
+      {config.title && (
+        <h3 className="text-xl font-bold text-white text-center mb-6">{config.title}</h3>
+      )}
+      <div className="grid grid-cols-2 gap-4">
+        {config.items?.map((item, i) => (
+          <div key={i} className="text-center">
+            <p className="text-2xl font-bold text-white mb-1">{item.value}</p>
+            <p className="text-sm text-white/80">{item.label}</p>
+          </div>
+        ))}
       </div>
-    </section>
+    </div>
   );
 }
 
 // Divider Block
-function DividerBlockPublic({ config }: { config: DividerConfig }) {
-  const heightClass = {
+function DividerBlockPublic({ config, isFullBleed = true }: { config: DividerConfig; isFullBleed?: boolean }) {
+  const heightClass = isFullBleed ? {
     small: 'py-4',
     medium: 'py-8',
     large: 'py-12',
+  }[config.height || 'medium'] : {
+    small: 'py-2',
+    medium: 'py-4',
+    large: 'py-6',
   }[config.height || 'medium'];
 
   if (config.style === 'space') {
@@ -405,65 +733,117 @@ function DividerBlockPublic({ config }: { config: DividerConfig }) {
   }
 
   return (
-    <div className={`${heightClass} px-4`}>
-      <hr className="max-w-4xl mx-auto border-gray-200" />
+    <div className={`${heightClass} ${isFullBleed ? 'px-4' : ''}`}>
+      <hr className={`${isFullBleed ? 'max-w-4xl mx-auto' : ''} border-gray-200`} />
     </div>
   );
 }
 
 // Pricing Block
-function PricingBlockPublic({ config, primaryColor }: { config: PricingConfig; primaryColor: string }) {
-  return (
-    <section className="py-16 px-4 bg-gray-50">
-      <div className="max-w-6xl mx-auto">
-        {(config.title || config.subtitle) && (
-          <div className="text-center mb-12">
-            {config.title && <h2 className="text-3xl font-bold text-gray-900 mb-4">{config.title}</h2>}
-            {config.subtitle && <p className="text-xl text-gray-600">{config.subtitle}</p>}
-          </div>
-        )}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {config.items?.map((tier, i) => (
-            <div
-              key={i}
-              className={`bg-white rounded-lg shadow-lg p-8 ${tier.highlighted ? 'ring-2 ring-primary-600 scale-105' : ''}`}
-            >
-              <h3 className="text-xl font-bold text-gray-900 mb-2">{tier.name}</h3>
-              <div className="mb-6">
-                <span className="text-4xl font-bold text-gray-900">{tier.price}</span>
-                <span className="text-gray-500">{tier.period}</span>
-              </div>
-              <ul className="space-y-3 mb-8">
-                {tier.features?.map((feature, j) => (
-                  <li key={j} className="flex items-center text-gray-600">
-                    <svg className="w-5 h-5 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-              <a
-                href={tier.buttonLink || '#'}
-                className={`block w-full py-3 text-center rounded-lg font-semibold transition-colors ${
-                  tier.highlighted
-                    ? 'text-white hover:opacity-90'
-                    : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
-                }`}
-                style={tier.highlighted ? { backgroundColor: primaryColor } : undefined}
-              >
-                {tier.buttonText || 'Get Started'}
-              </a>
+function PricingBlockPublic({ config, primaryColor, isFullBleed = true }: { config: PricingConfig; primaryColor: string; isFullBleed?: boolean }) {
+  // Full-bleed version
+  if (isFullBleed) {
+    return (
+      <section className="py-16 px-4 bg-gray-50">
+        <div className="max-w-6xl mx-auto">
+          {(config.title || config.subtitle) && (
+            <div className="text-center mb-12">
+              {config.title && <h2 className="text-3xl font-bold text-gray-900 mb-4">{config.title}</h2>}
+              {config.subtitle && <p className="text-xl text-gray-600">{config.subtitle}</p>}
             </div>
-          ))}
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {config.items?.map((tier, i) => (
+              <div
+                key={i}
+                className={`bg-white rounded-lg shadow-lg p-8 ${tier.highlighted ? 'ring-2 ring-primary-600 scale-105' : ''}`}
+              >
+                <h3 className="text-xl font-bold text-gray-900 mb-2">{tier.name}</h3>
+                <div className="mb-6">
+                  <span className="text-4xl font-bold text-gray-900">{tier.price}</span>
+                  <span className="text-gray-500">{tier.period}</span>
+                </div>
+                <ul className="space-y-3 mb-8">
+                  {tier.features?.map((feature, j) => (
+                    <li key={j} className="flex items-center text-gray-600">
+                      <svg className="w-5 h-5 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+                <a
+                  href={tier.buttonLink || '#'}
+                  className={`block w-full py-3 text-center rounded-lg font-semibold transition-colors ${
+                    tier.highlighted
+                      ? 'text-white hover:opacity-90'
+                      : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+                  }`}
+                  style={tier.highlighted ? { backgroundColor: primaryColor } : undefined}
+                >
+                  {tier.buttonText || 'Get Started'}
+                </a>
+              </div>
+            ))}
+          </div>
         </div>
+      </section>
+    );
+  }
+
+  // Grid-contained version (simplified single-column pricing)
+  return (
+    <div className="py-6 bg-gray-50 rounded-lg">
+      {(config.title || config.subtitle) && (
+        <div className="text-center mb-6 px-4">
+          {config.title && <h3 className="text-xl font-bold text-gray-900 mb-2">{config.title}</h3>}
+          {config.subtitle && <p className="text-sm text-gray-600">{config.subtitle}</p>}
+        </div>
+      )}
+      <div className="space-y-4 px-4">
+        {config.items?.map((tier, i) => (
+          <div
+            key={i}
+            className={`bg-white rounded-lg shadow p-4 ${tier.highlighted ? 'ring-2 ring-primary-600' : ''}`}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-bold text-gray-900">{tier.name}</h4>
+              <div>
+                <span className="text-2xl font-bold text-gray-900">{tier.price}</span>
+                <span className="text-gray-500 text-sm">{tier.period}</span>
+              </div>
+            </div>
+            <ul className="space-y-1 mb-4">
+              {tier.features?.slice(0, 3).map((feature, j) => (
+                <li key={j} className="flex items-center text-sm text-gray-600">
+                  <svg className="w-4 h-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  {feature}
+                </li>
+              ))}
+            </ul>
+            <a
+              href={tier.buttonLink || '#'}
+              className={`block w-full py-2 text-center rounded-lg font-semibold text-sm transition-colors ${
+                tier.highlighted
+                  ? 'text-white hover:opacity-90'
+                  : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+              }`}
+              style={tier.highlighted ? { backgroundColor: primaryColor } : undefined}
+            >
+              {tier.buttonText || 'Get Started'}
+            </a>
+          </div>
+        ))}
       </div>
-    </section>
+    </div>
   );
 }
 
 // Video Block
-function VideoBlockPublic({ config }: { config: VideoConfig }) {
+function VideoBlockPublic({ config, isFullBleed = true }: { config: VideoConfig; isFullBleed?: boolean }) {
   if (!config.url) return null;
 
   // Extract video ID from YouTube/Vimeo URLs
@@ -479,53 +859,149 @@ function VideoBlockPublic({ config }: { config: VideoConfig }) {
     return url;
   };
 
-  return (
-    <section className="py-12 px-4 bg-white">
-      <div className="max-w-4xl mx-auto">
-        {config.title && (
-          <h2 className="text-2xl font-bold text-gray-900 text-center mb-6">{config.title}</h2>
-        )}
-        <div className="relative pb-[56.25%] h-0">
-          <iframe
-            src={getEmbedUrl(config.url)}
-            className="absolute top-0 left-0 w-full h-full rounded-lg"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-          />
+  // Full-bleed version
+  if (isFullBleed) {
+    return (
+      <section className="py-12 px-4 bg-white">
+        <div className="max-w-4xl mx-auto">
+          {config.title && (
+            <h2 className="text-2xl font-bold text-gray-900 text-center mb-6">{config.title}</h2>
+          )}
+          <div className="relative pb-[56.25%] h-0">
+            <iframe
+              src={getEmbedUrl(config.url)}
+              className="absolute top-0 left-0 w-full h-full rounded-lg"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          </div>
         </div>
+      </section>
+    );
+  }
+
+  // Grid-contained version
+  return (
+    <div className="py-4 bg-white rounded-lg">
+      {config.title && (
+        <h3 className="text-lg font-bold text-gray-900 text-center mb-4">{config.title}</h3>
+      )}
+      <div className="relative pb-[56.25%] h-0">
+        <iframe
+          src={getEmbedUrl(config.url)}
+          className="absolute top-0 left-0 w-full h-full rounded-lg"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+        />
       </div>
-    </section>
+    </div>
   );
 }
 
-// Chat Block (inline chat widget placeholder - actual chat uses floating widget)
-function ChatBlockPublic({ config }: { config: ChatBlockConfig; workspaceId: string; pageId: string }) {
-  return (
-    <section className="py-16 px-4 bg-gray-50">
-      <div className="max-w-2xl mx-auto">
-        {(config.title || config.subtitle) && (
-          <div className="text-center mb-8">
-            {config.title && <h2 className="text-2xl font-bold text-gray-900 mb-2">{config.title}</h2>}
-            {config.subtitle && <p className="text-gray-600">{config.subtitle}</p>}
-          </div>
-        )}
-        <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-          <div
-            className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: config.primaryColor || '#6366f1' }}
-          >
-            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-            </svg>
-          </div>
-          <p className="text-gray-600 mb-4">
-            {config.placeholder || 'Click the chat button in the corner to start a conversation'}
-          </p>
-          <p className="text-sm text-gray-400">
-            Chat widget appears in the bottom-right corner
-          </p>
-        </div>
+// Chat Block - renders inline or shows floating placeholder
+function ChatBlockPublic({ config, workspaceId, pageId, isFullBleed = true }: { config: ChatBlockConfig; workspaceId: string; pageId: string; isFullBleed?: boolean }) {
+  const isInline = config.position === 'inline';
+
+  // If inline mode, render actual chat widget embedded in the page
+  if (isInline) {
+    if (isFullBleed) {
+      return (
+        <section className="py-16 px-4 bg-gray-50">
+          <ChatWidget
+            pageId={pageId}
+            workspaceId={workspaceId}
+            config={{
+              enabled: true,
+              position: 'inline',
+              initial_message: `Hi! ${config.subtitle || 'How can I help you today?'}`,
+              ai_persona: null,
+              business_context: {},
+            }}
+            primaryColor={config.primaryColor || '#6366f1'}
+            mode="inline"
+            title={config.title}
+            subtitle={config.subtitle}
+          />
+        </section>
+      );
+    }
+
+    // Grid-contained inline chat
+    return (
+      <div className="py-6 bg-gray-50 rounded-lg">
+        <ChatWidget
+          pageId={pageId}
+          workspaceId={workspaceId}
+          config={{
+            enabled: true,
+            position: 'inline',
+            initial_message: `Hi! ${config.subtitle || 'How can I help you today?'}`,
+            ai_persona: null,
+            business_context: {},
+          }}
+          primaryColor={config.primaryColor || '#6366f1'}
+          mode="inline"
+          title={config.title}
+          subtitle={config.subtitle}
+        />
       </div>
-    </section>
+    );
+  }
+
+  // Floating mode - show placeholder (actual floating widget is rendered by PublicPage)
+  if (isFullBleed) {
+    return (
+      <section className="py-16 px-4 bg-gray-50">
+        <div className="max-w-2xl mx-auto">
+          {(config.title || config.subtitle) && (
+            <div className="text-center mb-8">
+              {config.title && <h2 className="text-2xl font-bold text-gray-900 mb-2">{config.title}</h2>}
+              {config.subtitle && <p className="text-gray-600">{config.subtitle}</p>}
+            </div>
+          )}
+          <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+            <div
+              className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center"
+              style={{ backgroundColor: config.primaryColor || '#6366f1' }}
+            >
+              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+            </div>
+            <p className="text-gray-600 mb-4">
+              {config.placeholder || 'Click the chat button in the corner to start a conversation'}
+            </p>
+            <p className="text-sm text-gray-400">
+              Chat widget appears in the bottom-right corner
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // Grid-contained floating placeholder
+  return (
+    <div className="py-6 bg-gray-50 rounded-lg">
+      {(config.title || config.subtitle) && (
+        <div className="text-center mb-4 px-4">
+          {config.title && <h3 className="text-lg font-bold text-gray-900 mb-1">{config.title}</h3>}
+          {config.subtitle && <p className="text-sm text-gray-600">{config.subtitle}</p>}
+        </div>
+      )}
+      <div className="bg-white rounded-lg shadow p-6 text-center mx-2">
+        <div
+          className="w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center"
+          style={{ backgroundColor: config.primaryColor || '#6366f1' }}
+        >
+          <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+        </div>
+        <p className="text-sm text-gray-600">
+          {config.placeholder || 'Click the chat button to start'}
+        </p>
+      </div>
+    </div>
   );
 }

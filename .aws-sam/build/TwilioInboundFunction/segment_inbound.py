@@ -446,6 +446,9 @@ def handle_alias(workspace_id: str, data: dict) -> dict:
 def _validate_segment_signature(event: dict, body: str, workspace_id: str) -> bool:
     """Validate Segment webhook signature.
 
+    SECURITY: This function fails closed - if validation cannot be performed,
+    it returns False to reject the request.
+
     Segment uses HMAC-SHA1 signature in the x-signature header.
 
     Args:
@@ -454,12 +457,13 @@ def _validate_segment_signature(event: dict, body: str, workspace_id: str) -> bo
         workspace_id: Workspace ID to get shared secret.
 
     Returns:
-        True if valid.
+        True if valid, False otherwise.
     """
     shared_secret = os.environ.get("SEGMENT_SHARED_SECRET")
     if not shared_secret:
-        logger.debug("Segment shared secret not configured, skipping validation")
-        return True
+        # SECURITY: Fail closed when shared secret is not configured
+        logger.warning("Segment shared secret not configured, rejecting webhook for security")
+        return False
 
     headers = event.get("headers", {}) or {}
     signature = headers.get("x-signature") or headers.get("X-Signature")
@@ -479,7 +483,8 @@ def _validate_segment_signature(event: dict, body: str, workspace_id: str) -> bo
         return hmac.compare_digest(signature, expected)
 
     except Exception as e:
-        logger.error("Signature validation error", error=str(e))
+        # SECURITY: Fail closed on any validation error
+        logger.error("Signature validation error, rejecting", error=str(e))
         return False
 
 

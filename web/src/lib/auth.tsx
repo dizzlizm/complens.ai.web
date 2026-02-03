@@ -51,7 +51,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         agencyId: attributes['custom:agency_id'],
         workspaceIds: attributes['custom:workspace_ids']?.split(','),
       });
-    } catch {
+    } catch (error: unknown) {
+      // Distinguish between auth errors and transient errors
+      if (error instanceof Error) {
+        // Legitimate auth failures - user is not authenticated
+        const authErrorNames = [
+          'NotAuthenticatedException',
+          'UserUnAuthenticatedException',
+          'UserNotFoundException',
+          'UserNotConfirmedException',
+        ];
+
+        if (authErrorNames.includes(error.name)) {
+          // User is genuinely not authenticated - clear state
+          setUser(null);
+          return;
+        }
+
+        // Network errors - don't log out, just log the error
+        if (
+          error.message.includes('Network') ||
+          error.message.includes('Failed to fetch') ||
+          error.message.includes('timeout') ||
+          error.name === 'NetworkError'
+        ) {
+          console.warn('Network error during auth refresh, keeping current state:', error.message);
+          // Don't change user state on network errors
+          return;
+        }
+
+        // Unknown error - log it but don't automatically log out
+        // This prevents data loss on temporary Cognito issues
+        console.error('Auth refresh error:', error.name, error.message);
+      }
+
+      // If we can't determine the error type, assume not authenticated
+      // This is the safe default for security
       setUser(null);
     }
   };

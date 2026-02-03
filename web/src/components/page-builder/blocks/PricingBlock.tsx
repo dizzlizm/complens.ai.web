@@ -1,4 +1,4 @@
-import { Check, CreditCard } from 'lucide-react';
+import { Check, CreditCard, Plus, X, Trash2 } from 'lucide-react';
 import { PricingConfig, PricingTier } from '../types';
 
 interface PricingBlockProps {
@@ -34,6 +34,50 @@ export default function PricingBlock({ config, isEditing, onConfigChange }: Pric
     }
   };
 
+  const handleAddTier = () => {
+    if (onConfigChange) {
+      const newTier: PricingTier = {
+        name: 'New Plan',
+        price: '$0',
+        period: '/month',
+        features: ['Feature 1'],
+        highlighted: false,
+        buttonText: 'Get Started',
+        buttonLink: '#',
+      };
+      onConfigChange({ ...config, items: [...items, newTier] });
+    }
+  };
+
+  const handleRemoveTier = (index: number) => {
+    if (onConfigChange) {
+      const newItems = items.filter((_, i) => i !== index);
+      onConfigChange({ ...config, items: newItems });
+    }
+  };
+
+  const handleAddFeature = (tierIndex: number) => {
+    if (onConfigChange) {
+      const newItems = [...items];
+      newItems[tierIndex] = {
+        ...newItems[tierIndex],
+        features: [...newItems[tierIndex].features, 'New feature'],
+      };
+      onConfigChange({ ...config, items: newItems });
+    }
+  };
+
+  const handleRemoveFeature = (tierIndex: number, featureIndex: number) => {
+    if (onConfigChange) {
+      const newItems = [...items];
+      newItems[tierIndex] = {
+        ...newItems[tierIndex],
+        features: newItems[tierIndex].features.filter((_, i) => i !== featureIndex),
+      };
+      onConfigChange({ ...config, items: newItems });
+    }
+  };
+
   return (
     <div className="py-16 px-8 bg-gray-50">
       <div className="max-w-6xl mx-auto">
@@ -65,20 +109,45 @@ export default function PricingBlock({ config, isEditing, onConfigChange }: Pric
         </div>
 
         {/* Pricing Cards */}
-        <div className={`grid grid-cols-1 md:grid-cols-${Math.min(items.length, 3)} gap-8`}>
+        <div className={`grid grid-cols-1 md:grid-cols-${Math.min(items.length + (isEditing ? 1 : 0), 4)} gap-8`}>
           {items.map((tier, index) => (
             <div
               key={index}
-              className={`relative bg-white rounded-2xl p-8 ${
+              className={`relative bg-white rounded-2xl p-8 group ${
                 tier.highlighted
                   ? 'ring-2 ring-indigo-500 shadow-xl scale-105'
                   : 'border border-gray-200 shadow-sm'
               }`}
             >
+              {/* Remove tier button */}
+              {isEditing && (
+                <button
+                  onClick={() => handleRemoveTier(index)}
+                  className="absolute -top-2 -right-2 p-1.5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:bg-red-600"
+                  title="Remove pricing tier"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+
               {tier.highlighted && (
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-indigo-500 text-white text-sm font-medium px-4 py-1 rounded-full">
                   Most Popular
                 </div>
+              )}
+
+              {/* Highlight toggle when editing */}
+              {isEditing && (
+                <button
+                  onClick={() => handleItemChange(index, 'highlighted', !tier.highlighted)}
+                  className={`absolute top-2 left-2 px-2 py-1 text-xs rounded-full transition-colors ${
+                    tier.highlighted
+                      ? 'bg-indigo-100 text-indigo-700'
+                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  }`}
+                >
+                  {tier.highlighted ? 'Featured' : 'Make Featured'}
+                </button>
               )}
 
               {/* Plan name */}
@@ -87,7 +156,7 @@ export default function PricingBlock({ config, isEditing, onConfigChange }: Pric
                   type="text"
                   value={tier.name}
                   onChange={(e) => handleItemChange(index, 'name', e.target.value)}
-                  className="w-full text-xl font-semibold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center mb-4"
+                  className="w-full text-xl font-semibold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center mb-4 mt-6"
                   placeholder="Plan name..."
                 />
               ) : (
@@ -126,25 +195,46 @@ export default function PricingBlock({ config, isEditing, onConfigChange }: Pric
               {/* Features */}
               <ul className="space-y-3 mb-8">
                 {tier.features.map((feature, fIndex) => (
-                  <li key={fIndex} className="flex items-center gap-3">
+                  <li key={fIndex} className="flex items-center gap-3 group/feature">
                     <Check className="w-5 h-5 text-green-500 flex-shrink-0" />
                     {isEditing ? (
-                      <input
-                        type="text"
-                        value={feature}
-                        onChange={(e) => {
-                          const newFeatures = [...tier.features];
-                          newFeatures[fIndex] = e.target.value;
-                          handleItemChange(index, 'features', newFeatures);
-                        }}
-                        className="flex-1 text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded"
-                        placeholder="Feature..."
-                      />
+                      <>
+                        <input
+                          type="text"
+                          value={feature}
+                          onChange={(e) => {
+                            const newFeatures = [...tier.features];
+                            newFeatures[fIndex] = e.target.value;
+                            handleItemChange(index, 'features', newFeatures);
+                          }}
+                          className="flex-1 text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded"
+                          placeholder="Feature..."
+                        />
+                        <button
+                          onClick={() => handleRemoveFeature(index, fIndex)}
+                          className="p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover/feature:opacity-100 transition-opacity"
+                          title="Remove feature"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
                     ) : (
                       <span className="text-gray-600">{feature}</span>
                     )}
                   </li>
                 ))}
+                {/* Add feature button */}
+                {isEditing && (
+                  <li>
+                    <button
+                      onClick={() => handleAddFeature(index)}
+                      className="flex items-center gap-2 text-sm text-gray-400 hover:text-indigo-600 transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add feature
+                    </button>
+                  </li>
+                )}
               </ul>
 
               {/* CTA Button */}
@@ -170,6 +260,17 @@ export default function PricingBlock({ config, isEditing, onConfigChange }: Pric
               </button>
             </div>
           ))}
+
+          {/* Add tier button */}
+          {isEditing && (
+            <button
+              onClick={handleAddTier}
+              className="bg-gray-50 rounded-2xl p-8 border-2 border-dashed border-gray-200 hover:border-indigo-400 hover:bg-indigo-50/50 transition-colors flex flex-col items-center justify-center gap-2 min-h-[300px]"
+            >
+              <Plus className="w-8 h-8 text-gray-400" />
+              <span className="text-sm text-gray-500 font-medium">Add Pricing Tier</span>
+            </button>
+          )}
         </div>
 
         {/* Empty state */}

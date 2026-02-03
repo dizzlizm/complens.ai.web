@@ -12,34 +12,35 @@ interface MultiBlockAIToolbarProps {
   onClearSelection: () => void;
 }
 
+// Functional editing options only - tone/voice comes from the business profile
 const AI_ACTIONS = [
   {
     id: 'cohesive',
     label: 'Make Cohesive',
     icon: Zap,
-    description: 'Unify tone and style across all selected blocks',
-    instruction: 'Rewrite this content to have a consistent, cohesive tone and style. Ensure the messaging flows naturally from one section to another.'
+    description: 'Unify style across all selected blocks',
+    instruction: 'Rewrite this content to flow better and have a consistent style. Ensure the messaging flows naturally from one section to another while maintaining brand voice.'
   },
   {
-    id: 'professional',
-    label: 'More Professional',
-    icon: Type,
-    description: 'Make the content more business-appropriate',
-    instruction: 'Rewrite this content in a more professional, business-appropriate tone while keeping the key messages.'
-  },
-  {
-    id: 'engaging',
-    label: 'More Engaging',
+    id: 'improve',
+    label: 'Improve All',
     icon: Sparkles,
-    description: 'Add energy and excitement to the copy',
-    instruction: 'Make this content more engaging, dynamic, and exciting while maintaining the core message.'
+    description: 'Make content more compelling',
+    instruction: 'Improve this content to be more compelling and persuasive while maintaining the brand voice.'
   },
   {
     id: 'concise',
-    label: 'More Concise',
+    label: 'Shorten All',
     icon: Type,
     description: 'Shorten while keeping impact',
-    instruction: 'Make this content more concise and punchy. Remove unnecessary words while keeping the impact.'
+    instruction: 'Make this content more concise and punchy. Remove unnecessary words while keeping the impact and brand voice.'
+  },
+  {
+    id: 'benefits',
+    label: 'More Benefits',
+    icon: Type,
+    description: 'Focus on value to the reader',
+    instruction: 'Rewrite to focus more on benefits and value to the reader while maintaining the brand voice.'
   },
 ];
 

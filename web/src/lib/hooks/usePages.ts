@@ -15,6 +15,10 @@ export interface PageBlock {
   config: Record<string, unknown>;
   order: number;
   width?: 1 | 2 | 3 | 4;
+  // 12-column grid layout fields
+  row?: number;
+  colSpan?: 4 | 6 | 8 | 12;
+  colStart?: number;
 }
 
 export interface Page {
@@ -31,13 +35,23 @@ export interface Page {
   form_ids: string[];
   chat_config: ChatConfig;
   primary_color: string;
+  secondary_color: string | null;
+  accent_color: string | null;
   theme: Record<string, unknown>;
   custom_css: string | null;
+  // SEO fields
   meta_title: string | null;
   meta_description: string | null;
   og_image_url: string | null;
+  // Scripts & Tracking
+  scripts_head: string | null;
+  scripts_body: string | null;
+  ga_tracking_id: string | null;
+  fb_pixel_id: string | null;
+  // Domain
   subdomain: string | null;
   custom_domain: string | null;
+  // Analytics
   view_count: number;
   form_submission_count: number;
   chat_session_count: number;
@@ -56,6 +70,8 @@ export interface CreatePageInput {
   form_ids?: string[];
   chat_config?: Partial<ChatConfig>;
   primary_color?: string;
+  secondary_color?: string;
+  accent_color?: string;
   meta_title?: string;
   meta_description?: string;
 }
@@ -72,10 +88,20 @@ export interface UpdatePageInput {
   form_ids?: string[];
   chat_config?: Partial<ChatConfig>;
   primary_color?: string;
+  secondary_color?: string;
+  accent_color?: string;
   theme?: Record<string, unknown>;
   custom_css?: string;
+  // SEO
   meta_title?: string;
   meta_description?: string;
+  og_image_url?: string;
+  // Scripts & Tracking
+  scripts_head?: string;
+  scripts_body?: string;
+  ga_tracking_id?: string;
+  fb_pixel_id?: string;
+  // Domain
   subdomain?: string;
   custom_domain?: string;
 }

@@ -98,13 +98,27 @@ class PageBlock(PydanticBaseModel):
     - stats: Number highlights
     - divider: Visual separator
     - chat: AI chat widget (inline or floating)
+
+    Layout System:
+    Uses a 12-column grid system where:
+    - colSpan 4 = 1/3 width
+    - colSpan 6 = 1/2 width
+    - colSpan 8 = 2/3 width
+    - colSpan 12 = full width (default)
+
+    Blocks on the same row are displayed side-by-side on desktop.
     """
 
     id: str = Field(default_factory=lambda: str(uuid4())[:8])
     type: str = Field(..., description="Block type (hero, features, cta, chat, etc.)")
     config: dict = Field(default_factory=dict, description="Block-specific settings")
     order: int = Field(default=0, description="Position in page layout")
-    width: int = Field(default=4, ge=1, le=4, description="Grid width (1-4 columns)")
+    width: int = Field(default=4, ge=1, le=4, description="Legacy grid width (1-4 columns)")
+
+    # 12-column grid layout fields
+    row: int | None = Field(default=None, description="Row index (0-indexed, blocks with same row display side-by-side)")
+    colSpan: int | None = Field(default=None, ge=4, le=12, description="Column span in 12-col grid (4, 6, 8, or 12)")
+    colStart: int | None = Field(default=None, ge=0, le=8, description="Column start position (0-8)")
 
 
 class Page(BaseModel):
@@ -303,7 +317,12 @@ class PageBlockRequest(PydanticBaseModel):
     type: str = Field(..., description="Block type")
     config: dict = Field(default_factory=dict)
     order: int = 0
-    width: int = Field(default=4, ge=1, le=4, description="Grid width (1-4 columns)")
+    width: int = Field(default=4, ge=1, le=4, description="Legacy grid width (1-4 columns)")
+
+    # 12-column grid layout fields
+    row: int | None = Field(default=None, description="Row index (0-indexed)")
+    colSpan: int | None = Field(default=None, ge=4, le=12, description="Column span (4, 6, 8, or 12)")
+    colStart: int | None = Field(default=None, ge=0, le=8, description="Column start position")
 
 
 class CreatePageRequest(PydanticBaseModel):

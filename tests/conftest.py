@@ -1,8 +1,12 @@
 """Pytest configuration and fixtures."""
 
 import os
+import sys
 import pytest
 from unittest.mock import MagicMock, patch
+
+# Add handlers to the path for testing
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "handlers"))
 
 # Set environment variables before imports
 os.environ["TABLE_NAME"] = "complens-test"
@@ -28,9 +32,9 @@ def aws_credentials():
 def dynamodb_table(aws_credentials):
     """Create mocked DynamoDB table."""
     import boto3
-    from moto import mock_dynamodb
+    from moto import mock_aws
 
-    with mock_dynamodb():
+    with mock_aws():
         dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
 
         table = dynamodb.create_table(
@@ -44,6 +48,10 @@ def dynamodb_table(aws_credentials):
                 {"AttributeName": "SK", "AttributeType": "S"},
                 {"AttributeName": "GSI1PK", "AttributeType": "S"},
                 {"AttributeName": "GSI1SK", "AttributeType": "S"},
+                {"AttributeName": "GSI2PK", "AttributeType": "S"},
+                {"AttributeName": "GSI2SK", "AttributeType": "S"},
+                {"AttributeName": "GSI3PK", "AttributeType": "S"},
+                {"AttributeName": "GSI3SK", "AttributeType": "S"},
             ],
             GlobalSecondaryIndexes=[
                 {
@@ -51,6 +59,22 @@ def dynamodb_table(aws_credentials):
                     "KeySchema": [
                         {"AttributeName": "GSI1PK", "KeyType": "HASH"},
                         {"AttributeName": "GSI1SK", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
+                {
+                    "IndexName": "GSI2",
+                    "KeySchema": [
+                        {"AttributeName": "GSI2PK", "KeyType": "HASH"},
+                        {"AttributeName": "GSI2SK", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
+                {
+                    "IndexName": "GSI3",
+                    "KeySchema": [
+                        {"AttributeName": "GSI3PK", "KeyType": "HASH"},
+                        {"AttributeName": "GSI3SK", "KeyType": "RANGE"},
                     ],
                     "Projection": {"ProjectionType": "ALL"},
                 },
@@ -190,6 +214,56 @@ def api_gateway_event():
 
 
 @pytest.fixture
+def sample_page():
+    """Create a sample page."""
+    from complens.models.page import Page, PageStatus, ChatConfig
+
+    return Page(
+        id="test-page-123",
+        workspace_id="test-workspace-456",
+        name="Test Landing Page",
+        slug="test-landing",
+        headline="Welcome to Our Service",
+        subheadline="The best solution for your needs",
+        blocks=[],
+        primary_color="#6366f1",
+        status=PageStatus.DRAFT,
+        chat_config=ChatConfig(enabled=True),
+    )
+
+
+@pytest.fixture
+def sample_form():
+    """Create a sample form."""
+    from complens.models.form import Form, FormField, FormFieldType
+
+    return Form(
+        id="test-form-123",
+        workspace_id="test-workspace-456",
+        page_id="test-page-123",
+        name="Contact Form",
+        fields=[
+            FormField(
+                id="field-1",
+                name="email",
+                label="Email",
+                type=FormFieldType.EMAIL,
+                required=True,
+            ),
+            FormField(
+                id="field-2",
+                name="name",
+                label="Name",
+                type=FormFieldType.TEXT,
+                required=True,
+            ),
+        ],
+        submit_button_text="Submit",
+        success_message="Thanks!",
+    )
+
+
+@pytest.fixture
 def mock_bedrock():
     """Mock Bedrock runtime client."""
     with patch("boto3.client") as mock_client:
@@ -206,6 +280,75 @@ def mock_bedrock():
         mock_bedrock.invoke_model.return_value = {"body": mock_response}
 
         yield mock_bedrock
+
+
+@pytest.fixture
+def mock_bedrock_json_response():
+    """Mock Bedrock response with JSON content for wizard tests."""
+    def _create_mock(json_content: dict):
+        with patch("boto3.client") as mock_client:
+            mock_bedrock = MagicMock()
+            mock_client.return_value = mock_bedrock
+
+            mock_response = MagicMock()
+            mock_response.read.return_value = __import__("json").dumps({
+                "content": [{"type": "text", "text": __import__("json").dumps(json_content)}],
+                "stop_reason": "end_turn",
+            }).encode()
+
+            mock_bedrock.invoke_model.return_value = {"body": mock_response}
+            return mock_bedrock
+
+    return _create_mock
+
+
+@pytest.fixture
+def wizard_content_response():
+    """Sample AI response for generate-page-content endpoint."""
+    return {
+        "business_info": {
+            "business_name": "Acme Consulting",
+            "business_type": "consultant",
+            "industry": "technology",
+            "products": ["Strategy Consulting", "Digital Transformation"],
+            "audience": "Mid-size tech companies",
+            "tone": "professional",
+        },
+        "content": {
+            "headlines": [
+                "Transform Your Business",
+                "Expert Tech Consulting",
+                "Accelerate Growth Today",
+            ],
+            "tagline": "Strategic solutions for modern challenges",
+            "value_props": [
+                "10+ years of experience",
+                "100+ successful projects",
+                "Dedicated support team",
+            ],
+            "features": [
+                {"title": "Strategy", "description": "Clear roadmaps for success", "icon": "🎯"},
+                {"title": "Execution", "description": "Hands-on implementation", "icon": "🚀"},
+                {"title": "Support", "description": "24/7 expert assistance", "icon": "💡"},
+            ],
+            "testimonial_concepts": [
+                "Transformed our operations completely",
+                "Best consulting decision we ever made",
+            ],
+            "faq": [
+                {"q": "How long does a project take?", "a": "Typically 3-6 months"},
+                {"q": "What industries do you serve?", "a": "Primarily tech and finance"},
+            ],
+            "cta_text": "Get Started",
+            "hero_subheadline": "Partner with experts who understand your challenges",
+            "social_proof": "Trusted by 500+ companies worldwide",
+        },
+        "suggested_colors": {
+            "primary": "#3B82F6",
+            "secondary": "#60A5FA",
+            "accent": "#DBEAFE",
+        },
+    }
 
 
 @pytest.fixture

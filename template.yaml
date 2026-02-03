@@ -63,6 +63,34 @@ Parameters:
     NoEcho: true
     Description: Segment webhook shared secret for signature verification
 
+  # Stripe Connect parameters
+  StripeSecretKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Stripe secret API key
+
+  StripePublishableKey:
+    Type: String
+    Default: ""
+    Description: Stripe publishable API key
+
+  StripeWebhookSecret:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Stripe webhook signing secret
+
+  StripeConnectClientId:
+    Type: String
+    Default: ""
+    Description: Stripe Connect OAuth client ID
+
+  StripePlatformFeePercent:
+    Type: String
+    Default: "0.02"
+    Description: Platform fee percentage (0.02 = 2%)
+
 Globals:
   Function:
     Runtime: python3.12
@@ -92,6 +120,12 @@ Globals:
         TWILIO_PHONE_NUMBER: !Ref TwilioPhoneNumber
         SES_FROM_EMAIL: !Ref SesFromEmail
         SEGMENT_SHARED_SECRET: !Ref SegmentSharedSecret
+        # Stripe settings
+        STRIPE_SECRET_KEY: !Ref StripeSecretKey
+        STRIPE_PUBLISHABLE_KEY: !Ref StripePublishableKey
+        STRIPE_WEBHOOK_SECRET: !Ref StripeWebhookSecret
+        STRIPE_CONNECT_CLIENT_ID: !Ref StripeConnectClientId
+        STRIPE_PLATFORM_FEE_PERCENT: !Ref StripePlatformFeePercent
     Layers:
       - !Ref SharedLayer
     VpcConfig:
@@ -177,6 +211,8 @@ Resources:
           AttributeType: S
         - AttributeName: userId
           AttributeType: S
+        - AttributeName: workspaceId
+          AttributeType: S
       KeySchema:
         - AttributeName: connectionId
           KeyType: HASH
@@ -187,6 +223,14 @@ Resources:
               KeyType: HASH
           Projection:
             ProjectionType: ALL
+        - IndexName: WorkspaceIdIndex
+          KeySchema:
+            - AttributeName: workspaceId
+              KeyType: HASH
+            - AttributeName: connectionId
+              KeyType: RANGE
+          Projection:
+            ProjectionType: KEYS_ONLY
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
@@ -878,6 +922,12 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/pages/check-subdomain
             Method: GET
+        CreateComplete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pages/create-complete
+            Method: POST
         Get:
           Type: Api
           Properties:
@@ -1089,6 +1139,24 @@ Resources:
           Properties:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/ai/generate-workflow
+            Method: POST
+        GeneratePageContent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/generate-page-content
+            Method: POST
+        RefinePageContent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/refine-page-content
+            Method: POST
+        SynthesizePage:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/synthesize-page
             Method: POST
 
   # ============================================
@@ -1485,6 +1553,8 @@ Resources:
           # Use pattern-based ARN to avoid circular dependency
           WORKFLOW_STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor"
           SCHEDULER_ROLE_ARN: !GetAtt SchedulerRole.Arn
+          # WebSocket real-time updates
+          CONNECTIONS_TABLE: !Ref ConnectionsTable
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
@@ -1607,6 +1677,85 @@ Resources:
           Properties:
             RestApiId: !Ref RestApi
             Path: /webhooks/segment/{workspace_id}
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+  # ============================================
+  # Stripe Connect API
+  # ============================================
+  StripeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-stripe"
+      Handler: stripe.handler
+      CodeUri: src/handlers/api/
+      Description: Stripe Connect OAuth and account management
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Events:
+        StartConnect:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/stripe/connect/start
+            Method: POST
+        OAuthCallback:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /stripe/connect/callback
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        GetStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/stripe/connect/status
+            Method: GET
+        Disconnect:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/stripe/connect/disconnect
+            Method: POST
+
+  # Stripe Webhook Handler
+  StripeWebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-stripe-webhook"
+      Handler: stripe_webhook.handler
+      CodeUri: src/handlers/webhooks/
+      Description: Handles Stripe payment webhooks
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WorkflowQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/complens-${Stage}-workflow-events"
+      Events:
+        StripeWebhook:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /webhooks/stripe/{workspace_id}
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        StripeWebhookGlobal:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /webhooks/stripe
             Method: POST
             Auth:
               Authorizer: NONE

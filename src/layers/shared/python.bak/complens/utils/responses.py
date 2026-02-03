@@ -13,23 +13,34 @@ _ALLOWED_ORIGIN = os.environ.get("CORS_ALLOWED_ORIGIN", "https://dev.complens.ai
 _STAGE = os.environ.get("STAGE", "dev")
 
 
-def _get_cors_origin(request_origin: str | None = None) -> str:
+def _get_cors_origin(request_origin: str | None = None, allow_public: bool = False) -> str:
     """Get the appropriate CORS origin for the response.
 
     In dev, also allows localhost for local development.
+    For public endpoints (allow_public=True), allows any HTTPS origin.
     """
-    # In dev, allow localhost origins for local development
-    if _STAGE == "dev" and request_origin:
-        if request_origin.startswith("http://localhost:"):
+    if request_origin:
+        # In dev, allow localhost origins for local development
+        if _STAGE == "dev" and request_origin.startswith("http://localhost:"):
+            return request_origin
+
+        # For public endpoints (form submissions from custom domains),
+        # allow any HTTPS origin
+        if allow_public and request_origin.startswith("https://"):
             return request_origin
 
     return _ALLOWED_ORIGIN
 
 
-def get_cors_headers(request_origin: str | None = None) -> dict:
-    """Get CORS headers with the appropriate origin."""
+def get_cors_headers(request_origin: str | None = None, allow_public: bool = False) -> dict:
+    """Get CORS headers with the appropriate origin.
+
+    Args:
+        request_origin: The Origin header from the request.
+        allow_public: If True, allows any HTTPS origin (for public endpoints).
+    """
     return {
-        "Access-Control-Allow-Origin": _get_cors_origin(request_origin),
+        "Access-Control-Allow-Origin": _get_cors_origin(request_origin, allow_public),
         "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
         "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
         "Access-Control-Allow-Credentials": "true",
@@ -254,3 +265,81 @@ def paginated(
         body["pagination"]["next_cursor"] = next_cursor
 
     return success(body)
+
+
+# =============================================================================
+# Public endpoint responses (allow CORS from any HTTPS origin)
+# =============================================================================
+
+def public_success(data: Any, request_origin: str | None = None, status_code: int = 200) -> dict:
+    """Create a successful API response for public endpoints.
+
+    Allows CORS from any HTTPS origin (for custom domain landing pages).
+
+    Args:
+        data: Response data (dict, list, or Pydantic model).
+        request_origin: The Origin header from the request.
+        status_code: HTTP status code (default 200).
+
+    Returns:
+        API Gateway response dict.
+    """
+    if isinstance(data, PydanticBaseModel):
+        body = data.model_dump(mode="json")
+    else:
+        body = data
+
+    return {
+        "statusCode": status_code,
+        "headers": get_cors_headers(request_origin, allow_public=True),
+        "body": _serialize(body),
+    }
+
+
+def public_created(data: Any, request_origin: str | None = None) -> dict:
+    """Create a 201 Created response for public endpoints.
+
+    Args:
+        data: The created resource.
+        request_origin: The Origin header from the request.
+
+    Returns:
+        API Gateway response dict.
+    """
+    return public_success(data, request_origin, status_code=201)
+
+
+def public_error(
+    message: str,
+    request_origin: str | None = None,
+    status_code: int = 500,
+    error_code: str | None = None,
+    details: dict | None = None,
+) -> dict:
+    """Create an error API response for public endpoints.
+
+    Args:
+        message: Error message.
+        request_origin: The Origin header from the request.
+        status_code: HTTP status code.
+        error_code: Machine-readable error code.
+        details: Additional error details.
+
+    Returns:
+        API Gateway response dict.
+    """
+    body: dict[str, Any] = {
+        "error": True,
+        "message": message,
+    }
+
+    if error_code:
+        body["error_code"] = error_code
+    if details:
+        body["details"] = details
+
+    return {
+        "statusCode": status_code,
+        "headers": get_cors_headers(request_origin, allow_public=True),
+        "body": _serialize(body),
+    }

@@ -10,6 +10,7 @@ from typing import Any
 
 import boto3
 import structlog
+from botocore.config import Config
 
 from complens.models.business_profile import BusinessProfile
 from complens.repositories.business_profile import BusinessProfileRepository
@@ -23,8 +24,19 @@ DEFAULT_MODEL = "anthropic.claude-3-sonnet-20240229-v1:0"  # Claude 3 Sonnet
 FAST_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"  # Claude Haiku 4.5 (inference profile)
 IMAGE_MODEL = "amazon.titan-image-generator-v2:0"  # Amazon Titan Image Generator v2
 
-# Initialize clients
-bedrock = boto3.client("bedrock-runtime")
+# Bedrock timeout configuration
+# Prevents hung requests from blocking Lambda execution indefinitely
+BEDROCK_CONFIG = Config(
+    read_timeout=60,      # 60 second read timeout for response streaming
+    connect_timeout=10,   # 10 second connection timeout
+    retries={
+        "max_attempts": 2,           # Retry once on transient failures
+        "mode": "adaptive",          # Use adaptive retry mode for better backoff
+    },
+)
+
+# Initialize clients with timeout configuration
+bedrock = boto3.client("bedrock-runtime", config=BEDROCK_CONFIG)
 
 
 def get_business_context(workspace_id: str, page_id: str | None = None) -> str:
@@ -555,7 +567,21 @@ def generate_page_content_from_description(
         Dict with business_info and generated content.
     """
     system = """You are an expert marketing copywriter and business analyst.
-Analyze the business description and generate compelling landing page content.
+
+IMPORTANT: If BUSINESS CONTEXT is provided above, use it as your PRIMARY source of information.
+The business context contains verified details about the business - use these exact values for:
+- Business name, tagline, description
+- Industry and business type
+- Target audience and customer pain points
+- Value proposition and key benefits
+- Products/services and pricing
+- Achievements, testimonials, and social proof
+- Brand voice and personality
+
+The user's description below may provide ADDITIONAL context or focus for this specific page,
+but the business context should inform all your copy. Match the brand voice exactly.
+
+If no business context is provided, analyze the user's description to extract this information.
 
 Return a JSON object with this exact structure:
 {
@@ -609,16 +635,31 @@ Guidelines:
 - Features focus on BENEFITS, not just features
 - FAQ should address real customer concerns and objections
 - Tone should match the business type
-- Colors should match industry conventions
 - Use appropriate emojis for icons: 🚀 ⚡ ✨ 💎 🎯 📈 💡 🔒 ⭐ 🛠️ 💰 🔥 ✅ 🏆 💪 🎨 📱 🌟 ❤️
+
+COLOR GUIDELINES - Choose colors that match the industry and brand personality:
+- Technology/SaaS: Blues (#3B82F6), purples (#8B5CF6), teals (#14B8A6)
+- Healthcare/Wellness: Greens (#10B981), calming blues (#0EA5E9), soft teals
+- Finance: Navy blues (#1E3A8A), golds (#F59E0B), deep greens (#047857)
+- Creative/Design: Pinks (#EC4899), purples (#A855F7), vibrant colors
+- Food/Restaurant: Warm oranges (#F97316), reds (#EF4444), warm yellows (#EAB308)
+- Real Estate: Earth tones (#78716C), forest greens (#166534), warm browns
+- Education: Friendly blues (#3B82F6), oranges (#F97316), greens
+- Professional Services: Navy (#1E40AF), charcoal (#374151), sophisticated tones
+- Retail/Ecommerce: Bold reds (#DC2626), energetic oranges, bright colors
+- Fitness: Energetic oranges (#EA580C), bold reds (#DC2626), electric blues
+
+DO NOT default to indigo/purple (#6366f1) - choose colors specific to this business!
 
 Return ONLY valid JSON, no markdown."""
 
-    prompt = f"""Analyze this business and generate landing page content:
+    prompt = f"""Additional context or focus for this page:
 
 {business_description}
 
-Generate compelling marketing copy that will convert visitors into leads."""
+Using the BUSINESS CONTEXT above (if provided) combined with this description,
+generate compelling marketing copy that will convert visitors into leads.
+Prioritize information from the business context - it contains verified details."""
 
     try:
         result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
@@ -667,8 +708,14 @@ def refine_page_content(
 You're refining landing page content based on user feedback.
 {section_note}
 
+IMPORTANT: If BUSINESS CONTEXT is provided above, ensure all refinements stay consistent with:
+- The brand voice and personality
+- The target audience
+- The unique value proposition
+- Any specific products, achievements, or testimonials mentioned
+
 Return the COMPLETE updated content structure in the same JSON format.
-Apply the user's feedback while maintaining consistency across all sections.
+Apply the user's feedback while maintaining consistency with the business context.
 
 Return ONLY valid JSON, no markdown."""
 

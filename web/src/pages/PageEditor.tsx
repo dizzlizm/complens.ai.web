@@ -27,7 +27,7 @@ import { Plus, Trash2, GitBranch, ExternalLink, Sparkles, Loader2 } from 'lucide
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.dev.complens.ai';
 const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '');
 
-type Tab = 'content' | 'forms' | 'workflows' | 'chat' | 'design' | 'seo' | 'domain' | 'profile';
+type Tab = 'content' | 'forms' | 'workflows' | 'chat' | 'domain' | 'profile';
 
 export default function PageEditor() {
   const { id: pageId } = useParams<{ id: string }>();
@@ -84,9 +84,10 @@ export default function PageEditor() {
     }
   }, [profile, profileInitialized]);
 
-  // Reset profileInitialized when pageId changes
+  // Reset state when pageId changes (navigating to different page)
   useEffect(() => {
     setProfileInitialized(false);
+    initialLoadDone.current = false;
   }, [pageId]);
 
   // Save profile field on blur (only if value changed)
@@ -168,9 +169,13 @@ export default function PageEditor() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasChanges]);
 
+  // Track if we've done initial load
+  const initialLoadDone = useRef(false);
+
   // Initialize form data when page loads
   useEffect(() => {
     if (page) {
+      // Always update form data (these are less likely to have unsaved edits)
       setFormData({
         name: page.name,
         slug: page.slug,
@@ -182,14 +187,31 @@ export default function PageEditor() {
         form_ids: page.form_ids,
         chat_config: page.chat_config,
         primary_color: page.primary_color,
+        secondary_color: page.secondary_color || '#8b5cf6',
+        accent_color: page.accent_color || '#f59e0b',
         custom_css: page.custom_css || '',
+        // SEO fields
         meta_title: page.meta_title || '',
         meta_description: page.meta_description || '',
+        og_image_url: page.og_image_url || '',
+        // Scripts & Tracking
+        ga_tracking_id: page.ga_tracking_id || '',
+        fb_pixel_id: page.fb_pixel_id || '',
+        scripts_head: page.scripts_head || '',
+        scripts_body: page.scripts_body || '',
+        // Domain
         subdomain: page.subdomain || '',
         custom_domain: page.custom_domain || '',
       });
-      // Initialize blocks from page data
-      setBlocks((page.blocks || []) as PageBlock[]);
+
+      // Only initialize blocks on first load
+      // After initial load, we NEVER overwrite local blocks from server data
+      // to prevent React Query background refetches from clobbering edits
+      // (especially layout changes like colSpan that may not round-trip properly)
+      if (!initialLoadDone.current) {
+        setBlocks((page.blocks || []) as PageBlock[]);
+        initialLoadDone.current = true;
+      }
     }
   }, [page]);
 
@@ -419,8 +441,6 @@ export default function PageEditor() {
     { id: 'forms', label: `Forms${pageForms?.length ? ` (${pageForms.length})` : ''}` },
     { id: 'workflows', label: `Workflows${pageWorkflows?.length ? ` (${pageWorkflows.length})` : ''}` },
     { id: 'chat', label: 'Chat' },
-    { id: 'design', label: 'Design' },
-    { id: 'seo', label: 'SEO' },
     { id: 'domain', label: 'Domain' },
   ];
 
@@ -443,15 +463,6 @@ export default function PageEditor() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowAIGenerator(true)}
-            className="px-4 py-2 border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 flex items-center gap-2"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            AI Generate
-          </button>
           <a
             href={`/p/${page.slug}?ws=${workspaceId}`}
             target="_blank"
@@ -533,10 +544,31 @@ export default function PageEditor() {
             onGoToProfile={() => setActiveTab('profile')}
             pageName={formData.name}
             pageSlug={formData.slug}
+            pageUrl={page?.subdomain ? `https://${page.subdomain}.${SUBDOMAIN_SUFFIX}` : `/p/${page?.slug}?ws=${workspaceId}`}
             primaryColor={formData.primary_color}
+            secondaryColor={formData.secondary_color}
+            accentColor={formData.accent_color}
             onPageNameChange={(name) => handleChange('name', name)}
             onPageSlugChange={(slug) => handleChange('slug', slug)}
             onPrimaryColorChange={(color) => handleChange('primary_color', color)}
+            onSecondaryColorChange={(color) => handleChange('secondary_color', color)}
+            onAccentColorChange={(color) => handleChange('accent_color', color)}
+            // SEO fields
+            metaTitle={formData.meta_title || ''}
+            metaDescription={formData.meta_description || ''}
+            ogImageUrl={formData.og_image_url || ''}
+            onMetaTitleChange={(value) => handleChange('meta_title', value)}
+            onMetaDescriptionChange={(value) => handleChange('meta_description', value)}
+            onOgImageUrlChange={(value) => handleChange('og_image_url', value)}
+            // Scripts & Tracking
+            gaTrackingId={formData.ga_tracking_id || ''}
+            fbPixelId={formData.fb_pixel_id || ''}
+            scriptsHead={formData.scripts_head || ''}
+            scriptsBody={formData.scripts_body || ''}
+            onGaTrackingIdChange={(value) => handleChange('ga_tracking_id', value)}
+            onFbPixelIdChange={(value) => handleChange('fb_pixel_id', value)}
+            onScriptsHeadChange={(value) => handleChange('scripts_head', value)}
+            onScriptsBodyChange={(value) => handleChange('scripts_body', value)}
           />
         )}
 
@@ -1056,81 +1088,6 @@ export default function PageEditor() {
                 </div>
               </>
             )}
-          </div>
-        )}
-
-        {activeTab === 'design' && (
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Primary Color
-              </label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="color"
-                  value={formData.primary_color || '#6366f1'}
-                  onChange={(e) => handleChange('primary_color', e.target.value)}
-                  className="w-12 h-10 rounded cursor-pointer border-0"
-                />
-                <input
-                  type="text"
-                  value={formData.primary_color || '#6366f1'}
-                  onChange={(e) => handleChange('primary_color', e.target.value)}
-                  className="w-32 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Custom CSS
-              </label>
-              <textarea
-                value={formData.custom_css || ''}
-                onChange={(e) => handleChange('custom_css', e.target.value)}
-                placeholder=".my-class { color: red; }"
-                rows={8}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
-              />
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'seo' && (
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Meta Title
-              </label>
-              <input
-                type="text"
-                value={formData.meta_title || ''}
-                onChange={(e) => handleChange('meta_title', e.target.value)}
-                placeholder="Page Title | Company Name"
-                maxLength={70}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                {(formData.meta_title || '').length}/70 characters
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Meta Description
-              </label>
-              <textarea
-                value={formData.meta_description || ''}
-                onChange={(e) => handleChange('meta_description', e.target.value)}
-                placeholder="A brief description of this page for search engines..."
-                maxLength={160}
-                rows={3}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                {(formData.meta_description || '').length}/160 characters
-              </p>
-            </div>
           </div>
         )}
 

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, Play, Loader2, Sparkles, X } from 'lucide-react';
 import { type Node, type Edge } from '@xyflow/react';
 import WorkflowCanvas, { type WorkflowCanvasRef } from '../components/workflow/WorkflowCanvas';
@@ -23,9 +23,13 @@ import { useToast } from '../components/Toast';
 export default function WorkflowEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const isNew = id === 'new';
   const canvasRef = useRef<WorkflowCanvasRef>(null);
   const toast = useToast();
+
+  // Get pageId from query params (for page-level workflows)
+  const pageId = searchParams.get('pageId') || undefined;
 
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { data: workflow, isLoading: isLoadingWorkflow } = useWorkflow(
@@ -374,6 +378,7 @@ export default function WorkflowEditor() {
           <NodeConfigPanel
             node={selectedNode}
             workspaceId={workspaceId}
+            pageId={pageId}
             onClose={() => setSelectedNodeId(null)}
             onUpdate={handleNodeUpdate}
           />

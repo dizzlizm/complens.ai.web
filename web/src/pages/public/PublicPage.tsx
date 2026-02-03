@@ -6,13 +6,23 @@ import ChatWidget from '../../components/public/ChatWidget';
 import PublicBlockRenderer from '../../components/public/PublicBlockRenderer';
 import type { PageBlock } from '../../components/page-builder/types';
 
-// Configure DOMPurify to allow safe HTML for rich landing pages
-DOMPurify.addHook('uponSanitizeElement', (_node, data) => {
-  // Allow SVG elements for icons
-  if (data.tagName === 'svg' || data.tagName === 'path' || data.tagName === 'circle' ||
-      data.tagName === 'rect' || data.tagName === 'line' || data.tagName === 'polyline' ||
-      data.tagName === 'polygon' || data.tagName === 'g') {
-    return;
+// Configure DOMPurify to sanitize SVG elements properly
+// SECURITY: Remove dangerous event handlers from SVG elements rather than skipping validation
+DOMPurify.addHook('uponSanitizeElement', (node, data) => {
+  const svgTags = ['svg', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'g', 'defs', 'clipPath', 'use'];
+  if (svgTags.includes(data.tagName)) {
+    // Remove all event handlers from SVG elements to prevent XSS
+    const element = node as Element;
+    const dangerousAttrs = [
+      'onload', 'onerror', 'onclick', 'onmouseover', 'onmouseout', 'onmouseenter',
+      'onmouseleave', 'onfocus', 'onblur', 'onchange', 'oninput', 'onkeydown',
+      'onkeyup', 'onkeypress', 'onsubmit', 'onanimationstart', 'onanimationend'
+    ];
+    dangerousAttrs.forEach(attr => {
+      if (element.hasAttribute(attr)) {
+        element.removeAttribute(attr);
+      }
+    });
   }
 });
 

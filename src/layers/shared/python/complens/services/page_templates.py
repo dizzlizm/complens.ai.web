@@ -6,6 +6,11 @@ Shorter, high-impact templates with just 3 sections:
 3. CTA - The action
 """
 
+import html as html_module
+import re
+
+from complens.utils.css_sanitizer import sanitize_css
+
 TEMPLATES = {
     "professional": {
         "name": "Professional",
@@ -180,6 +185,20 @@ def list_templates() -> list[dict]:
     ]
 
 
+def _escape_html(value: str | None) -> str:
+    """Escape a value for safe HTML insertion.
+
+    Args:
+        value: Value to escape.
+
+    Returns:
+        HTML-escaped string.
+    """
+    if value is None:
+        return ""
+    return html_module.escape(str(value))
+
+
 def fill_template(template_id: str, content: dict) -> str:
     """Fill a template with content."""
     template = TEMPLATES.get(template_id)
@@ -188,10 +207,10 @@ def fill_template(template_id: str, content: dict) -> str:
 
     html = template["html"]
 
-    # Replace all placeholders
+    # Replace all placeholders with escaped content
     for key, value in content.items():
         placeholder = "{{" + key + "}}"
-        html = html.replace(placeholder, str(value) if value else "")
+        html = html.replace(placeholder, _escape_html(value))
 
     return html
 
@@ -255,22 +274,65 @@ def render_block_html(block: dict, primary_color: str = "#6366f1") -> str:
         return f'<!-- Unknown block type: {block_type} -->'
 
 
+def _sanitize_url(url: str | None) -> str:
+    """Sanitize a URL to prevent XSS via javascript: protocol.
+
+    Args:
+        url: URL to sanitize.
+
+    Returns:
+        Sanitized URL or '#' if invalid.
+    """
+    if not url:
+        return "#"
+    url = str(url).strip()
+    # Block javascript: and data: protocols
+    lower_url = url.lower()
+    if lower_url.startswith(("javascript:", "data:", "vbscript:")):
+        return "#"
+    return _escape_html(url)
+
+
+def _sanitize_color(color: str | None, default: str = "#6366f1") -> str:
+    """Sanitize a color value.
+
+    Args:
+        color: Color value (hex, rgb, etc).
+        default: Default color if invalid.
+
+    Returns:
+        Sanitized color value.
+    """
+    if not color:
+        return default
+    color = str(color).strip()
+    # Allow hex colors, rgb/rgba, and named colors
+    if re.match(r'^#[0-9a-fA-F]{3,8}$', color):
+        return color
+    if re.match(r'^(rgb|rgba|hsl|hsla)\([^)]+\)$', color):
+        return _escape_html(color)
+    # Allow simple named colors
+    if re.match(r'^[a-zA-Z]+$', color):
+        return color
+    return default
+
+
 def _render_hero_block(config: dict, primary_color: str) -> str:
     """Render hero block."""
-    headline = config.get("headline", "Welcome")
-    subheadline = config.get("subheadline", "")
-    button_text = config.get("buttonText", "Get Started")
-    button_link = config.get("buttonLink", "#")
+    headline = _escape_html(config.get("headline", "Welcome"))
+    subheadline = _escape_html(config.get("subheadline", ""))
+    button_text = _escape_html(config.get("buttonText", "Get Started"))
+    button_link = _sanitize_url(config.get("buttonLink", "#"))
     bg_type = config.get("backgroundType", "gradient")
-    bg_color = config.get("backgroundColor", primary_color)
-    gradient_from = config.get("gradientFrom", primary_color)
-    gradient_to = config.get("gradientTo", "#8b5cf6")
-    bg_image = config.get("backgroundImage", "")
+    bg_color = _sanitize_color(config.get("backgroundColor"), primary_color)
+    gradient_from = _sanitize_color(config.get("gradientFrom"), primary_color)
+    gradient_to = _sanitize_color(config.get("gradientTo"), "#8b5cf6")
+    bg_image = _sanitize_url(config.get("backgroundImage", ""))
     text_align = config.get("textAlign", "center")
     show_button = config.get("showButton", True)
 
     # Background style
-    if bg_type == "image" and bg_image:
+    if bg_type == "image" and bg_image and bg_image != "#":
         bg_style = f'background-image: url({bg_image}); background-size: cover; background-position: center;'
         overlay = '<div class="absolute inset-0 bg-black/40"></div>'
     elif bg_type == "gradient":
@@ -306,8 +368,8 @@ def _render_hero_block(config: dict, primary_color: str) -> str:
 
 def _render_features_block(config: dict) -> str:
     """Render features block."""
-    title = config.get("title", "Features")
-    subtitle = config.get("subtitle", "")
+    title = _escape_html(config.get("title", "Features"))
+    subtitle = _escape_html(config.get("subtitle", ""))
     items = config.get("items", [])
     columns = config.get("columns", 3)
 
@@ -315,9 +377,9 @@ def _render_features_block(config: dict) -> str:
 
     items_html = ""
     for item in items:
-        icon = item.get("icon", "zap")
-        item_title = item.get("title", "")
-        description = item.get("description", "")
+        icon = _escape_html(item.get("icon", "zap"))
+        item_title = _escape_html(item.get("title", ""))
+        description = _escape_html(item.get("description", ""))
         items_html += f'''
         <div class="text-center p-6 bg-gray-50 rounded-xl hover:shadow-lg transition-shadow">
             <div class="inline-flex items-center justify-center w-12 h-12 bg-indigo-100 rounded-lg mb-4">
@@ -343,11 +405,11 @@ def _render_features_block(config: dict) -> str:
 
 def _render_cta_block(config: dict, primary_color: str) -> str:
     """Render CTA block."""
-    headline = config.get("headline", "Ready to get started?")
-    description = config.get("description", "")
-    button_text = config.get("buttonText", "Get Started")
-    button_link = config.get("buttonLink", "#")
-    bg_color = config.get("backgroundColor", primary_color)
+    headline = _escape_html(config.get("headline", "Ready to get started?"))
+    description = _escape_html(config.get("description", ""))
+    button_text = _escape_html(config.get("buttonText", "Get Started"))
+    button_link = _sanitize_url(config.get("buttonLink", "#"))
+    bg_color = _sanitize_color(config.get("backgroundColor"), primary_color)
     text_color = config.get("textColor", "light")
 
     text_class = "text-white" if text_color == "light" else "text-gray-900"
@@ -368,17 +430,17 @@ def _render_cta_block(config: dict, primary_color: str) -> str:
 
 def _render_testimonials_block(config: dict) -> str:
     """Render testimonials block."""
-    title = config.get("title", "What Our Customers Say")
+    title = _escape_html(config.get("title", "What Our Customers Say"))
     items = config.get("items", [])
 
     items_html = ""
     for item in items:
-        quote = item.get("quote", "")
-        author = item.get("author", "")
-        company = item.get("company", "")
-        avatar = item.get("avatar", "")
+        quote = _escape_html(item.get("quote", ""))
+        author = _escape_html(item.get("author", ""))
+        company = _escape_html(item.get("company", ""))
+        avatar = _sanitize_url(item.get("avatar", ""))
 
-        avatar_html = f'<img src="{avatar}" alt="{author}" class="w-10 h-10 rounded-full object-cover">' if avatar else '<div class="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center text-gray-400">👤</div>'
+        avatar_html = f'<img src="{avatar}" alt="{author}" class="w-10 h-10 rounded-full object-cover">' if avatar and avatar != "#" else '<div class="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center text-gray-400">👤</div>'
 
         items_html += f'''
         <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
@@ -405,13 +467,13 @@ def _render_testimonials_block(config: dict) -> str:
 
 def _render_faq_block(config: dict) -> str:
     """Render FAQ block."""
-    title = config.get("title", "Frequently Asked Questions")
+    title = _escape_html(config.get("title", "Frequently Asked Questions"))
     items = config.get("items", [])
 
     items_html = ""
     for i, item in enumerate(items):
-        question = item.get("question", "")
-        answer = item.get("answer", "")
+        question = _escape_html(item.get("question", ""))
+        answer = _escape_html(item.get("answer", ""))
         items_html += f'''
         <details class="group border border-gray-200 rounded-lg overflow-hidden" {"open" if i == 0 else ""}>
             <summary class="flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 cursor-pointer font-medium text-gray-900">
@@ -432,11 +494,11 @@ def _render_faq_block(config: dict) -> str:
 
 def _render_text_block(config: dict) -> str:
     """Render text block."""
-    content = config.get("content", "")
+    content = _escape_html(config.get("content", ""))
     alignment = config.get("alignment", "left")
     align_class = {"left": "text-left", "center": "text-center", "right": "text-right"}.get(alignment, "text-left")
 
-    # Convert newlines to <br>
+    # Convert newlines to <br> (content is already escaped)
     content_html = content.replace("\n", "<br>")
 
     return f'''
@@ -449,12 +511,12 @@ def _render_text_block(config: dict) -> str:
 
 def _render_image_block(config: dict) -> str:
     """Render image block."""
-    url = config.get("url", "")
-    alt = config.get("alt", "")
-    caption = config.get("caption", "")
+    url = _sanitize_url(config.get("url", ""))
+    alt = _escape_html(config.get("alt", ""))
+    caption = _escape_html(config.get("caption", ""))
     width = config.get("width", "large")
 
-    if not url:
+    if not url or url == "#":
         return '<!-- Image block with no URL -->'
 
     width_class = {"small": "max-w-md", "medium": "max-w-2xl", "large": "max-w-4xl", "full": "max-w-none"}.get(width, "max-w-4xl")
@@ -473,15 +535,14 @@ def _render_image_block(config: dict) -> str:
 def _render_video_block(config: dict) -> str:
     """Render video block."""
     url = config.get("url", "")
-    title = config.get("title", "")
+    title = _escape_html(config.get("title", ""))
     autoplay = config.get("autoplay", False)
 
     if not url:
         return '<!-- Video block with no URL -->'
 
-    # Parse YouTube/Vimeo URL
+    # Parse YouTube/Vimeo URL - only allow specific video platforms
     embed_url = None
-    import re
     youtube_match = re.search(r'(?:youtube\.com/(?:watch\?v=|embed/)|youtu\.be/)([a-zA-Z0-9_-]{11})', url)
     vimeo_match = re.search(r'vimeo\.com/(\d+)', url)
 
@@ -493,11 +554,12 @@ def _render_video_block(config: dict) -> str:
         embed_url = f"https://player.vimeo.com/video/{video_id}"
 
     if not embed_url:
-        return f'<!-- Video block with unsupported URL: {url} -->'
+        return '<!-- Video block with unsupported URL -->'
 
     if autoplay:
         embed_url += "?autoplay=1&mute=1"
 
+    escaped_title = title or 'Video'
     title_html = f'<h2 class="text-2xl font-bold text-gray-900 text-center mb-6">{title}</h2>' if title else ""
 
     return f'''
@@ -505,7 +567,7 @@ def _render_video_block(config: dict) -> str:
         <div class="max-w-4xl mx-auto">
             {title_html}
             <div class="relative aspect-video rounded-xl overflow-hidden shadow-lg">
-                <iframe src="{embed_url}" title="{title or 'Video'}" class="absolute inset-0 w-full h-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                <iframe src="{embed_url}" title="{escaped_title}" class="absolute inset-0 w-full h-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
             </div>
         </div>
     </section>'''
@@ -513,16 +575,17 @@ def _render_video_block(config: dict) -> str:
 
 def _render_stats_block(config: dict, primary_color: str) -> str:
     """Render stats block."""
-    title = config.get("title", "")
+    title = _escape_html(config.get("title", ""))
     items = config.get("items", [])
+    bg_color = _sanitize_color(primary_color)
 
     cols = min(len(items), 4)
     grid_class = f"grid-cols-2 md:grid-cols-{cols}"
 
     items_html = ""
     for item in items:
-        value = item.get("value", "")
-        label = item.get("label", "")
+        value = _escape_html(item.get("value", ""))
+        label = _escape_html(item.get("label", ""))
         items_html += f'''
         <div class="text-center">
             <p class="text-4xl md:text-5xl font-bold text-white mb-2">{value}</p>
@@ -532,7 +595,7 @@ def _render_stats_block(config: dict, primary_color: str) -> str:
     title_html = f'<h2 class="text-2xl font-bold text-white text-center mb-12">{title}</h2>' if title else ""
 
     return f'''
-    <section class="py-16 px-6" style="background-color: {primary_color};">
+    <section class="py-16 px-6" style="background-color: {bg_color};">
         <div class="max-w-6xl mx-auto">
             {title_html}
             <div class="grid {grid_class} gap-8">{items_html}</div>
@@ -559,8 +622,8 @@ def _render_divider_block(config: dict) -> str:
 
 def _render_pricing_block(config: dict, primary_color: str) -> str:
     """Render pricing block."""
-    title = config.get("title", "Pricing")
-    subtitle = config.get("subtitle", "")
+    title = _escape_html(config.get("title", "Pricing"))
+    subtitle = _escape_html(config.get("subtitle", ""))
     items = config.get("items", [])
 
     cols = min(len(items), 3)
@@ -568,18 +631,18 @@ def _render_pricing_block(config: dict, primary_color: str) -> str:
 
     items_html = ""
     for item in items:
-        name = item.get("name", "")
-        price = item.get("price", "")
-        period = item.get("period", "")
+        name = _escape_html(item.get("name", ""))
+        price = _escape_html(item.get("price", ""))
+        period = _escape_html(item.get("period", ""))
         features = item.get("features", [])
         highlighted = item.get("highlighted", False)
-        button_text = item.get("buttonText", "Get Started")
-        button_link = item.get("buttonLink", "#")
+        button_text = _escape_html(item.get("buttonText", "Get Started"))
+        button_link = _sanitize_url(item.get("buttonLink", "#"))
 
-        features_html = "".join(f'<li class="flex items-center gap-2"><span class="text-green-500">✓</span> {f}</li>' for f in features)
+        features_html = "".join(f'<li class="flex items-center gap-2"><span class="text-green-500">✓</span> {_escape_html(f)}</li>' for f in features)
 
         card_class = "ring-2 ring-indigo-500 shadow-xl scale-105" if highlighted else "border border-gray-200 shadow-sm"
-        btn_class = f"bg-indigo-600 text-white hover:bg-indigo-700" if highlighted else "bg-gray-100 text-gray-900 hover:bg-gray-200"
+        btn_class = "bg-indigo-600 text-white hover:bg-indigo-700" if highlighted else "bg-gray-100 text-gray-900 hover:bg-gray-200"
 
         popular_badge = '<div class="absolute -top-4 left-1/2 -translate-x-1/2 bg-indigo-500 text-white text-sm font-medium px-4 py-1 rounded-full">Most Popular</div>' if highlighted else ""
 
@@ -641,20 +704,22 @@ def render_form_html(form: dict, workspace_id: str, primary_color: str = "#6366f
     Returns:
         HTML string for the form.
     """
-    form_id = form.get("id", "")
+    form_id = _escape_html(form.get("id", ""))
     fields = form.get("fields", [])
-    submit_text = form.get("submit_button_text", "Submit")
+    submit_text = _escape_html(form.get("submit_button_text", "Submit"))
     honeypot_enabled = form.get("honeypot_enabled", True)
+    bg_color = _sanitize_color(primary_color)
+    ws_id = _escape_html(workspace_id)
 
     # Build field HTML
     fields_html = []
     for field in fields:
-        field_id = field.get("id", "")
-        field_name = field.get("name", "")
-        field_label = field.get("label", "")
+        field_id = _escape_html(field.get("id", ""))
+        field_name = _escape_html(field.get("name", ""))
+        field_label = _escape_html(field.get("label", ""))
         field_type = field.get("type", "text")
         required = field.get("required", False)
-        placeholder = field.get("placeholder", "")
+        placeholder = _escape_html(field.get("placeholder", ""))
         options = field.get("options", [])
 
         required_attr = 'required' if required else ''
@@ -669,7 +734,7 @@ def render_form_html(form: dict, workspace_id: str, primary_color: str = "#6366f
                     rows="4"></textarea>
             </div>'''
         elif field_type == "select":
-            options_html = ''.join(f'<option value="{opt}">{opt}</option>' for opt in options)
+            options_html = ''.join(f'<option value="{_escape_html(opt)}">{_escape_html(opt)}</option>' for opt in options)
             field_html = f'''
             <div class="mb-4">
                 <label for="{field_id}" class="block text-sm font-medium text-gray-700 mb-1">{field_label} {required_star}</label>
@@ -689,9 +754,9 @@ def render_form_html(form: dict, workspace_id: str, primary_color: str = "#6366f
         elif field_type == "radio" and options:
             options_html = ''.join(f'''
                 <label class="flex items-center">
-                    <input type="radio" name="{field_name}" value="{opt}" {required_attr}
+                    <input type="radio" name="{field_name}" value="{_escape_html(opt)}" {required_attr}
                         class="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500">
-                    <span class="ml-2 text-sm text-gray-700">{opt}</span>
+                    <span class="ml-2 text-sm text-gray-700">{_escape_html(opt)}</span>
                 </label>''' for opt in options)
             field_html = f'''
             <div class="mb-4">
@@ -720,10 +785,10 @@ def render_form_html(form: dict, workspace_id: str, primary_color: str = "#6366f
     return f'''
     <section id="form" class="py-16 px-6 bg-gray-50">
         <div class="max-w-lg mx-auto">
-            <form data-complens-form="{form_id}" data-workspace="{workspace_id}" class="bg-white p-8 rounded-2xl shadow-lg relative">
+            <form data-complens-form="{form_id}" data-workspace="{ws_id}" class="bg-white p-8 rounded-2xl shadow-lg relative">
                 {honeypot_html}
                 {''.join(fields_html)}
-                <button type="submit" style="background-color: {primary_color};"
+                <button type="submit" style="background-color: {bg_color};"
                     class="w-full py-4 px-6 text-white font-semibold rounded-lg hover:opacity-90 transition-opacity shadow-lg">
                     {submit_text}
                 </button>
@@ -774,17 +839,22 @@ def render_full_page(
     blocks = page.get("blocks", [])
     body_content = page.get("body_content", "")
     headline = page.get("headline", "")
-    meta_title = page.get("meta_title") or page.get("name", "")
-    meta_description = page.get("meta_description") or page.get("subheadline", "")
-    primary_color = page.get("primary_color", "#6366f1")
-    custom_css = page.get("custom_css", "")
-    page_id = page.get("id", "")
-    workspace_id = page.get("workspace_id", "")
+    meta_title = _escape_html(page.get("meta_title") or page.get("name", ""))
+    meta_description = _escape_html(page.get("meta_description") or page.get("subheadline", ""))
+    primary_color = _sanitize_color(page.get("primary_color"), "#6366f1")
+    # SECURITY: Sanitize custom CSS to prevent injection attacks
+    custom_css = sanitize_css(page.get("custom_css", ""))
+    page_id = _escape_js_string(page.get("id", ""))
+    workspace_id = _escape_html(page.get("workspace_id", ""))
     chat_config = page.get("chat_config", {})
     chat_enabled = chat_config.get("enabled", True) if chat_config else True
     chat_initial_message = _escape_js_string(chat_config.get("initial_message", "") if chat_config else "")
     form_ids = page.get("form_ids", [])
     forms = forms or []
+
+    # Validate URLs (only allow https/wss for security)
+    ws_url_safe = _escape_js_string(ws_url) if ws_url.startswith(("wss://", "ws://")) else ""
+    api_url_safe = _escape_js_string(api_url) if api_url.startswith(("https://", "http://")) else ""
 
     # Render blocks if present, otherwise use body_content
     if blocks:
@@ -792,12 +862,12 @@ def render_full_page(
 
     # Build chat widget script
     chat_script = ""
-    if chat_enabled:
+    if chat_enabled and ws_url_safe:
         chat_script = f"""
 <script>
 (function() {{
   try {{
-    var WS_URL = '{ws_url}';
+    var WS_URL = '{ws_url_safe}';
     var PAGE_ID = '{page_id}';
     var ws = null;
     var visitorId = localStorage.getItem('complens_vid');
@@ -926,7 +996,7 @@ def render_full_page(
         form_script = f"""
 <script>
 (function() {{
-  const API_URL = '{api_url}';
+  const API_URL = '{api_url_safe}';
   const PAGE_ID = '{page_id}';
 
   document.querySelectorAll('form[data-complens-form]').forEach(function(form) {{
@@ -974,9 +1044,35 @@ def render_full_page(
     <title>{meta_title}</title>
     <meta name="description" content="{meta_description}">
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {{
+            theme: {{
+                extend: {{
+                    colors: {{
+                        primary: '{primary_color}',
+                    }}
+                }}
+            }}
+        }}
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {{
+            .min-h-\\[500px\\] {{ min-height: 500px; }}
+            .min-h-\\[600px\\] {{ min-height: 600px; }}
+            .w-\\[1em\\] {{ width: 1em; }}
+            .h-\\[1em\\] {{ height: 1em; }}
+        }}
+    </style>
     <style>
         :root {{ --primary-color: {primary_color}; }}
         html {{ scroll-behavior: smooth; }}
+        /* Fallback styles for JIT-only features */
+        .bg-black\\/40 {{ background-color: rgba(0, 0, 0, 0.4); }}
+        .bg-black\\/50 {{ background-color: rgba(0, 0, 0, 0.5); }}
+        .text-white\\/90 {{ color: rgba(255, 255, 255, 0.9); }}
+        .text-white\\/80 {{ color: rgba(255, 255, 255, 0.8); }}
+        .bg-white\\/10 {{ background-color: rgba(255, 255, 255, 0.1); }}
+        .bg-white\\/20 {{ background-color: rgba(255, 255, 255, 0.2); }}
         {custom_css or ''}
     </style>
 </head>

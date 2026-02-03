@@ -9,7 +9,7 @@ from pydantic import ValidationError as PydanticValidationError
 from complens.models.conversation import Conversation, CreateConversationRequest
 from complens.repositories.conversation import ConversationRepository
 from complens.utils.auth import get_auth_context, require_workspace_access
-from complens.utils.exceptions import NotFoundError, ValidationError
+from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
 
 logger = structlog.get_logger()
@@ -103,14 +103,31 @@ def list_by_contact(repo: ConversationRepository, contact_id: str, event: dict) 
 
 
 def get_conversation(repo: ConversationRepository, conversation_id: str, auth) -> dict:
-    """Get a single conversation."""
-    # We need to find the conversation first to check workspace access
-    # This is a simplified approach - in production you'd want a GSI for this
+    """Get a single conversation.
 
-    # For now, return not found if we can't verify access
-    # In production, you'd query by conversation_id using a GSI
+    SECURITY: This endpoint verifies workspace access by querying the conversation
+    first and checking the authenticated user has access to that workspace.
+    """
+    # Query conversation by ID to get workspace_id
+    conversation = repo.get_by_id(conversation_id)
 
-    return error("Use workspace-scoped endpoint", 400)
+    if not conversation:
+        return not_found("Conversation", conversation_id)
+
+    # Verify the authenticated user has access to this conversation's workspace
+    try:
+        require_workspace_access(auth, conversation.workspace_id)
+    except (ForbiddenError, ValueError):
+        # Return 403 Forbidden - user doesn't have access to this workspace
+        logger.warning(
+            "Conversation access denied",
+            conversation_id=conversation_id,
+            workspace_id=conversation.workspace_id,
+            user_id=auth.user_id if auth else None,
+        )
+        return error("Access denied", 403)
+
+    return success(conversation.model_dump(mode="json"))
 
 
 def create_conversation(

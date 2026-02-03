@@ -84,6 +84,8 @@ class WorkflowRepository(BaseRepository[Workflow]):
     ) -> tuple[list[Workflow], dict | None]:
         """List only workspace-level workflows (no page_id).
 
+        Uses filter expression to exclude page-specific workflows at DynamoDB level.
+
         Args:
             workspace_id: The workspace ID.
             status: Optional status filter.
@@ -93,13 +95,32 @@ class WorkflowRepository(BaseRepository[Workflow]):
         Returns:
             Tuple of (workflows, next_page_key).
         """
-        # Get all workflows and filter out page-specific ones
-        workflows, next_key = self.list_by_workspace(
-            workspace_id, status=status, limit=limit * 2, last_key=last_key
-        )
-        # Filter to only workspace-level (no page_id)
-        workspace_level = [w for w in workflows if not w.page_id]
-        return workspace_level[:limit], next_key
+        # Use filter expression to exclude page-specific workflows
+        # This filters at DynamoDB level, more efficient than Python filtering
+        filter_expr = "attribute_not_exists(page_id) OR page_id = :empty"
+        expr_values = {":empty": ""}
+
+        if status:
+            items, next_key = self.query(
+                pk=f"WS#{workspace_id}#WF_STATUS",
+                sk_begins_with=f"{status.value}#",
+                index_name="GSI1",
+                limit=limit,
+                last_key=last_key,
+                filter_expression=filter_expr,
+                expression_values=expr_values,
+            )
+        else:
+            items, next_key = self.query(
+                pk=f"WS#{workspace_id}",
+                sk_begins_with="WF#",
+                limit=limit,
+                last_key=last_key,
+                filter_expression=filter_expr,
+                expression_values=expr_values,
+            )
+
+        return items, next_key
 
     def list_by_page(
         self,

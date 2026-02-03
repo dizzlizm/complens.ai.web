@@ -295,6 +295,12 @@ export interface SynthesisMetadata {
   generation_stages: string[];
 }
 
+export interface SynthesisSeoConfig {
+  meta_title: string;
+  meta_description: string;
+  og_image_url?: string;
+}
+
 export interface SynthesisResult {
   synthesis_id: string;
   intent: PageIntent;
@@ -304,6 +310,7 @@ export interface SynthesisResult {
   form_config: SynthesisFormConfig | null;
   workflow_config: SynthesisWorkflowConfig | null;
   metadata: SynthesisMetadata;
+  seo: SynthesisSeoConfig;
   business_name: string;
   tagline: string;
 }

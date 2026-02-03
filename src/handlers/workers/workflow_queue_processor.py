@@ -94,12 +94,23 @@ def process_queue_record(record: dict) -> None:
     trigger_type = detail.get("trigger_type")
     trigger_data = detail
 
-    if not all([workspace_id, contact_id, trigger_type]):
+    # workspace_id and trigger_type are always required
+    if not workspace_id or not trigger_type:
         logger.warning(
             "Missing required fields in queue message",
             message_id=message_id,
             workspace_id=workspace_id,
-            contact_id=contact_id,
+            trigger_type=trigger_type,
+        )
+        return
+
+    # contact_id is optional for form submission triggers (form may not create contacts)
+    # but required for other trigger types like chat, tag_added, etc.
+    if not contact_id and trigger_type not in ("trigger_form_submitted", "trigger_webhook"):
+        logger.warning(
+            "Missing contact_id for trigger that requires it",
+            message_id=message_id,
+            workspace_id=workspace_id,
             trigger_type=trigger_type,
         )
         return
@@ -188,7 +199,7 @@ def handle_workflow_resume(event_data: dict) -> None:
 
 def find_and_trigger_workflows(
     workspace_id: str,
-    contact_id: str,
+    contact_id: str | None,
     trigger_type: str,
     trigger_data: dict,
 ) -> None:
@@ -196,7 +207,7 @@ def find_and_trigger_workflows(
 
     Args:
         workspace_id: Workspace ID.
-        contact_id: Contact ID.
+        contact_id: Contact ID (may be None for form submissions without contacts).
         trigger_type: Type of trigger.
         trigger_data: Trigger event data.
     """
@@ -290,7 +301,7 @@ def _matches_trigger_config(
 def start_workflow_execution(
     workflow_id: str,
     workspace_id: str,
-    contact_id: str,
+    contact_id: str | None,
     trigger_type: str,
     trigger_data: dict,
 ) -> str | None:
@@ -299,7 +310,7 @@ def start_workflow_execution(
     Args:
         workflow_id: Workflow ID.
         workspace_id: Workspace ID.
-        contact_id: Contact ID.
+        contact_id: Contact ID (may be None for form submissions without contacts).
         trigger_type: Trigger type.
         trigger_data: Trigger data.
 

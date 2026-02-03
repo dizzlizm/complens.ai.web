@@ -400,6 +400,13 @@ def generate_image(workspace_id: str, event: dict) -> dict:
     if not context and not prompt:
         return error("Either context or prompt is required", 400)
 
+    # Validate and clamp dimensions for Titan Image Generator (320-4096, multiple of 64)
+    width = max(320, min(4096, width))
+    height = max(320, min(4096, height))
+    # Round to nearest multiple of 64
+    width = ((width + 32) // 64) * 64
+    height = ((height + 32) // 64) * 64
+
     try:
         # Generate prompt from context if not provided
         if not prompt:

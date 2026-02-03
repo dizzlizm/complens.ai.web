@@ -1,10 +1,13 @@
 import { useState, useCallback } from 'react';
-import { PageBlock, BlockType } from './types';
-import BlockSelectionGrid from './BlockSelectionGrid';
+import { useQueryClient } from '@tanstack/react-query';
+import { PageBlock, BlockType, groupBlocksIntoRows, flattenRowsToBlocks } from './types';
+import LayoutCanvas from './LayoutCanvas';
 import SynthesisPopup from './SynthesisPopup';
 import ProfilePromptBanner from './ProfilePromptBanner';
-import PageBuilderCanvas from './PageBuilderCanvas';
-import { SynthesisResult } from '../../lib/hooks/useAI';
+import SeoSection from './SeoSection';
+import ScriptsSection from './ScriptsSection';
+import { SynthesisResult, useCreateCompletePage } from '../../lib/hooks/useAI';
+import { useToast } from '../Toast';
 
 // Form data for the form block selector
 interface FormInfo {
@@ -34,93 +37,298 @@ interface ContentTabV2Props {
   // Page metadata fields
   pageName?: string;
   pageSlug?: string;
+  pageUrl?: string;
   primaryColor?: string;
+  secondaryColor?: string;
+  accentColor?: string;
   onPageNameChange?: (name: string) => void;
   onPageSlugChange?: (slug: string) => void;
   onPrimaryColorChange?: (color: string) => void;
+  onSecondaryColorChange?: (color: string) => void;
+  onAccentColorChange?: (color: string) => void;
+  // SEO fields
+  metaTitle?: string;
+  metaDescription?: string;
+  ogImageUrl?: string;
+  onMetaTitleChange?: (value: string) => void;
+  onMetaDescriptionChange?: (value: string) => void;
+  onOgImageUrlChange?: (value: string) => void;
+  // Scripts & Tracking
+  gaTrackingId?: string;
+  fbPixelId?: string;
+  scriptsHead?: string;
+  scriptsBody?: string;
+  onGaTrackingIdChange?: (value: string) => void;
+  onFbPixelIdChange?: (value: string) => void;
+  onScriptsHeadChange?: (value: string) => void;
+  onScriptsBodyChange?: (value: string) => void;
+  // Callbacks for resource creation
+  onFormCreated?: (formId: string) => void;
+  onWorkflowCreated?: (workflowId: string) => void;
+}
+
+interface ApplyOptions {
+  createForm: boolean;
+  createWorkflow: boolean;
+  generateImages: boolean;
+  // Workflow configuration
+  workflowTags: string[];
+  notifyOwner: boolean;
+  ownerEmail: string;
+  sendWelcomeEmail: boolean;
 }
 
 export default function ContentTabV2({
   blocks,
   onChange,
   forms = [],
-  pageHeadline,
-  pageSubheadline,
+  // pageHeadline, pageSubheadline kept in props for future use
   workspaceId,
   pageId,
   profileScore = 100,
   onGoToProfile,
   pageName,
   pageSlug,
+  pageUrl = '',
   primaryColor = '#6366f1',
+  secondaryColor = '#8b5cf6',
+  accentColor = '#f59e0b',
   onPageNameChange,
   onPageSlugChange,
   onPrimaryColorChange,
+  onSecondaryColorChange,
+  onAccentColorChange,
+  // SEO
+  metaTitle = '',
+  metaDescription = '',
+  ogImageUrl = '',
+  onMetaTitleChange,
+  onMetaDescriptionChange,
+  onOgImageUrlChange,
+  // Scripts
+  gaTrackingId = '',
+  fbPixelId = '',
+  scriptsHead = '',
+  scriptsBody = '',
+  onGaTrackingIdChange,
+  onFbPixelIdChange,
+  onScriptsHeadChange,
+  onScriptsBodyChange,
+  // Callbacks
+  onFormCreated,
+  onWorkflowCreated,
 }: ContentTabV2Props) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+
   // Synthesis popup state
   const [showSynthesisPopup, setShowSynthesisPopup] = useState(false);
   const [selectedBlockTypesForSynthesis, setSelectedBlockTypesForSynthesis] = useState<BlockType[]>([]);
+  const [selectedSlotIds, setSelectedSlotIds] = useState<string[]>([]);
 
-  // Handle opening synthesis popup with selected blocks
-  const handleSynthesizeBlocks = useCallback((blockTypes: BlockType[]) => {
+  // Create complete page hook (for form/workflow creation)
+  const createCompletePage = useCreateCompletePage(workspaceId || '');
+
+  // Handle opening synthesis popup with selected blocks from layout canvas
+  const handleSynthesizeBlocks = useCallback((blockTypes: BlockType[], slotIds: string[]) => {
     setSelectedBlockTypesForSynthesis(blockTypes);
+    setSelectedSlotIds(slotIds);
     setShowSynthesisPopup(true);
   }, []);
 
-  // Handle applying synthesis results
+  // Handle applying synthesis results to the selected slots
   const handleApplySynthesis = useCallback(
-    (synthesizedBlocks: PageBlock[], synthesisResult: SynthesisResult) => {
-      // Merge synthesized blocks with existing blocks
-      // Strategy: Replace blocks of the same type, add new ones
-      const existingBlocksByType = new Map<string, PageBlock>();
-      blocks.forEach((b) => existingBlocksByType.set(b.type, b));
+    async (synthesizedBlocks: PageBlock[], synthesisResult: SynthesisResult, options: ApplyOptions) => {
+      // Group current blocks into rows to preserve layout
+      const rows = groupBlocksIntoRows(blocks);
 
-      const newBlocks: PageBlock[] = [];
-      let order = 0;
-
-      // Add synthesized blocks
-      synthesizedBlocks.forEach((synthesizedBlock) => {
-        newBlocks.push({
-          ...synthesizedBlock,
-          order: order++,
-        });
+      // Create a map from slot ID to synthesized block
+      // Match by index/order since synthesis returns blocks in order
+      const synthesizedMap = new Map<number, PageBlock>();
+      synthesizedBlocks.forEach((block, idx) => {
+        synthesizedMap.set(idx, block);
       });
 
-      // Add existing blocks that weren't replaced
-      blocks.forEach((existingBlock) => {
-        const wasReplaced = synthesizedBlocks.some((sb) => sb.type === existingBlock.type);
-        if (!wasReplaced) {
-          newBlocks.push({
-            ...existingBlock,
-            order: order++,
-          });
-        }
-      });
+      // Update the selected slots with synthesized content
+      let synthesisIndex = 0;
+      const updatedRows = rows.map((row) => ({
+        ...row,
+        slots: row.slots.map((slot) => {
+          if (selectedSlotIds.includes(slot.id)) {
+            const synthesizedBlock = synthesizedMap.get(synthesisIndex);
+            synthesisIndex++;
 
-      // Sort by intended order (synthesis blocks first, then existing)
-      newBlocks.sort((a, b) => a.order - b.order);
+            if (synthesizedBlock) {
+              // Preserve the slot's layout properties but update type and config
+              return {
+                ...slot,
+                type: synthesizedBlock.type,
+                config: synthesizedBlock.config,
+                // Keep the slot's original layout: row, colSpan, colStart
+              };
+            }
+          }
+          return slot;
+        }),
+      }));
 
-      // Re-index orders
-      newBlocks.forEach((b, i) => {
-        b.order = i;
-      });
+      // Flatten back to blocks array
+      let newBlocks = flattenRowsToBlocks(updatedRows);
 
       onChange(newBlocks);
       setShowSynthesisPopup(false);
       setSelectedBlockTypesForSynthesis([]);
+      setSelectedSlotIds([]);
 
-      // If synthesis included colors, update the primary color
-      if (synthesisResult.design_system?.colors?.primary && onPrimaryColorChange) {
-        onPrimaryColorChange(synthesisResult.design_system.colors.primary);
+      // If synthesis included colors, update the color palette
+      if (synthesisResult.design_system?.colors) {
+        const colors = synthesisResult.design_system.colors;
+        if (colors.primary && onPrimaryColorChange) {
+          onPrimaryColorChange(colors.primary);
+        }
+        if (colors.secondary && onSecondaryColorChange) {
+          onSecondaryColorChange(colors.secondary);
+        }
+        if (colors.accent && onAccentColorChange) {
+          onAccentColorChange(colors.accent);
+        }
+      }
+
+      // Apply generated SEO metadata
+      if (synthesisResult.seo) {
+        if (synthesisResult.seo.meta_title && onMetaTitleChange) {
+          onMetaTitleChange(synthesisResult.seo.meta_title);
+        }
+        if (synthesisResult.seo.meta_description && onMetaDescriptionChange) {
+          onMetaDescriptionChange(synthesisResult.seo.meta_description);
+        }
+      }
+
+      // Create form and workflow if requested
+      if ((options.createForm || options.createWorkflow) && pageId && workspaceId) {
+        const hasFormBlock = newBlocks.some(b => b.type === 'form');
+
+        if (hasFormBlock && synthesisResult.form_config) {
+          try {
+            toast.info('Creating form and workflow...');
+
+            // Use create-complete to create form and workflow
+            // Construct minimal content object for type compliance (synthesis engine handles actual content)
+            const result = await createCompletePage.mutateAsync({
+              page_id: pageId,
+              name: pageName,
+              slug: pageSlug,
+              content: {
+                business_info: {
+                  business_name: synthesisResult.business_name || 'Business',
+                  business_type: 'service',
+                  industry: 'general',
+                  products: [],
+                  audience: 'general',
+                  tone: 'professional',
+                },
+                content: {
+                  headlines: [],
+                  tagline: '',
+                  value_props: [],
+                  features: [],
+                  testimonial_concepts: [],
+                  faq: [],
+                  cta_text: '',
+                  hero_subheadline: '',
+                },
+                suggested_colors: {
+                  primary: synthesisResult.design_system?.colors?.primary || '#6366f1',
+                  secondary: synthesisResult.design_system?.colors?.secondary || '#8b5cf6',
+                  accent: synthesisResult.design_system?.colors?.accent || '#f59e0b',
+                },
+              },
+              style: synthesisResult.design_system.style as 'professional' | 'bold' | 'minimal' | 'playful',
+              colors: {
+                primary: synthesisResult.design_system.colors.primary,
+                secondary: synthesisResult.design_system.colors.secondary,
+                accent: synthesisResult.design_system.colors.accent,
+              },
+              include_form: options.createForm,
+              include_chat: newBlocks.some(b => b.type === 'chat'),
+              synthesized_blocks: newBlocks.map((b, idx) => ({
+                id: b.id,
+                type: b.type as string,
+                order: idx,
+                width: b.width || 4,
+                config: b.config as Record<string, unknown>,
+              })),
+              synthesized_form_config: options.createForm ? {
+                name: synthesisResult.form_config.name,
+                fields: synthesisResult.form_config.fields,
+                submit_button_text: synthesisResult.form_config.submit_button_text,
+                success_message: synthesisResult.form_config.success_message,
+                add_tags: synthesisResult.form_config.add_tags,
+              } : undefined,
+              synthesized_workflow_config: options.createWorkflow ? {
+                name: synthesisResult.workflow_config?.name || 'Lead Follow-up',
+                send_welcome_email: options.sendWelcomeEmail,
+                notify_owner: options.notifyOwner,
+                owner_email: options.ownerEmail || synthesisResult.workflow_config?.owner_email,
+                welcome_message: synthesisResult.workflow_config?.welcome_message,
+                add_tags: options.workflowTags.length > 0 ? options.workflowTags : (synthesisResult.workflow_config?.add_tags || ['lead']),
+              } : undefined,
+              automation: {
+                send_welcome_email: options.sendWelcomeEmail,
+                notify_owner: options.notifyOwner,
+                add_tags: options.workflowTags.length > 0 ? options.workflowTags : ['lead', 'website'],
+              },
+              business_name: synthesisResult.business_name,
+            });
+
+            // Notify parent components
+            if (result.form && onFormCreated) {
+              onFormCreated(result.form.id as string);
+
+              // Update form block with actual form ID
+              newBlocks = newBlocks.map(block => {
+                if (block.type === 'form') {
+                  return {
+                    ...block,
+                    config: { ...block.config, formId: result.form?.id },
+                  };
+                }
+                return block;
+              });
+              onChange(newBlocks);
+            }
+
+            if (result.workflow && onWorkflowCreated) {
+              onWorkflowCreated(result.workflow.id as string);
+            }
+
+            // Invalidate React Query cache to refresh Forms and Workflows tabs
+            queryClient.invalidateQueries({ queryKey: ['pageForms', workspaceId, pageId] });
+            queryClient.invalidateQueries({ queryKey: ['pageWorkflows', workspaceId, pageId] });
+            queryClient.invalidateQueries({ queryKey: ['page', workspaceId, pageId] });
+
+            toast.success(
+              options.createForm && options.createWorkflow
+                ? 'Form and workflow created!'
+                : options.createForm
+                  ? 'Form created!'
+                  : 'Workflow created!'
+            );
+          } catch (error) {
+            console.error('Failed to create form/workflow:', error);
+            toast.error('Content applied, but failed to create form/workflow. You can create them manually.');
+          }
+        }
       }
     },
-    [blocks, onChange, onPrimaryColorChange]
+    [blocks, selectedSlotIds, onChange, onPrimaryColorChange, onSecondaryColorChange, onAccentColorChange, onMetaTitleChange, onMetaDescriptionChange, pageId, workspaceId, pageName, pageSlug, createCompletePage, toast, onFormCreated, onWorkflowCreated, queryClient]
   );
 
   // Close synthesis popup
   const handleCloseSynthesis = useCallback(() => {
     setShowSynthesisPopup(false);
     setSelectedBlockTypesForSynthesis([]);
+    setSelectedSlotIds([]);
   }, []);
 
   return (
@@ -134,7 +342,7 @@ export default function ContentTabV2({
 
       {/* Page Metadata Bar */}
       <div className="bg-white rounded-lg shadow p-4">
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Page Name
@@ -162,59 +370,141 @@ export default function ContentTabV2({
               />
             </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Primary Color
-            </label>
+        </div>
+
+        {/* Color Palette */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Color Palette
+          </label>
+          <div className="flex items-center gap-4">
+            {/* Primary Color */}
             <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={primaryColor}
-                onChange={(e) => onPrimaryColorChange?.(e.target.value)}
-                className="w-10 h-9 rounded cursor-pointer border-0"
-              />
+              <div className="relative group">
+                <input
+                  type="color"
+                  value={primaryColor}
+                  onChange={(e) => onPrimaryColorChange?.(e.target.value)}
+                  className="w-10 h-10 rounded-lg cursor-pointer border-2 border-gray-200 hover:border-gray-300 transition-colors"
+                />
+                <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-xs text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                  Primary
+                </span>
+              </div>
               <input
                 type="text"
                 value={primaryColor}
                 onChange={(e) => onPrimaryColorChange?.(e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
+                className="w-24 px-2 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-xs"
+                placeholder="#6366f1"
               />
+            </div>
+
+            {/* Secondary Color */}
+            <div className="flex items-center gap-2">
+              <div className="relative group">
+                <input
+                  type="color"
+                  value={secondaryColor}
+                  onChange={(e) => onSecondaryColorChange?.(e.target.value)}
+                  className="w-10 h-10 rounded-lg cursor-pointer border-2 border-gray-200 hover:border-gray-300 transition-colors"
+                />
+                <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-xs text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                  Secondary
+                </span>
+              </div>
+              <input
+                type="text"
+                value={secondaryColor}
+                onChange={(e) => onSecondaryColorChange?.(e.target.value)}
+                className="w-24 px-2 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-xs"
+                placeholder="#8b5cf6"
+              />
+            </div>
+
+            {/* Accent Color */}
+            <div className="flex items-center gap-2">
+              <div className="relative group">
+                <input
+                  type="color"
+                  value={accentColor}
+                  onChange={(e) => onAccentColorChange?.(e.target.value)}
+                  className="w-10 h-10 rounded-lg cursor-pointer border-2 border-gray-200 hover:border-gray-300 transition-colors"
+                />
+                <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-xs text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                  Accent
+                </span>
+              </div>
+              <input
+                type="text"
+                value={accentColor}
+                onChange={(e) => onAccentColorChange?.(e.target.value)}
+                className="w-24 px-2 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-xs"
+                placeholder="#f59e0b"
+              />
+            </div>
+
+            {/* Color preview bar */}
+            <div className="flex-1 flex items-center justify-end">
+              <div className="flex rounded-lg overflow-hidden shadow-sm border border-gray-200">
+                <div
+                  className="w-12 h-8"
+                  style={{ backgroundColor: primaryColor }}
+                  title="Primary"
+                />
+                <div
+                  className="w-12 h-8"
+                  style={{ backgroundColor: secondaryColor }}
+                  title="Secondary"
+                />
+                <div
+                  className="w-12 h-8"
+                  style={{ backgroundColor: accentColor }}
+                  title="Accent"
+                />
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Block Selection Grid */}
-      <BlockSelectionGrid
-        onSynthesizeBlocks={handleSynthesizeBlocks}
-        showCategories={true}
-      />
-
-      {/* Visual Page Builder Canvas */}
-      <PageBuilderCanvas
+      {/* Visual Layout Canvas - replaces BlockSelectionGrid and PageBuilderCanvas */}
+      <LayoutCanvas
         blocks={blocks}
         onChange={onChange}
+        onSynthesizeBlocks={handleSynthesizeBlocks}
         forms={forms}
-        pageHeadline={pageHeadline}
-        pageSubheadline={pageSubheadline}
         workspaceId={workspaceId}
-        pageId={pageId}
       />
 
-      {/* Empty state */}
-      {blocks.length === 0 && (
-        <div className="text-center py-8 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
-          <p className="text-gray-500 mb-2">No content yet</p>
-          <p className="text-sm text-gray-400">
-            Select sections above and click "Synthesize" to generate AI-powered content
-          </p>
-        </div>
-      )}
+      {/* SEO & Social Section */}
+      <SeoSection
+        metaTitle={metaTitle}
+        metaDescription={metaDescription}
+        ogImageUrl={ogImageUrl}
+        pageUrl={pageUrl}
+        onMetaTitleChange={(value) => onMetaTitleChange?.(value)}
+        onMetaDescriptionChange={(value) => onMetaDescriptionChange?.(value)}
+        onOgImageUrlChange={(value) => onOgImageUrlChange?.(value)}
+      />
+
+      {/* Scripts & Tracking Section */}
+      <ScriptsSection
+        gaTrackingId={gaTrackingId}
+        fbPixelId={fbPixelId}
+        scriptsHead={scriptsHead}
+        scriptsBody={scriptsBody}
+        onGaTrackingIdChange={(value) => onGaTrackingIdChange?.(value)}
+        onFbPixelIdChange={(value) => onFbPixelIdChange?.(value)}
+        onScriptsHeadChange={(value) => onScriptsHeadChange?.(value)}
+        onScriptsBodyChange={(value) => onScriptsBodyChange?.(value)}
+      />
 
       {/* Synthesis Popup */}
       {showSynthesisPopup && (
         <SynthesisPopup
           selectedBlockTypes={selectedBlockTypesForSynthesis}
+          selectedSlotIds={selectedSlotIds}
           pageId={pageId}
           onClose={handleCloseSynthesis}
           onApply={handleApplySynthesis}

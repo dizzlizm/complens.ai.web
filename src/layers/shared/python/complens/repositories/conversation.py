@@ -11,17 +11,43 @@ class ConversationRepository(BaseRepository[Conversation]):
         """Initialize conversation repository."""
         super().__init__(Conversation, table_name)
 
-    def get_by_id(self, workspace_id: str, conversation_id: str) -> Conversation | None:
+    def get_by_id(
+        self,
+        conversation_id_or_workspace_id: str,
+        conversation_id: str | None = None,
+    ) -> Conversation | None:
         """Get conversation by ID.
 
+        Can be called in two ways:
+        1. get_by_id(workspace_id, conversation_id) - direct lookup with known workspace
+        2. get_by_id(conversation_id) - scan to find conversation (slower, for auth checks)
+
         Args:
-            workspace_id: The workspace ID.
-            conversation_id: The conversation ID.
+            conversation_id_or_workspace_id: Either conversation_id alone, or workspace_id
+            conversation_id: Optional conversation_id if first arg is workspace_id.
 
         Returns:
             Conversation or None if not found.
         """
-        return self.get(pk=f"WS#{workspace_id}", sk=f"CONV#{conversation_id}")
+        if conversation_id is not None:
+            # Two-arg form: get_by_id(workspace_id, conversation_id)
+            workspace_id = conversation_id_or_workspace_id
+            return self.get(pk=f"WS#{workspace_id}", sk=f"CONV#{conversation_id}")
+
+        # Single-arg form: get_by_id(conversation_id) - need to scan
+        # This is used when we don't know the workspace (e.g., for access control)
+        conv_id = conversation_id_or_workspace_id
+        response = self.table.scan(
+            FilterExpression="SK = :sk",
+            ExpressionAttributeValues={":sk": f"CONV#{conv_id}"},
+            Limit=1,
+        )
+
+        items = response.get("Items", [])
+        if not items:
+            return None
+
+        return Conversation.from_dynamodb(items[0])
 
     def list_by_workspace(
         self,

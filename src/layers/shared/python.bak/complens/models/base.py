@@ -48,8 +48,9 @@ class BaseModel(TimestampMixin):
         """Serialize model to DynamoDB item format.
 
         Converts datetime objects to ISO strings and handles nested models.
+        Uses by_alias=True to ensure field aliases are used (e.g., 'type' instead of 'node_type').
         """
-        data = self.model_dump(mode="json")
+        data = self.model_dump(mode="json", by_alias=True)
         return self._serialize_value(data)
 
     @classmethod

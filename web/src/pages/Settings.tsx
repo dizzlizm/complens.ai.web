@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2 } from 'lucide-react';
-import { useCurrentWorkspace, useUpdateWorkspace } from '../lib/hooks';
+import { Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle, ExternalLink } from 'lucide-react';
+import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe } from '../lib/hooks';
 
 const settingsSections = [
   {
@@ -301,42 +301,268 @@ function NotificationSettings() {
 }
 
 function IntegrationSettings() {
-  const integrations = [
-    { name: 'Twilio', description: 'SMS messaging and phone calls', connected: false },
-    { name: 'Segment', description: 'Customer data platform', connected: true },
-    { name: 'Stripe', description: 'Payment processing', connected: false },
-    { name: 'Slack', description: 'Team notifications', connected: false },
-    { name: 'Zapier', description: 'Workflow automation', connected: false },
-  ];
+  const { workspaceId } = useCurrentWorkspace();
+
+  return (
+    <div className="space-y-6">
+      {/* Stripe Connect - Featured Integration */}
+      <StripeIntegrationCard workspaceId={workspaceId || ''} />
+
+      {/* Other Integrations */}
+      <div className="card">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Other Integrations</h2>
+        <div className="space-y-3">
+          {[
+            { name: 'Twilio', description: 'SMS messaging and phone calls', connected: false, comingSoon: false },
+            { name: 'Segment', description: 'Customer data platform', connected: true, comingSoon: false },
+            { name: 'Slack', description: 'Team notifications', connected: false, comingSoon: true },
+            { name: 'Zapier', description: 'Workflow automation', connected: false, comingSoon: true },
+          ].map((integration) => (
+            <div
+              key={integration.name}
+              className="flex items-center justify-between p-4 border border-gray-200 rounded-lg"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+                  <Zap className="w-5 h-5 text-gray-600" />
+                </div>
+                <div>
+                  <p className="font-medium text-gray-900">
+                    {integration.name}
+                    {integration.comingSoon && (
+                      <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+                        Coming Soon
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-sm text-gray-500">{integration.description}</p>
+                </div>
+              </div>
+              <button
+                className={`btn ${
+                  integration.connected ? 'btn-secondary' : 'btn-primary'
+                }`}
+                disabled={integration.comingSoon}
+              >
+                {integration.connected ? 'Configure' : 'Connect'}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StripeIntegrationCard({ workspaceId }: { workspaceId: string }) {
+  const { data: stripeStatus, isLoading } = useStripeConnectStatus(workspaceId || undefined);
+  const startConnect = useStartStripeConnect();
+  const disconnectStripe = useDisconnectStripe();
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+
+  const handleConnect = async () => {
+    if (!workspaceId) return;
+
+    try {
+      const result = await startConnect.mutateAsync({
+        workspaceId,
+        redirectUri: `${window.location.origin}/settings?stripe_callback=1`,
+      });
+
+      // Redirect to Stripe OAuth
+      window.location.href = result.oauth_url;
+    } catch (error) {
+      console.error('Failed to start Stripe Connect:', error);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!workspaceId) return;
+
+    try {
+      await disconnectStripe.mutateAsync({ workspaceId });
+      setShowDisconnectConfirm(false);
+    } catch (error) {
+      console.error('Failed to disconnect Stripe:', error);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="card">
+        <div className="flex items-center gap-4 mb-4">
+          <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center">
+            <CreditCard className="w-6 h-6 text-indigo-600" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Stripe Connect</h2>
+            <p className="text-sm text-gray-500">Accept payments from your landing pages</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
+        </div>
+      </div>
+    );
+  }
+
+  const isConnected = stripeStatus?.connected;
+  const account = stripeStatus?.account;
 
   return (
     <div className="card">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">Integrations</h2>
-      <div className="space-y-3">
-        {integrations.map((integration) => (
-          <div
-            key={integration.name}
-            className="flex items-center justify-between p-4 border border-gray-200 rounded-lg"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                <Zap className="w-5 h-5 text-gray-600" />
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center">
+            <CreditCard className="w-6 h-6 text-indigo-600" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Stripe Connect</h2>
+            <p className="text-sm text-gray-500">Accept payments from your landing pages</p>
+          </div>
+        </div>
+        {isConnected && (
+          <div className="flex items-center gap-2 px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm">
+            <Check className="w-4 h-4" />
+            Connected
+          </div>
+        )}
+      </div>
+
+      {isConnected ? (
+        <>
+          <div className="p-4 bg-gray-50 rounded-lg mb-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Account</p>
+                <p className="font-medium text-gray-900">{account?.email || 'Connected'}</p>
               </div>
               <div>
-                <p className="font-medium text-gray-900">{integration.name}</p>
-                <p className="text-sm text-gray-500">{integration.description}</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Mode</p>
+                <p className="font-medium text-gray-900">
+                  {stripeStatus?.livemode ? 'Live' : 'Test'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Charges</p>
+                <p className="font-medium text-gray-900 flex items-center gap-1">
+                  {account?.charges_enabled ? (
+                    <><Check className="w-4 h-4 text-green-600" /> Enabled</>
+                  ) : (
+                    <><AlertCircle className="w-4 h-4 text-yellow-600" /> Pending</>
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Payouts</p>
+                <p className="font-medium text-gray-900 flex items-center gap-1">
+                  {account?.payouts_enabled ? (
+                    <><Check className="w-4 h-4 text-green-600" /> Enabled</>
+                  ) : (
+                    <><AlertCircle className="w-4 h-4 text-yellow-600" /> Pending</>
+                  )}
+                </p>
               </div>
             </div>
-            <button
-              className={`btn ${
-                integration.connected ? 'btn-secondary' : 'btn-primary'
-              }`}
-            >
-              {integration.connected ? 'Configure' : 'Connect'}
-            </button>
           </div>
-        ))}
-      </div>
+
+          {!account?.details_submitted && (
+            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mb-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium text-yellow-800">Complete your Stripe setup</p>
+                  <p className="text-sm text-yellow-700 mt-1">
+                    You need to complete your Stripe account setup to start accepting payments.
+                  </p>
+                  <a
+                    href="https://dashboard.stripe.com/connect/accounts"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-yellow-800 font-medium mt-2 hover:underline"
+                  >
+                    Complete setup in Stripe <ExternalLink className="w-4 h-4" />
+                  </a>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between pt-4 border-t">
+            <p className="text-sm text-gray-500">
+              Connected account: {stripeStatus?.stripe_account_id}
+            </p>
+            {showDisconnectConfirm ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600">Are you sure?</span>
+                <button
+                  onClick={handleDisconnect}
+                  disabled={disconnectStripe.isPending}
+                  className="btn btn-sm bg-red-600 hover:bg-red-700 text-white"
+                >
+                  {disconnectStripe.isPending ? 'Disconnecting...' : 'Yes, Disconnect'}
+                </button>
+                <button
+                  onClick={() => setShowDisconnectConfirm(false)}
+                  className="btn btn-sm btn-secondary"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowDisconnectConfirm(true)}
+                className="text-sm text-red-600 hover:text-red-700"
+              >
+                Disconnect
+              </button>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="p-4 bg-gray-50 rounded-lg mb-4">
+            <h3 className="font-medium text-gray-900 mb-2">What you can do with Stripe:</h3>
+            <ul className="space-y-2 text-sm text-gray-600">
+              <li className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-green-600" />
+                Accept one-time payments on landing pages
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-green-600" />
+                Create recurring subscriptions
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-green-600" />
+                Trigger workflows on payment events
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-green-600" />
+                Automatic platform fee collection (2%)
+              </li>
+            </ul>
+          </div>
+
+          <button
+            onClick={handleConnect}
+            disabled={startConnect.isPending || !workspaceId}
+            className="btn btn-primary w-full flex items-center justify-center gap-2"
+          >
+            {startConnect.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <CreditCard className="w-4 h-4" />
+            )}
+            {startConnect.isPending ? 'Connecting...' : 'Connect with Stripe'}
+          </button>
+
+          {startConnect.isError && (
+            <p className="text-sm text-red-600 mt-2 text-center">
+              Failed to connect. Please try again.
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 }

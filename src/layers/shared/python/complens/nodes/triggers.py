@@ -406,6 +406,135 @@ class SegmentEventTrigger(BaseTrigger):
         return event.lower() == pattern.lower()
 
 
+# =============================================================================
+# Stripe Payment Triggers
+# =============================================================================
+
+
+class PaymentReceivedTrigger(BaseTrigger):
+    """Trigger when a payment is received via Stripe.
+
+    Fires on checkout.session.completed and payment_intent.succeeded events.
+    """
+
+    node_type = "trigger_payment_received"
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract payment data."""
+        return {
+            "event_type": data.get("event_type"),
+            "payment_intent_id": data.get("payment_intent_id"),
+            "session_id": data.get("session_id"),
+            "amount": data.get("amount"),
+            "currency": data.get("currency"),
+            "customer_email": data.get("customer_email"),
+            "customer_id": data.get("customer_id"),
+            "payment_status": data.get("payment_status"),
+            "mode": data.get("mode"),  # payment or subscription
+            "metadata": data.get("metadata", {}),
+        }
+
+
+class PaymentFailedTrigger(BaseTrigger):
+    """Trigger when a payment fails.
+
+    Fires on payment_intent.payment_failed and invoice.payment_failed events.
+    """
+
+    node_type = "trigger_payment_failed"
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract payment failure data."""
+        return {
+            "event_type": data.get("event_type"),
+            "payment_intent_id": data.get("payment_intent_id"),
+            "invoice_id": data.get("invoice_id"),
+            "amount": data.get("amount"),
+            "currency": data.get("currency"),
+            "customer_email": data.get("customer_email"),
+            "customer_id": data.get("customer_id"),
+            "error_message": data.get("error_message"),
+            "metadata": data.get("metadata", {}),
+        }
+
+
+class SubscriptionCreatedTrigger(BaseTrigger):
+    """Trigger when a new subscription is created."""
+
+    node_type = "trigger_subscription_created"
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract subscription data."""
+        return {
+            "subscription_id": data.get("subscription_id"),
+            "status": data.get("status"),
+            "customer_email": data.get("customer_email"),
+            "customer_id": data.get("customer_id"),
+            "amount": data.get("amount"),
+            "currency": data.get("currency"),
+            "current_period_end": data.get("current_period_end"),
+            "metadata": data.get("metadata", {}),
+        }
+
+
+class SubscriptionCancelledTrigger(BaseTrigger):
+    """Trigger when a subscription is cancelled.
+
+    Fires on both cancel_at_period_end=True and actual deletion.
+    """
+
+    node_type = "trigger_subscription_cancelled"
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract cancellation data."""
+        return {
+            "subscription_id": data.get("subscription_id"),
+            "status": data.get("status"),
+            "customer_email": data.get("customer_email"),
+            "customer_id": data.get("customer_id"),
+            "cancel_at_period_end": data.get("cancel_at_period_end"),
+            "current_period_end": data.get("current_period_end"),
+            "cancelled_at": data.get("cancelled_at"),
+            "metadata": data.get("metadata", {}),
+        }
+
+
+class InvoicePaidTrigger(BaseTrigger):
+    """Trigger when an invoice is paid (recurring subscription payment)."""
+
+    node_type = "trigger_invoice_paid"
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract invoice data."""
+        return {
+            "invoice_id": data.get("invoice_id"),
+            "subscription_id": data.get("subscription_id"),
+            "amount_paid": data.get("amount_paid"),
+            "currency": data.get("currency"),
+            "customer_email": data.get("customer_email"),
+            "customer_id": data.get("customer_id"),
+            "metadata": data.get("metadata", {}),
+        }
+
+
+class PaymentRefundedTrigger(BaseTrigger):
+    """Trigger when a payment is refunded."""
+
+    node_type = "trigger_payment_refunded"
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract refund data."""
+        return {
+            "charge_id": data.get("charge_id"),
+            "amount_refunded": data.get("amount_refunded"),
+            "currency": data.get("currency"),
+            "customer_email": data.get("customer_email"),
+            "customer_id": data.get("customer_id"),
+            "reason": data.get("reason"),
+            "metadata": data.get("metadata", {}),
+        }
+
+
 # Registry of trigger node classes
 TRIGGER_NODES = {
     # Lead generation triggers
@@ -423,4 +552,11 @@ TRIGGER_NODES = {
     "trigger_webhook": WebhookTrigger,
     "trigger_schedule": ScheduleTrigger,
     "trigger_segment_event": SegmentEventTrigger,
+    # Payment triggers (Stripe)
+    "trigger_payment_received": PaymentReceivedTrigger,
+    "trigger_payment_failed": PaymentFailedTrigger,
+    "trigger_subscription_created": SubscriptionCreatedTrigger,
+    "trigger_subscription_cancelled": SubscriptionCancelledTrigger,
+    "trigger_invoice_paid": InvoicePaidTrigger,
+    "trigger_payment_refunded": PaymentRefundedTrigger,
 }

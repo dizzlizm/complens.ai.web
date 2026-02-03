@@ -16,13 +16,14 @@ interface BlockAIToolbarProps {
   imageField?: string;  // e.g., 'backgroundImage', 'url'
 }
 
+// Functional editing options only - tone/voice comes from the business profile
 const IMPROVEMENT_OPTIONS = [
-  { id: 'improve', label: 'Make it better', instruction: 'Improve this content to be more compelling and persuasive' },
-  { id: 'shorten', label: 'Make it shorter', instruction: 'Make this content more concise while keeping the key message' },
-  { id: 'expand', label: 'Add more detail', instruction: 'Expand this content with more details and examples' },
-  { id: 'professional', label: 'More professional', instruction: 'Make this content more professional and authoritative' },
-  { id: 'casual', label: 'More casual', instruction: 'Make this content more casual and conversational' },
-  { id: 'persuasive', label: 'More persuasive', instruction: 'Make this content more persuasive with stronger CTAs' },
+  { id: 'improve', label: 'Make it better', instruction: 'Improve this content to be more compelling and persuasive while maintaining the brand voice' },
+  { id: 'shorten', label: 'Make it shorter', instruction: 'Make this content more concise while keeping the key message and brand voice' },
+  { id: 'expand', label: 'Add more detail', instruction: 'Expand this content with more details and examples while maintaining the brand voice' },
+  { id: 'persuasive', label: 'Stronger CTA', instruction: 'Make the call-to-action more compelling and persuasive' },
+  { id: 'benefits', label: 'More benefits', instruction: 'Rewrite to focus more on benefits and value to the reader' },
+  { id: 'clarity', label: 'Clarify', instruction: 'Make this content clearer and easier to understand' },
 ];
 
 export default function BlockAIToolbar({

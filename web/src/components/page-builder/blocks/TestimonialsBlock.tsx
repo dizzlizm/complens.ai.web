@@ -1,4 +1,4 @@
-import { Quote, User } from 'lucide-react';
+import { Quote, User, Plus, X } from 'lucide-react';
 import { TestimonialsConfig, TestimonialItem } from '../types';
 
 interface TestimonialsBlockProps {
@@ -27,6 +27,25 @@ export default function TestimonialsBlock({ config, isEditing, onConfigChange }:
     }
   };
 
+  const handleAddItem = () => {
+    if (onConfigChange) {
+      const newItem: TestimonialItem = {
+        quote: 'New testimonial quote...',
+        author: 'Customer Name',
+        company: 'Company Name',
+        avatar: '',
+      };
+      onConfigChange({ ...config, items: [...items, newItem] });
+    }
+  };
+
+  const handleRemoveItem = (index: number) => {
+    if (onConfigChange) {
+      const newItems = items.filter((_, i) => i !== index);
+      onConfigChange({ ...config, items: newItems });
+    }
+  };
+
   return (
     <div className="py-16 px-8 bg-gray-50">
       <div className="max-w-6xl mx-auto">
@@ -50,8 +69,19 @@ export default function TestimonialsBlock({ config, isEditing, onConfigChange }:
           {items.map((item, index) => (
             <div
               key={index}
-              className="bg-white rounded-xl p-6 shadow-sm border border-gray-100"
+              className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 relative group"
             >
+              {/* Remove button */}
+              {isEditing && (
+                <button
+                  onClick={() => handleRemoveItem(index)}
+                  className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10 hover:bg-red-600"
+                  title="Remove testimonial"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+
               <Quote className="w-8 h-8 text-indigo-200 mb-4" />
 
               {isEditing ? (
@@ -106,6 +136,17 @@ export default function TestimonialsBlock({ config, isEditing, onConfigChange }:
               </div>
             </div>
           ))}
+
+          {/* Add testimonial button */}
+          {isEditing && (
+            <button
+              onClick={handleAddItem}
+              className="bg-gray-50 rounded-xl p-6 border-2 border-dashed border-gray-200 hover:border-indigo-400 hover:bg-indigo-50/50 transition-colors flex flex-col items-center justify-center gap-2 min-h-[200px]"
+            >
+              <Plus className="w-8 h-8 text-gray-400" />
+              <span className="text-sm text-gray-500 font-medium">Add Testimonial</span>
+            </button>
+          )}
         </div>
 
         {/* Empty state */}

@@ -90,7 +90,9 @@ class CreateContactRequest(PydanticBaseModel):
     """Request model for creating a contact."""
 
     email: EmailStr | None = None
-    phone: str | None = Field(None, pattern=r"^\+[1-9]\d{1,14}$")
+    # Phone validation is lenient - any non-empty string up to 30 chars
+    # E.164 format (+15551234567) is recommended but not required
+    phone: str | None = Field(None, max_length=30)
     first_name: str | None = Field(None, max_length=100)
     last_name: str | None = Field(None, max_length=100)
     tags: list[str] = Field(default_factory=list)
@@ -104,7 +106,9 @@ class UpdateContactRequest(PydanticBaseModel):
     """Request model for updating a contact."""
 
     email: EmailStr | None = None
-    phone: str | None = Field(None, pattern=r"^\+[1-9]\d{1,14}$")
+    # Phone validation is lenient - any non-empty string up to 30 chars
+    # E.164 format (+15551234567) is recommended but not required
+    phone: str | None = Field(None, max_length=30)
     first_name: str | None = Field(None, max_length=100)
     last_name: str | None = Field(None, max_length=100)
     tags: list[str] | None = None

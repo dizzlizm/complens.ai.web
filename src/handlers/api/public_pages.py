@@ -12,6 +12,13 @@ import structlog
 from pydantic import ValidationError as PydanticValidationError
 
 # Email validation regex
+# TODO: [SECURITY] - Email and phone validation regexes are too permissive
+# Details: EMAIL_REGEX allows invalid formats like 'a@b.c' or 'user@@domain.com'.
+# PHONE_REGEX allows almost any combination of digits/symbols (7-20 chars) including
+# invalid formats like '---' or '+++'. Should use: (1) RFC 5322 validation for email
+# (2) International phone number library (phonenumbers) for phone validation.
+# Current weak validation could allow injection of invalid data into database.
+# Severity: Medium - could cause data quality and potentially security issues
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
 # Phone validation - allows common formats
@@ -785,9 +792,14 @@ def _process_form_submission(
         page_id=page_id,
     )
 
+    # Ensure success_message is always a string (handle legacy data that might have True)
+    success_message = form.success_message
+    if not isinstance(success_message, str) or success_message in ("True", "true", ""):
+        success_message = "Thank you for your submission!"
+
     return public_success({
         "success": True,
-        "message": form.success_message,
+        "message": success_message,
         "redirect_url": form.redirect_url,
         "submission_id": submission.id,
         "contact_id": contact_id,

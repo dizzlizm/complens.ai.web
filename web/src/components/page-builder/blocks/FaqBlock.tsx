@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, HelpCircle } from 'lucide-react';
+import { ChevronDown, HelpCircle, Plus, X } from 'lucide-react';
 import { FaqConfig, FaqItem } from '../types';
 
 interface FaqBlockProps {
@@ -30,6 +30,31 @@ export default function FaqBlock({ config, isEditing, onConfigChange }: FaqBlock
     }
   };
 
+  const handleAddItem = () => {
+    if (onConfigChange) {
+      const newItem: FaqItem = {
+        question: 'New question?',
+        answer: 'Answer goes here...',
+      };
+      onConfigChange({ ...config, items: [...items, newItem] });
+      // Open the newly added item
+      setOpenIndex(items.length);
+    }
+  };
+
+  const handleRemoveItem = (index: number) => {
+    if (onConfigChange) {
+      const newItems = items.filter((_, i) => i !== index);
+      onConfigChange({ ...config, items: newItems });
+      // Reset open index if needed
+      if (openIndex === index) {
+        setOpenIndex(null);
+      } else if (openIndex !== null && openIndex > index) {
+        setOpenIndex(openIndex - 1);
+      }
+    }
+  };
+
   return (
     <div className="py-16 px-8 bg-white">
       <div className="max-w-3xl mx-auto">
@@ -53,8 +78,22 @@ export default function FaqBlock({ config, isEditing, onConfigChange }: FaqBlock
           {items.map((item, index) => (
             <div
               key={index}
-              className="border border-gray-200 rounded-lg overflow-hidden"
+              className="border border-gray-200 rounded-lg overflow-hidden relative group"
             >
+              {/* Remove button */}
+              {isEditing && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemoveItem(index);
+                  }}
+                  className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10 hover:bg-red-600"
+                  title="Remove FAQ item"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+
               <button
                 className="w-full flex items-center justify-between p-4 text-left bg-gray-50 hover:bg-gray-100 transition-colors"
                 onClick={() => setOpenIndex(openIndex === index ? null : index)}
@@ -72,7 +111,7 @@ export default function FaqBlock({ config, isEditing, onConfigChange }: FaqBlock
                   <span className="font-medium text-gray-900">{item.question}</span>
                 )}
                 <ChevronDown
-                  className={`w-5 h-5 text-gray-500 transition-transform ${
+                  className={`w-5 h-5 text-gray-500 transition-transform flex-shrink-0 ml-2 ${
                     openIndex === index ? 'rotate-180' : ''
                   }`}
                 />
@@ -95,6 +134,17 @@ export default function FaqBlock({ config, isEditing, onConfigChange }: FaqBlock
               )}
             </div>
           ))}
+
+          {/* Add FAQ button */}
+          {isEditing && (
+            <button
+              onClick={handleAddItem}
+              className="w-full p-4 border-2 border-dashed border-gray-200 rounded-lg hover:border-indigo-400 hover:bg-indigo-50/50 transition-colors flex items-center justify-center gap-2"
+            >
+              <Plus className="w-5 h-5 text-gray-400" />
+              <span className="text-sm text-gray-500 font-medium">Add FAQ Item</span>
+            </button>
+          )}
         </div>
 
         {/* Empty state */}

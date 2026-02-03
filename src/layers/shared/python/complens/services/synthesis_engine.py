@@ -29,10 +29,12 @@ from complens.models.synthesis import (
     PageGoal,
     PageIntent,
     PlannedBlock,
+    SeoConfig,
     SynthesisMetadata,
     SynthesisResult,
     SynthesizedBlockContent,
     SynthesizedContent,
+    SynthesizedSeo,
     WorkflowConfig,
 )
 from complens.repositories.business_profile import BusinessProfileRepository
@@ -217,6 +219,22 @@ class SynthesisEngine:
             generation_stages=stages_executed,
         )
 
+        # Build SEO config from synthesized content
+        # Truncate to fit Pydantic validation limits (AI may generate longer content)
+        meta_title = (synthesized.seo.meta_title if synthesized.seo else "") or ""
+        meta_description = (synthesized.seo.meta_description if synthesized.seo else "") or ""
+
+        # Truncate with ellipsis if exceeds limits
+        if len(meta_title) > 70:
+            meta_title = meta_title[:67] + "..."
+        if len(meta_description) > 160:
+            meta_description = meta_description[:157] + "..."
+
+        seo = SeoConfig(
+            meta_title=meta_title,
+            meta_description=meta_description,
+        )
+
         result = SynthesisResult(
             synthesis_id=str(uuid4()),
             intent=intent,
@@ -226,6 +244,7 @@ class SynthesisEngine:
             form_config=form_config,
             workflow_config=workflow_config,
             metadata=metadata,
+            seo=seo,
             business_name=synthesized.business_name or profile.business_name or "",
             tagline=synthesized.tagline or profile.tagline or "",
         )
@@ -833,6 +852,10 @@ Return JSON:
   "tagline": "Short memorable tagline (5-10 words)",
   "tone": "professional|friendly|bold|playful",
   "narrative_theme": "The unifying story/theme",
+  "seo": {{
+    "meta_title": "SEO title (40-60 chars, include business name and key benefit)",
+    "meta_description": "Compelling SEO description (120-155 chars, include CTA and value prop)"
+  }},
   "blocks": [
     {{
       "block_type": "hero",
@@ -856,6 +879,10 @@ Return JSON:
     // ... generate content for each block type in the list
   ]
 }}
+
+SEO GUIDELINES:
+- meta_title: 40-60 characters, format "[Business Name] - [Key Benefit]" or "[Key Benefit] | [Business Name]"
+- meta_description: 120-155 characters, action-oriented, include what the visitor will get
 
 Generate content for: {', '.join(block_types)}"""
 
@@ -881,12 +908,20 @@ Return only valid JSON."""
                     )
                 )
 
+            # Parse SEO metadata
+            seo_data = result.get("seo", {})
+            seo = SynthesizedSeo(
+                meta_title=seo_data.get("meta_title", ""),
+                meta_description=seo_data.get("meta_description", ""),
+            )
+
             return SynthesizedContent(
                 blocks=blocks,
                 business_name=result.get("business_name", ""),
                 tagline=result.get("tagline", ""),
                 tone=result.get("tone", "professional"),
                 narrative_theme=result.get("narrative_theme", ""),
+                seo=seo,
             )
 
         except Exception as e:

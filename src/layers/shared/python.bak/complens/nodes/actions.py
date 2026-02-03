@@ -649,6 +649,300 @@ class CreateTaskAction(BaseNode):
         return ["task_title"]
 
 
+# =============================================================================
+# Stripe Payment Actions
+# =============================================================================
+
+
+class StripeCheckoutAction(BaseNode):
+    """Create a Stripe Checkout session for one-time payment.
+
+    Configuration:
+        product_name: Name of the product
+        amount: Amount in dollars (e.g., 49.99)
+        currency: Currency code (default: usd)
+        success_url: URL to redirect after successful payment
+        cancel_url: URL to redirect if cancelled
+        description: Optional product description
+    """
+
+    node_type = "action_stripe_checkout"
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Create checkout session.
+
+        Args:
+            context: Execution context.
+
+        Returns:
+            NodeResult with checkout URL.
+        """
+        from complens.services.stripe_service import StripeError, create_checkout_session
+        from complens.repositories.workspace import WorkspaceRepository
+
+        # Get workspace settings for Stripe connected account
+        workspace_repo = WorkspaceRepository()
+        workspace = workspace_repo.get_by_id(context.workspace_id)
+
+        if not workspace:
+            return NodeResult.failed(error="Workspace not found")
+
+        # Get connected Stripe account from workspace settings
+        stripe_account_id = workspace.settings.get("stripe_account_id")
+        if not stripe_account_id:
+            return NodeResult.failed(
+                error="Stripe not connected for this workspace",
+                error_details={"workspace_id": context.workspace_id},
+            )
+
+        # Get configuration
+        product_name = context.render_template(
+            self._get_config_value("product_name", "Payment")
+        )
+        amount = float(self._get_config_value("amount", 0))
+        currency = self._get_config_value("currency", "usd")
+        description = context.render_template(
+            self._get_config_value("description", "")
+        )
+        success_url = context.render_template(
+            self._get_config_value("success_url", "")
+        )
+        cancel_url = context.render_template(
+            self._get_config_value("cancel_url", "")
+        )
+
+        if amount <= 0:
+            return NodeResult.failed(error="Amount must be greater than 0")
+
+        if not success_url or not cancel_url:
+            return NodeResult.failed(error="Success and cancel URLs are required")
+
+        self.logger.info(
+            "Creating Stripe checkout",
+            product=product_name,
+            amount=amount,
+            currency=currency,
+        )
+
+        try:
+            result = create_checkout_session(
+                connected_account_id=stripe_account_id,
+                workspace_id=context.workspace_id,
+                price_data={
+                    "product_name": product_name,
+                    "amount": amount,
+                    "currency": currency,
+                    "description": description,
+                },
+                success_url=success_url,
+                cancel_url=cancel_url,
+                customer_email=context.contact.email,
+                metadata={
+                    "contact_id": context.contact.id,
+                    "workflow_run_id": context.workflow_run.id,
+                },
+                mode="payment",
+            )
+
+            return NodeResult.completed(
+                output={
+                    "checkout_url": result["url"],
+                    "session_id": result["session_id"],
+                    "status": result["status"],
+                }
+            )
+
+        except StripeError as e:
+            return NodeResult.failed(
+                error=f"Stripe error: {e.message}",
+                error_details={"code": e.code},
+            )
+
+    def get_required_config(self) -> list[str]:
+        """Get required configuration."""
+        return ["product_name", "amount", "success_url", "cancel_url"]
+
+
+class StripeSubscriptionAction(BaseNode):
+    """Create a Stripe Checkout session for subscription.
+
+    Configuration:
+        product_name: Name of the subscription product
+        amount: Monthly amount in dollars
+        currency: Currency code (default: usd)
+        interval: Billing interval (month, year, week, day)
+        success_url: URL to redirect after successful subscription
+        cancel_url: URL to redirect if cancelled
+    """
+
+    node_type = "action_stripe_subscription"
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Create subscription checkout session.
+
+        Args:
+            context: Execution context.
+
+        Returns:
+            NodeResult with checkout URL.
+        """
+        from complens.services.stripe_service import StripeError, create_checkout_session
+        from complens.repositories.workspace import WorkspaceRepository
+
+        # Get workspace settings for Stripe connected account
+        workspace_repo = WorkspaceRepository()
+        workspace = workspace_repo.get_by_id(context.workspace_id)
+
+        if not workspace:
+            return NodeResult.failed(error="Workspace not found")
+
+        stripe_account_id = workspace.settings.get("stripe_account_id")
+        if not stripe_account_id:
+            return NodeResult.failed(
+                error="Stripe not connected for this workspace",
+            )
+
+        # Get configuration
+        product_name = context.render_template(
+            self._get_config_value("product_name", "Subscription")
+        )
+        amount = float(self._get_config_value("amount", 0))
+        currency = self._get_config_value("currency", "usd")
+        interval = self._get_config_value("interval", "month")
+        success_url = context.render_template(
+            self._get_config_value("success_url", "")
+        )
+        cancel_url = context.render_template(
+            self._get_config_value("cancel_url", "")
+        )
+
+        if amount <= 0:
+            return NodeResult.failed(error="Amount must be greater than 0")
+
+        if not success_url or not cancel_url:
+            return NodeResult.failed(error="Success and cancel URLs are required")
+
+        self.logger.info(
+            "Creating Stripe subscription",
+            product=product_name,
+            amount=amount,
+            interval=interval,
+        )
+
+        try:
+            result = create_checkout_session(
+                connected_account_id=stripe_account_id,
+                workspace_id=context.workspace_id,
+                price_data={
+                    "product_name": product_name,
+                    "amount": amount,
+                    "currency": currency,
+                    "interval": interval,
+                },
+                success_url=success_url,
+                cancel_url=cancel_url,
+                customer_email=context.contact.email,
+                metadata={
+                    "contact_id": context.contact.id,
+                    "workflow_run_id": context.workflow_run.id,
+                },
+                mode="subscription",
+            )
+
+            return NodeResult.completed(
+                output={
+                    "checkout_url": result["url"],
+                    "session_id": result["session_id"],
+                    "status": result["status"],
+                }
+            )
+
+        except StripeError as e:
+            return NodeResult.failed(
+                error=f"Stripe error: {e.message}",
+                error_details={"code": e.code},
+            )
+
+    def get_required_config(self) -> list[str]:
+        """Get required configuration."""
+        return ["product_name", "amount", "success_url", "cancel_url"]
+
+
+class StripeCancelSubscriptionAction(BaseNode):
+    """Cancel a Stripe subscription.
+
+    Configuration:
+        subscription_id: Subscription ID to cancel (template variable)
+        immediately: If true, cancel immediately; otherwise at period end
+    """
+
+    node_type = "action_stripe_cancel_subscription"
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Cancel subscription.
+
+        Args:
+            context: Execution context.
+
+        Returns:
+            NodeResult with cancellation details.
+        """
+        from complens.services.stripe_service import StripeError, cancel_subscription
+        from complens.repositories.workspace import WorkspaceRepository
+
+        # Get workspace settings
+        workspace_repo = WorkspaceRepository()
+        workspace = workspace_repo.get_by_id(context.workspace_id)
+
+        if not workspace:
+            return NodeResult.failed(error="Workspace not found")
+
+        stripe_account_id = workspace.settings.get("stripe_account_id")
+        if not stripe_account_id:
+            return NodeResult.failed(error="Stripe not connected")
+
+        # Get configuration
+        subscription_id = context.render_template(
+            self._get_config_value("subscription_id", "")
+        )
+        immediately = self._get_config_value("immediately", False)
+
+        if not subscription_id:
+            return NodeResult.failed(error="Subscription ID is required")
+
+        self.logger.info(
+            "Cancelling subscription",
+            subscription_id=subscription_id,
+            immediately=immediately,
+        )
+
+        try:
+            result = cancel_subscription(
+                connected_account_id=stripe_account_id,
+                subscription_id=subscription_id,
+                immediately=immediately,
+            )
+
+            return NodeResult.completed(
+                output={
+                    "subscription_id": result["id"],
+                    "status": result["status"],
+                    "cancel_at_period_end": result["cancel_at_period_end"],
+                    "current_period_end": result["current_period_end"],
+                }
+            )
+
+        except StripeError as e:
+            return NodeResult.failed(
+                error=f"Stripe error: {e.message}",
+                error_details={"code": e.code},
+            )
+
+    def get_required_config(self) -> list[str]:
+        """Get required configuration."""
+        return ["subscription_id"]
+
+
 # Registry of action node classes
 ACTION_NODES = {
     "action_send_sms": SendSmsAction,
@@ -658,4 +952,8 @@ ACTION_NODES = {
     "action_wait": WaitAction,
     "action_webhook": WebhookAction,
     "action_create_task": CreateTaskAction,
+    # Stripe payment actions
+    "action_stripe_checkout": StripeCheckoutAction,
+    "action_stripe_subscription": StripeSubscriptionAction,
+    "action_stripe_cancel_subscription": StripeCancelSubscriptionAction,
 }
