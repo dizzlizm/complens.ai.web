@@ -280,6 +280,7 @@ export interface SynthesisFormConfig {
 
 export interface SynthesisWorkflowConfig {
   name: string;
+  trigger_type?: string;
   send_welcome_email: boolean;
   notify_owner: boolean;
   owner_email?: string;

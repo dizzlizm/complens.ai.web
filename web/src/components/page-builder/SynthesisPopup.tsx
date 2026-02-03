@@ -1,8 +1,18 @@
 import { useState, useCallback, useEffect } from 'react';
-import { X, Sparkles, Loader2, ChevronRight, AlertCircle, FileText, Workflow, Image, Check, Building2 } from 'lucide-react';
+import { X, Sparkles, Loader2, ChevronRight, AlertCircle, FileText, Workflow, Image, Check, Building2, Plus, MessageSquare, Eye } from 'lucide-react';
 import { BlockType, BLOCK_TYPES, PageBlock } from './types';
 import { useSynthesizePage, useGenerateImage, useBusinessProfile, SynthesisResult } from '../../lib/hooks/useAI';
 import { useCurrentWorkspace } from '../../lib/hooks/useWorkspaces';
+
+interface FormFieldConfig {
+  name: string;
+  label: string;
+  type: 'text' | 'email' | 'phone' | 'textarea' | 'select' | 'checkbox' | 'radio' | 'date' | 'number';
+  required: boolean;
+  placeholder?: string;
+  options?: string[];
+  map_to_contact_field?: string;
+}
 
 interface SynthesisPopupProps {
   selectedBlockTypes: BlockType[];
@@ -12,10 +22,12 @@ interface SynthesisPopupProps {
   onApply: (blocks: PageBlock[], synthesisResult: SynthesisResult, options: ApplyOptions) => void;
 }
 
-interface ApplyOptions {
+export interface ApplyOptions {
   createForm: boolean;
   createWorkflow: boolean;
   generateImages: boolean;
+  formFields: FormFieldConfig[];
+  workflowTrigger: string;
   // Workflow configuration
   workflowTags: string[];
   notifyOwner: boolean;
@@ -25,6 +37,37 @@ interface ApplyOptions {
 
 // Blocks that can benefit from AI-generated images
 const IMAGE_CAPABLE_BLOCKS = ['hero', 'testimonials', 'image', 'gallery', 'slider'];
+
+// Default form fields (always included)
+const DEFAULT_FORM_FIELDS: FormFieldConfig[] = [
+  { name: 'first_name', label: 'Name', type: 'text', required: true, placeholder: 'Your name', map_to_contact_field: 'first_name' },
+  { name: 'email', label: 'Email', type: 'email', required: true, placeholder: 'your@email.com', map_to_contact_field: 'email' },
+  { name: 'phone', label: 'Phone', type: 'phone', required: false, placeholder: '(555) 123-4567', map_to_contact_field: 'phone' },
+  { name: 'message', label: 'Message', type: 'textarea', required: false, placeholder: 'How can we help?' },
+];
+
+// Extra field presets users can add
+const EXTRA_FIELD_PRESETS: FormFieldConfig[] = [
+  { name: 'company', label: 'Company', type: 'text', required: false, placeholder: 'Your company', map_to_contact_field: 'custom_fields.company' },
+  { name: 'job_title', label: 'Job Title', type: 'text', required: false, placeholder: 'Your role', map_to_contact_field: 'custom_fields.job_title' },
+  { name: 'website', label: 'Website', type: 'text', required: false, placeholder: 'https://', map_to_contact_field: 'custom_fields.website' },
+  { name: 'budget', label: 'Budget', type: 'select', required: false, options: ['Under $1k', '$1k - $5k', '$5k - $10k', '$10k - $25k', '$25k+'] },
+  { name: 'service_interest', label: 'Service', type: 'select', required: false, options: ['Consulting', 'Development', 'Design', 'Marketing', 'Other'] },
+  { name: 'preferred_date', label: 'Preferred Date', type: 'date', required: false },
+];
+
+// Workflow trigger options
+const WORKFLOW_TRIGGERS: Array<{
+  value: string;
+  label: string;
+  icon: typeof FileText;
+  description: string;
+  requiresBlock?: BlockType;
+}> = [
+  { value: 'trigger_form_submitted', label: 'Form Submission', icon: FileText, description: 'When someone submits the form' },
+  { value: 'trigger_chat_message', label: 'Chat Message', icon: MessageSquare, description: 'When someone sends a chat message', requiresBlock: 'chat' },
+  { value: 'trigger_page_visit', label: 'Page Visit', icon: Eye, description: 'When someone visits the page' },
+];
 
 // Map brand_voice from profile to synthesis style options
 function mapBrandVoiceToStyle(brandVoice: string): 'professional' | 'bold' | 'minimal' | 'playful' {
@@ -75,7 +118,11 @@ export default function SynthesisPopup({
   const [isGeneratingImages, setIsGeneratingImages] = useState(false);
   const [imageProgress, setImageProgress] = useState<string>('');
 
+  // Form field configuration
+  const [formFields, setFormFields] = useState<FormFieldConfig[]>([...DEFAULT_FORM_FIELDS]);
+
   // Workflow configuration
+  const [workflowTrigger, setWorkflowTrigger] = useState<string>('trigger_form_submitted');
   const [workflowTags, setWorkflowTags] = useState<string>('lead, website');
   const [notifyOwner, setNotifyOwner] = useState(true);
   const [ownerEmail, setOwnerEmail] = useState('');
@@ -258,13 +305,20 @@ export default function SynthesisPopup({
       createForm,
       createWorkflow,
       generateImages,
+      formFields,
+      workflowTrigger,
       workflowTags: workflowTags.split(',').map(t => t.trim()).filter(Boolean),
       notifyOwner,
       ownerEmail,
       sendWelcomeEmail,
     });
     onClose();
-  }, [synthesisResult, generateImages, hasImageCapableBlocks, generateImagesForBlocks, onApply, onClose, createForm, createWorkflow, workflowTags, notifyOwner, ownerEmail, sendWelcomeEmail]);
+  }, [synthesisResult, generateImages, hasImageCapableBlocks, generateImagesForBlocks, onApply, onClose, createForm, createWorkflow, formFields, workflowTrigger, workflowTags, notifyOwner, ownerEmail, sendWelcomeEmail]);
+
+  // Available extra fields (not already added)
+  const availableExtras = EXTRA_FIELD_PRESETS.filter(
+    preset => !formFields.some(f => f.name === preset.name)
+  );
 
   // Render creation options (form, workflow, images)
   const renderCreationOptions = () => (
@@ -273,111 +327,194 @@ export default function SynthesisPopup({
 
       {/* Form option */}
       {willHaveForm && (
-        <label className="flex items-center gap-3 cursor-pointer group">
-          <div className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${
-            createForm ? 'bg-indigo-600' : 'bg-gray-200 group-hover:bg-gray-300'
-          }`}>
-            {createForm && <Check className="w-3 h-3 text-white" />}
-          </div>
-          <input
-            type="checkbox"
-            checked={createForm}
-            onChange={(e) => setCreateForm(e.target.checked)}
-            className="sr-only"
-          />
-          <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4 text-indigo-600" />
-            <div>
-              <span className="text-sm text-gray-900">Lead Capture Form</span>
-              <p className="text-xs text-gray-500">Auto-create form from synthesis</p>
-            </div>
-          </div>
-        </label>
-      )}
-
-      {/* Workflow option */}
-      {willHaveForm && (
         <div className="space-y-3">
           <label className="flex items-center gap-3 cursor-pointer group">
             <div className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${
-              createWorkflow ? 'bg-indigo-600' : 'bg-gray-200 group-hover:bg-gray-300'
+              createForm ? 'bg-indigo-600' : 'bg-gray-200 group-hover:bg-gray-300'
             }`}>
-              {createWorkflow && <Check className="w-3 h-3 text-white" />}
+              {createForm && <Check className="w-3 h-3 text-white" />}
             </div>
             <input
               type="checkbox"
-              checked={createWorkflow}
-              onChange={(e) => setCreateWorkflow(e.target.checked)}
+              checked={createForm}
+              onChange={(e) => setCreateForm(e.target.checked)}
               className="sr-only"
             />
             <div className="flex items-center gap-2">
-              <Workflow className="w-4 h-4 text-green-600" />
+              <FileText className="w-4 h-4 text-indigo-600" />
               <div>
-                <span className="text-sm text-gray-900">Lead Automation Workflow</span>
-                <p className="text-xs text-gray-500">Automate what happens when form is submitted</p>
+                <span className="text-sm text-gray-900">Lead Capture Form</span>
+                <p className="text-xs text-gray-500">Auto-create form from synthesis</p>
               </div>
             </div>
           </label>
 
-          {/* Workflow configuration - shown when workflow is enabled */}
-          {createWorkflow && (
-            <div className="ml-8 pl-4 border-l-2 border-green-200 space-y-3">
-              {/* Tags */}
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  Add tags to new contacts
-                </label>
-                <input
-                  type="text"
-                  value={workflowTags}
-                  onChange={(e) => setWorkflowTags(e.target.value)}
-                  placeholder="lead, website, inquiry"
-                  className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                />
-                <p className="text-xs text-gray-400 mt-0.5">Comma-separated list</p>
+          {/* Form field configurator - shown when form is enabled */}
+          {createForm && (
+            <div className="ml-8 pl-4 border-l-2 border-indigo-200 space-y-2">
+              <p className="text-xs font-medium text-gray-600">Form Fields</p>
+
+              {/* Current fields list */}
+              <div className="space-y-1.5">
+                {formFields.map((field) => (
+                  <div
+                    key={field.name}
+                    className="flex items-center justify-between px-3 py-1.5 bg-white rounded-lg border border-gray-200"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-800">{field.label}</span>
+                      <span className="text-xs text-gray-400">{field.type}</span>
+                      {field.required && (
+                        <span className="text-xs text-red-500">*</span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setFormFields(prev => prev.filter(f => f.name !== field.name))}
+                      className="p-0.5 text-gray-400 hover:text-red-500 transition-colors"
+                      title={`Remove ${field.label}`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
               </div>
 
-              {/* Send welcome email */}
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={sendWelcomeEmail}
-                  onChange={(e) => setSendWelcomeEmail(e.target.checked)}
-                  className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
-                />
-                <span className="text-sm text-gray-700">Send welcome email to lead</span>
-              </label>
-
-              {/* Notify owner */}
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={notifyOwner}
-                  onChange={(e) => setNotifyOwner(e.target.checked)}
-                  className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
-                />
-                <span className="text-sm text-gray-700">Email me when form is submitted</span>
-              </label>
-
-              {/* Owner email - shown when notify owner is enabled */}
-              {notifyOwner && (
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
-                    Send notifications to
-                  </label>
-                  <input
-                    type="email"
-                    value={ownerEmail}
-                    onChange={(e) => setOwnerEmail(e.target.value)}
-                    placeholder="your@email.com"
-                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
+              {/* Add field presets */}
+              {availableExtras.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {availableExtras.map((preset) => (
+                    <button
+                      key={preset.name}
+                      onClick={() => setFormFields(prev => [...prev, preset])}
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-full transition-colors"
+                    >
+                      <Plus className="w-3 h-3" />
+                      {preset.label}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
           )}
         </div>
       )}
+
+      {/* Workflow option */}
+      <div className="space-y-3">
+        <label className="flex items-center gap-3 cursor-pointer group">
+          <div className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${
+            createWorkflow ? 'bg-indigo-600' : 'bg-gray-200 group-hover:bg-gray-300'
+          }`}>
+            {createWorkflow && <Check className="w-3 h-3 text-white" />}
+          </div>
+          <input
+            type="checkbox"
+            checked={createWorkflow}
+            onChange={(e) => setCreateWorkflow(e.target.checked)}
+            className="sr-only"
+          />
+          <div className="flex items-center gap-2">
+            <Workflow className="w-4 h-4 text-green-600" />
+            <div>
+              <span className="text-sm text-gray-900">Automation Workflow</span>
+              <p className="text-xs text-gray-500">Automate actions based on triggers</p>
+            </div>
+          </div>
+        </label>
+
+        {/* Workflow configuration - shown when workflow is enabled */}
+        {createWorkflow && (
+          <div className="ml-8 pl-4 border-l-2 border-green-200 space-y-3">
+            {/* Trigger type selector */}
+            <div>
+              <p className="text-xs font-medium text-gray-600 mb-2">Trigger</p>
+              <div className="space-y-1.5">
+                {WORKFLOW_TRIGGERS.map((trigger) => {
+                  const isAvailable = !trigger.requiresBlock || selectedBlockTypes.includes(trigger.requiresBlock);
+                  if (!isAvailable) return null;
+                  const TriggerIcon = trigger.icon;
+                  return (
+                    <button
+                      key={trigger.value}
+                      onClick={() => setWorkflowTrigger(trigger.value)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border text-left transition-all ${
+                        workflowTrigger === trigger.value
+                          ? 'border-green-500 bg-green-50'
+                          : 'border-gray-200 hover:border-gray-300 bg-white'
+                      }`}
+                    >
+                      <TriggerIcon className={`w-4 h-4 flex-shrink-0 ${
+                        workflowTrigger === trigger.value ? 'text-green-600' : 'text-gray-400'
+                      }`} />
+                      <div>
+                        <p className={`text-sm font-medium ${
+                          workflowTrigger === trigger.value ? 'text-green-700' : 'text-gray-700'
+                        }`}>
+                          {trigger.label}
+                        </p>
+                        <p className="text-xs text-gray-500">{trigger.description}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Tags */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Add tags to new contacts
+              </label>
+              <input
+                type="text"
+                value={workflowTags}
+                onChange={(e) => setWorkflowTags(e.target.value)}
+                placeholder="lead, website, inquiry"
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+              <p className="text-xs text-gray-400 mt-0.5">Comma-separated list</p>
+            </div>
+
+            {/* Send welcome email */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={sendWelcomeEmail}
+                onChange={(e) => setSendWelcomeEmail(e.target.checked)}
+                className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
+              />
+              <span className="text-sm text-gray-700">Send welcome email to lead</span>
+            </label>
+
+            {/* Notify owner */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notifyOwner}
+                onChange={(e) => setNotifyOwner(e.target.checked)}
+                className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
+              />
+              <span className="text-sm text-gray-700">Email me when triggered</span>
+            </label>
+
+            {/* Owner email - shown when notify owner is enabled */}
+            {notifyOwner && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Send notifications to
+                </label>
+                <input
+                  type="email"
+                  value={ownerEmail}
+                  onChange={(e) => setOwnerEmail(e.target.value)}
+                  placeholder="your@email.com"
+                  className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Image generation option */}
       {hasImageCapableBlocks && (
@@ -403,7 +540,7 @@ export default function SynthesisPopup({
         </label>
       )}
 
-      {!willHaveForm && !hasImageCapableBlocks && (
+      {!willHaveForm && !hasImageCapableBlocks && !createWorkflow && (
         <p className="text-sm text-gray-500 italic">No additional resources needed for these blocks.</p>
       )}
     </div>

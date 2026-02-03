@@ -118,6 +118,7 @@ class SynthesizedWorkflowConfig(PydanticBaseModel):
     """Workflow configuration from synthesis engine."""
 
     name: str = Field(default="Lead Automation")
+    trigger_type: str = Field(default="trigger_form_submitted")
     send_welcome_email: bool = Field(default=True)
     notify_owner: bool = Field(default=True)
     owner_email: str | None = Field(default=None)
@@ -855,11 +856,13 @@ def create_complete_page(
                     add_tags=synth_wf.add_tags or ["lead", "website"],
                 )
                 workflow_name = synth_wf.name
-                logger.info("Using synthesized workflow config", workflow_name=workflow_name)
+                wf_trigger_type = synth_wf.trigger_type
+                logger.info("Using synthesized workflow config", workflow_name=workflow_name, trigger_type=wf_trigger_type)
             else:
                 # Legacy automation config
                 automation_config = request.automation
                 workflow_name = f"{business_name} Lead Automation"
+                wf_trigger_type = "trigger_form_submitted"
 
             workflow = _build_automation_workflow(
                 workspace_id=workspace_id,
@@ -867,6 +870,7 @@ def create_complete_page(
                 form_id=form.id,
                 business_name=business_name,
                 automation=automation_config,
+                trigger_type=wf_trigger_type,
             )
             workflow.name = workflow_name
             workflow = workflow_repo.create_workflow(workflow)
@@ -1093,11 +1097,13 @@ def _update_complete_page(
                     add_tags=synth_wf.add_tags or ["lead", "website"],
                 )
                 workflow_name = synth_wf.name
-                logger.info("Using synthesized workflow config for update", workflow_name=workflow_name)
+                wf_trigger_type = synth_wf.trigger_type
+                logger.info("Using synthesized workflow config for update", workflow_name=workflow_name, trigger_type=wf_trigger_type)
             else:
                 # Legacy automation config
                 automation_config = request.automation
                 workflow_name = f"{page.name} Lead Automation"
+                wf_trigger_type = "trigger_form_submitted"
 
             workflow = _build_automation_workflow(
                 workspace_id=workspace_id,
@@ -1105,6 +1111,7 @@ def _update_complete_page(
                 form_id=form_id,
                 business_name=business_info.get("business_name", page.name),
                 automation=automation_config,
+                trigger_type=wf_trigger_type,
             )
             workflow.name = workflow_name
             workflow = workflow_repo.create_workflow(workflow)
@@ -1308,27 +1315,48 @@ def _build_blocks_from_content(
     return blocks
 
 
+_TRIGGER_LABELS = {
+    "trigger_form_submitted": "Form Submitted",
+    "trigger_chat_message": "Chat Message",
+    "trigger_page_visit": "Page Visit",
+}
+
+
 def _build_automation_workflow(
     workspace_id: str,
     page_id: str,
     form_id: str,
     business_name: str,
     automation: AutomationConfig,
+    trigger_type: str = "trigger_form_submitted",
 ) -> Workflow:
-    """Build an automation workflow for form submissions."""
+    """Build an automation workflow for the specified trigger type."""
     nodes = []
     edges = []
     node_y = 100
+
+    # Build trigger config based on type
+    if trigger_type == "trigger_form_submitted":
+        trigger_config = {"form_id": form_id}
+    elif trigger_type == "trigger_chat_message":
+        trigger_config = {"page_id": page_id}
+    elif trigger_type == "trigger_page_visit":
+        trigger_config = {"page_id": page_id}
+    else:
+        trigger_config = {"form_id": form_id}
+        trigger_type = "trigger_form_submitted"
+
+    trigger_label = _TRIGGER_LABELS.get(trigger_type, "Form Submitted")
 
     # Trigger node
     trigger_id = str(uuid.uuid4())[:8]
     nodes.append(WorkflowNode(
         id=trigger_id,
-        node_type="trigger_form_submitted",
+        node_type=trigger_type,
         position={"x": 250, "y": node_y},
         data={
-            "label": "Form Submitted",
-            "config": {"form_id": form_id},
+            "label": trigger_label,
+            "config": trigger_config,
         },
     ))
     last_node_id = trigger_id
