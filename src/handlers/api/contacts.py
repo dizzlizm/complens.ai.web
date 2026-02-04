@@ -14,7 +14,7 @@ from complens.models.contact_note import ContactNote, CreateContactNoteRequest, 
 from complens.repositories.contact import ContactRepository
 from complens.repositories.contact_note import ContactNoteRepository
 from complens.utils.auth import get_auth_context, require_workspace_access
-from complens.utils.exceptions import NotFoundError, ValidationError
+from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
 
 logger = structlog.get_logger()
@@ -102,6 +102,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
     except ValidationError as e:
         return validation_error(e.errors)
+    except ForbiddenError as e:
+        return error(e.message, 403, error_code="FORBIDDEN")
     except NotFoundError as e:
         return not_found(e.resource_type, e.resource_id)
     except ValueError as e:
@@ -546,13 +548,19 @@ def import_contacts(
     skipped = 0
     errors_list: list[dict] = []
 
+    def _sanitize_csv_value(value: str) -> str:
+        """Prefix CSV fields that start with formula characters to prevent injection."""
+        if value and value[0] in ("=", "+", "-", "@"):
+            return f"'{value}"
+        return value
+
     for row_num, row in enumerate(reader, start=2):
         try:
             contact_data: dict[str, Any] = {}
             custom_fields: dict[str, Any] = {}
 
             for csv_col, contact_field in mapping.items():
-                value = row.get(csv_col, "").strip()
+                value = _sanitize_csv_value(row.get(csv_col, "").strip())
                 if not value:
                     continue
 

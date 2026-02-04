@@ -10,7 +10,7 @@ from complens.repositories.form import FormRepository
 from complens.repositories.page import PageRepository
 from complens.repositories.workflow import WorkflowRepository, WorkflowRunRepository
 from complens.utils.auth import get_auth_context, require_workspace_access
-from complens.utils.exceptions import NotFoundError, ValidationError
+from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import error, not_found, success, validation_error
 
 logger = structlog.get_logger()
@@ -37,6 +37,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         auth = get_auth_context(event)
         if workspace_id:
             require_workspace_access(auth, workspace_id)
+        else:
+            return error("workspace_id is required", 400)
 
         if http_method == "GET":
             return get_analytics(workspace_id, event)
@@ -45,6 +47,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
     except ValidationError as e:
         return validation_error(e.errors)
+    except ForbiddenError as e:
+        return error(e.message, 403, error_code="FORBIDDEN")
     except NotFoundError as e:
         return not_found(e.resource_type, e.resource_id)
     except Exception as e:
@@ -78,13 +82,15 @@ def get_analytics(workspace_id: str, event: dict) -> dict:
             sk_begins_with="CONTACT#",
             limit=1000,
         )
-    except Exception:
+    except Exception as e:
+        logger.error("Failed to query contacts for analytics", workspace_id=workspace_id, error=str(e))
         contacts = []
 
     # Get workflows
     try:
         workflows, _ = workflow_repo.list_by_workspace(workspace_id, limit=100)
-    except Exception:
+    except Exception as e:
+        logger.error("Failed to query workflows for analytics", workspace_id=workspace_id, error=str(e))
         workflows = []
 
     # Contact growth - bucket by day
@@ -127,8 +133,8 @@ def get_analytics(workspace_id: str, event: dict) -> dict:
                     "failed": wf_failed,
                     "success_rate": round(wf_success / wf_total * 100) if wf_total > 0 else 0,
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Failed to query runs for workflow", workflow_id=wf.id, error=str(e))
 
     # Sort performance by total runs descending
     workflow_performance.sort(key=lambda x: x["total"], reverse=True)
@@ -140,8 +146,8 @@ def get_analytics(workspace_id: str, event: dict) -> dict:
         try:
             runs = run_repo.list_by_workflow(wf.id, limit=200)
             all_runs.extend(runs)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Failed to query runs for time series", workflow_id=wf.id, error=str(e))
 
     workflow_runs_by_day = _bucket_runs_by_day(all_runs, days, start_date)
 

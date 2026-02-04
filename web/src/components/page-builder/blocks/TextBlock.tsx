@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import { TextConfig } from '../types';
 
 interface TextBlockProps {
@@ -37,7 +38,7 @@ export default function TextBlock({ config, isEditing, onConfigChange }: TextBlo
         ) : (
           <div
             className="text-gray-700 leading-relaxed prose prose-indigo max-w-none"
-            dangerouslySetInnerHTML={{ __html: content.replace(/\n/g, '<br />') }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content.replace(/\n/g, '<br />')) }}
           />
         )}
       </div>

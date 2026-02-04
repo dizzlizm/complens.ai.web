@@ -313,7 +313,7 @@ export default function PageBuilderCanvas({
 
       const newBlock: PageBlock = {
         ...blockToDuplicate,
-        id: Math.random().toString(36).substring(2, 10),
+        id: crypto.randomUUID().slice(0, 8),
         config: { ...blockToDuplicate.config },
       };
 

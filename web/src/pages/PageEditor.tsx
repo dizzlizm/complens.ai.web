@@ -372,7 +372,7 @@ export default function PageEditor() {
     successMessage: 'Thank you for your submission!',
   });
 
-  const createFormFieldId = () => Math.random().toString(36).slice(2, 10);
+  const createFormFieldId = () => crypto.randomUUID().slice(0, 8);
 
   const mapSynthesizedField = (field: Record<string, unknown>, index: number): FormField => {
     const allowedTypes: FormField['type'][] = [

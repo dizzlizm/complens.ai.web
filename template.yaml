@@ -927,7 +927,7 @@ Resources:
               Action:
                 - ses:SendEmail
                 - ses:SendRawEmail
-              Resource: "*"
+              Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
       Events:
         ListTeam:
           Type: Api
@@ -1200,7 +1200,10 @@ Resources:
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel
-              Resource: "*"
+              Resource:
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-image-generator-v2:0"
         - Statement:
             - Effect: Allow
               Action:
@@ -1395,7 +1398,10 @@ Resources:
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel
-              Resource: "*"
+              Resource:
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-image-generator-v2:0"
       Events:
         # Business Profile
         GetProfile:
@@ -1494,16 +1500,19 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - acm:RequestCertificate
                 - acm:DescribeCertificate
                 - acm:DeleteCertificate
                 - acm:AddTagsToCertificate
+              Resource: !Sub "arn:aws:acm:${AWS::Region}:${AWS::AccountId}:certificate/*"
+            - Effect: Allow
+              Action:
+                - acm:RequestCertificate
               Resource: "*"
             - Effect: Allow
               Action:
                 - cloudfront:GetDistribution
                 - cloudfront:UpdateDistribution
-              Resource: "*"
+              Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
             - Effect: Allow
               Action:
                 - states:StartExecution
@@ -1554,14 +1563,17 @@ Resources:
             - Effect: Allow
               Action:
                 - acm:DescribeCertificate
-              Resource: "*"
+              Resource: !Sub "arn:aws:acm:${AWS::Region}:${AWS::AccountId}:certificate/*"
             - Effect: Allow
               Action:
-                - cloudfront:CreateDistribution
                 - cloudfront:GetDistribution
                 - cloudfront:UpdateDistribution
                 - cloudfront:DeleteDistribution
                 - cloudfront:TagResource
+              Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
+            - Effect: Allow
+              Action:
+                - cloudfront:CreateDistribution
               Resource: "*"
 
   DomainProvisioningStateMachine:
@@ -1718,7 +1730,7 @@ Resources:
       Handler: message.handler
       CodeUri: src/handlers/websocket/
       Description: WebSocket message handler
-      Timeout: 30
+      Timeout: 60
       Environment:
         Variables:
           TABLE_NAME: !Ref MainTable
@@ -1741,12 +1753,14 @@ Resources:
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel
-              Resource: "*"
+              Resource:
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-3-sonnet-20240229-v1:0"
         - Statement:
             - Effect: Allow
               Action:
                 - events:PutEvents
-              Resource: "*"
+              Resource: !GetAtt WorkflowEventBus.Arn
 
   WebSocketMessagePermission:
     Type: AWS::Lambda::Permission
@@ -1778,7 +1792,10 @@ Resources:
               Action:
                 - bedrock:InvokeModel
                 - bedrock:InvokeModelWithResponseStream
-              Resource: "*"
+              Resource:
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-image-generator-v2:0"
         - Statement:
             - Effect: Allow
               Action:
@@ -1882,7 +1899,9 @@ Resources:
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel
-              Resource: "*"
+              Resource:
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-haiku-4-5-20251001-v1:0"
         - Statement:
             - Effect: Allow
               Action:
@@ -1909,7 +1928,7 @@ Resources:
                 - ses:SendEmail
                 - ses:SendRawEmail
                 - ses:SendTemplatedEmail
-              Resource: "*"
+              Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
 
   # Sharded Queue Processor - processes events from sharded standard queues
   ShardedQueueProcessorFunction:
@@ -2004,7 +2023,7 @@ Resources:
             - Effect: Allow
               Action:
                 - ses:SendEmail
-              Resource: "*"
+              Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
       Events:
         FifoDLQ:
           Type: SQS
@@ -2044,6 +2063,7 @@ Resources:
                   - states:StartExecution
                 Resource:
                   - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor"
+                  - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor-express"
       Tags:
         - Key: Service
           Value: complens
