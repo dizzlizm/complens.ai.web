@@ -1,13 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle, ExternalLink, BookOpen } from 'lucide-react';
+import { Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle, ExternalLink } from 'lucide-react';
 import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe } from '../lib/hooks';
 import { useBillingStatus, useCreateCheckout, useCreatePortal } from '../lib/hooks/useBilling';
 import TwilioConfigCard from '../components/settings/TwilioConfigCard';
 import SegmentConfigCard from '../components/settings/SegmentConfigCard';
 import TeamManagement from '../components/settings/TeamManagement';
 import PricingTable from '../components/settings/PricingTable';
-import KnowledgeBaseSettings from '../components/settings/KnowledgeBaseSettings';
-
 const settingsSections = [
   {
     id: 'workspace',
@@ -44,12 +42,6 @@ const settingsSections = [
     name: 'Security',
     icon: Shield,
     description: 'Configure security settings and access',
-  },
-  {
-    id: 'knowledge-base',
-    name: 'Knowledge Base',
-    icon: BookOpen,
-    description: 'Manage documents for AI context',
   },
   {
     id: 'domains',
@@ -101,7 +93,6 @@ export default function Settings() {
           {activeSection === 'notifications' && <NotificationSettings />}
           {activeSection === 'integrations' && <IntegrationSettings />}
           {activeSection === 'billing' && <BillingSettings />}
-          {activeSection === 'knowledge-base' && <KnowledgeBaseSettingsPage />}
           {activeSection === 'security' && <SecuritySettings />}
           {activeSection === 'domains' && <DomainSettings />}
         </div>
@@ -631,11 +622,6 @@ function BillingSettings() {
       </div>
     </div>
   );
-}
-
-function KnowledgeBaseSettingsPage() {
-  const { workspaceId } = useCurrentWorkspace();
-  return <KnowledgeBaseSettings workspaceId={workspaceId || ''} />;
 }
 
 function SecuritySettings() {

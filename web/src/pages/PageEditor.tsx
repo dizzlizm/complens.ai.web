@@ -22,13 +22,14 @@ import {
 import { useToast } from '../components/Toast';
 import FormBuilder from '../components/FormBuilder';
 import { PageBlock, AgenticPageBuilder, ContentTabV2 } from '../components/page-builder';
-import { Plus, Trash2, GitBranch, ExternalLink, Sparkles, Loader2 } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ExternalLink, Sparkles, Loader2, BookOpen } from 'lucide-react';
+import KnowledgeBaseSettings from '../components/settings/KnowledgeBaseSettings';
 
 // Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.dev.complens.ai';
 const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '');
 
-type Tab = 'content' | 'forms' | 'workflows' | 'chat' | 'domain' | 'profile';
+type Tab = 'content' | 'forms' | 'workflows' | 'chat' | 'knowledge-base' | 'domain' | 'profile';
 
 export default function PageEditor() {
   const { id: pageId } = useParams<{ id: string }>();
@@ -535,6 +536,7 @@ export default function PageEditor() {
     { id: 'forms', label: `Forms${pageForms?.length ? ` (${pageForms.length})` : ''}` },
     { id: 'workflows', label: `Workflows${pageWorkflows?.length ? ` (${pageWorkflows.length})` : ''}` },
     { id: 'chat', label: 'Chat' },
+    { id: 'knowledge-base', label: 'Knowledge Base' },
     { id: 'domain', label: 'Domain' },
   ];
 
@@ -1229,6 +1231,21 @@ export default function PageEditor() {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {activeTab === 'knowledge-base' && (
+          <div className="space-y-6">
+            <div>
+              <h3 className="font-medium text-gray-900 flex items-center gap-2">
+                <BookOpen className="w-5 h-5" />
+                Knowledge Base
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Upload documents to give this page's AI chat widget relevant context about your business.
+              </p>
+            </div>
+            <KnowledgeBaseSettings workspaceId={workspaceId || ''} />
           </div>
         )}
 
