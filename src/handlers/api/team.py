@@ -12,6 +12,8 @@ from pydantic import BaseModel as PydanticBaseModel, Field
 from complens.models.invitation import Invitation
 from complens.models.team_member import MemberStatus, TeamMember, TeamRole
 from complens.repositories.team import InvitationRepository, TeamRepository
+from complens.repositories.workspace import WorkspaceRepository
+from complens.services.feature_gate import FeatureGateError, enforce_limit, get_workspace_plan, count_resources
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
@@ -79,6 +81,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         else:
             return error("Method not allowed", 405)
 
+    except FeatureGateError as e:
+        return error(str(e), 403, error_code="PLAN_LIMIT_REACHED")
     except ValidationError as e:
         return validation_error(e.errors)
     except ForbiddenError as e:
@@ -122,6 +126,11 @@ def invite_member(
         return error("Invalid JSON body", 400)
     except Exception as e:
         return validation_error([{"field": "body", "message": str(e)}])
+
+    # Enforce plan limit for team members
+    plan = get_workspace_plan(workspace_id)
+    member_count = count_resources(team_repo.table, workspace_id, "MEMBER#")
+    enforce_limit(plan, "team_members", member_count)
 
     # Validate role
     if request.role not in ("admin", "member"):

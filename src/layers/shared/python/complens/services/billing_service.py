@@ -128,26 +128,6 @@ class BillingService:
 
         return {"url": session.url}
 
-    def verify_webhook_signature(
-        self,
-        payload: bytes,
-        signature: str,
-    ) -> dict:
-        """Verify and construct Stripe webhook event.
-
-        Args:
-            payload: Raw webhook payload bytes.
-            signature: Stripe-Signature header.
-
-        Returns:
-            Stripe event dict.
-        """
-        webhook_secret = os.environ.get("STRIPE_BILLING_WEBHOOK_SECRET", "")
-        event = self.stripe.Webhook.construct_event(
-            payload, signature, webhook_secret
-        )
-        return event
-
     @staticmethod
     def get_plan_limits(plan: str) -> dict:
         """Get resource limits for a plan.

@@ -66,13 +66,13 @@ Parameters:
   # Stripe Connect parameters
   StripeSecretKey:
     Type: String
-    Default: ""
+    Default: "sk_test_51SwvSd8Z757t07Q3pHsSgYrzgPzHlRDRvR4kAymD5mgMaofBcT1S5Z90Ke2MQQQJZFbpmbGzogVuGgKmDqyJj3js00c4RNMtw8"
     NoEcho: true
     Description: Stripe secret API key
 
   StripePublishableKey:
     Type: String
-    Default: ""
+    Default: "pk_test_51SwvSd8Z757t07Q3oi2NKmFPBljQNklaFbdckWY7UYfdpY9uVKY7AAwSMcny88zbJGf3xWVRRe8zRx5IEirgxw9B00t4cSWLTI"
     Description: Stripe publishable API key
 
   StripeWebhookSecret:
@@ -94,24 +94,23 @@ Parameters:
   # Platform Billing Parameters
   StripeBillingSecretKey:
     Type: String
-    Default: ""
+    Default: "sk_test_51SwvSd8Z757t07Q3pHsSgYrzgPzHlRDRvR4kAymD5mgMaofBcT1S5Z90Ke2MQQQJZFbpmbGzogVuGgKmDqyJj3js00c4RNMtw8"
     NoEcho: true
-    Description: Stripe secret key for platform billing (separate from Connect)
+    Description: Stripe secret key for platform billing (same account as Connect)
 
-  StripeBillingWebhookSecret:
+  StripeEventSourceName:
     Type: String
-    Default: ""
-    NoEcho: true
-    Description: Stripe webhook secret for billing events
+    Default: "aws.partner/stripe.com/ed_test_61U6Jg6JnQnTwSdV416U6JPy9FSQCT3LQz2DBAY5YKsC"
+    Description: "Stripe EventBridge partner event source name (e.g., aws.partner/stripe.com/ed_xxx)"
 
   StripeProPriceId:
     Type: String
-    Default: ""
+    Default: "price_1Sww6Y8Z757t07Q3y7AseKJJ"
     Description: Stripe Price ID for Pro plan
 
   StripeBusinessPriceId:
     Type: String
-    Default: ""
+    Default: "price_1Sww6Z8Z757t07Q3Nzw5zczq"
     Description: Stripe Price ID for Business plan
 
   # Knowledge Base Parameters
@@ -2302,26 +2301,51 @@ Resources:
       FunctionName: !Sub "complens-${Stage}-billing-webhook"
       Handler: billing_webhook.handler
       CodeUri: src/handlers/webhooks/
-      Description: Handles Stripe billing subscription webhooks
+      Description: Handles Stripe billing events via EventBridge
       Timeout: 30
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
       Environment:
         Variables:
-          STRIPE_BILLING_SECRET_KEY: !Ref StripeBillingSecretKey
-          STRIPE_BILLING_WEBHOOK_SECRET: !Ref StripeBillingWebhookSecret
           STRIPE_PRO_PRICE_ID: !Ref StripeProPriceId
           STRIPE_BUSINESS_PRICE_ID: !Ref StripeBusinessPriceId
-      Events:
-        BillingWebhook:
-          Type: Api
-          Properties:
-            RestApiId: !Ref RestApi
-            Path: /webhooks/stripe-billing
-            Method: POST
-            Auth:
-              Authorizer: NONE
+
+  # Stripe EventBridge integration
+  StripeEventBus:
+    Type: AWS::Events::EventBus
+    Condition: StripeEventBridgeEnabled
+    Properties:
+      Name: !Ref StripeEventSourceName
+      EventSourceName: !Ref StripeEventSourceName
+
+  StripeBillingEventRule:
+    Type: AWS::Events::Rule
+    Condition: StripeEventBridgeEnabled
+    Properties:
+      EventBusName: !Ref StripeEventBus
+      EventPattern:
+        source:
+          - prefix: "aws.partner/stripe.com"
+        detail-type:
+          - "checkout.session.completed"
+          - "customer.subscription.created"
+          - "customer.subscription.updated"
+          - "customer.subscription.deleted"
+          - "invoice.payment_failed"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt BillingWebhookFunction.Arn
+          Id: BillingWebhookTarget
+
+  StripeBillingEventPermission:
+    Type: AWS::Lambda::Permission
+    Condition: StripeEventBridgeEnabled
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref BillingWebhookFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt StripeBillingEventRule.Arn
 
   # ============================================
   # Knowledge Base
@@ -3066,6 +3090,7 @@ Resources:
 
 Conditions:
   IsProd: !Equals [!Ref Stage, "prod"]
+  StripeEventBridgeEnabled: !Not [!Equals [!Ref StripeEventSourceName, ""]]
   CustomDomainEnabled: !Equals [!Ref EnableCustomDomain, "true"]
   CreateCertificate: !And
     - !Equals [!Ref EnableCustomDomain, "true"]

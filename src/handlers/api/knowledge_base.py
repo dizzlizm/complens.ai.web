@@ -9,6 +9,8 @@ from pydantic import ValidationError as PydanticValidationError
 from complens.models.document import CreateDocumentRequest, Document, DocumentStatus
 from complens.repositories.document import DocumentRepository
 from complens.services.knowledge_base_service import get_knowledge_base_service
+from complens.repositories.workspace import WorkspaceRepository
+from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
@@ -53,6 +55,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         else:
             return error("Method not allowed", 405)
 
+    except FeatureGateError as e:
+        return error(str(e), 403, error_code="PLAN_LIMIT_REACHED")
     except PydanticValidationError as e:
         return validation_error(e.errors())
     except ValidationError as e:
@@ -103,6 +107,10 @@ def create_document(
     Returns:
         API response with document and upload URL.
     """
+    # Enforce knowledge_base feature gate
+    plan = get_workspace_plan(workspace_id)
+    require_feature(plan, "knowledge_base")
+
     body = json.loads(event.get("body", "{}"))
     request = CreateDocumentRequest.model_validate(body)
 

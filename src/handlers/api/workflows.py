@@ -21,6 +21,8 @@ from complens.models.workflow_node import WorkflowNode
 from complens.repositories.contact import ContactRepository
 from complens.repositories.workflow import WorkflowRepository, WorkflowRunRepository
 from complens.services.workflow_engine import WorkflowEngine
+from complens.repositories.workspace import WorkspaceRepository
+from complens.services.feature_gate import FeatureGateError, enforce_limit, get_workspace_plan, count_resources
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
@@ -75,6 +77,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         else:
             return error("Method not allowed", 405)
 
+    except FeatureGateError as e:
+        return error(str(e), 403, error_code="PLAN_LIMIT_REACHED")
     except ValidationError as e:
         return validation_error(e.errors)
     except NotFoundError as e:
@@ -147,6 +151,11 @@ def create_workflow(
     event: dict,
 ) -> dict:
     """Create a new workflow."""
+    # Enforce plan limit for workflows
+    plan = get_workspace_plan(workspace_id)
+    wf_count = count_resources(repo.table, workspace_id, "WF#")
+    enforce_limit(plan, "workflows", wf_count)
+
     try:
         body = json.loads(event.get("body", "{}"))
         logger.info("Create workflow request", workspace_id=workspace_id, body=body)

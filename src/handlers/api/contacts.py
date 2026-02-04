@@ -13,6 +13,8 @@ from complens.models.contact import Contact, CreateContactRequest, UpdateContact
 from complens.models.contact_note import ContactNote, CreateContactNoteRequest, UpdateContactNoteRequest
 from complens.repositories.contact import ContactRepository
 from complens.repositories.contact_note import ContactNoteRepository
+from complens.repositories.workspace import WorkspaceRepository
+from complens.services.feature_gate import FeatureGateError, enforce_limit, get_workspace_plan, count_resources
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
@@ -100,6 +102,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         else:
             return error("Method not allowed", 405)
 
+    except FeatureGateError as e:
+        return error(str(e), 403, error_code="PLAN_LIMIT_REACHED")
     except ValidationError as e:
         return validation_error(e.errors)
     except ForbiddenError as e:
@@ -178,6 +182,11 @@ def create_contact(
     event: dict,
 ) -> dict:
     """Create a new contact."""
+    # Enforce plan limit for contacts
+    plan = get_workspace_plan(workspace_id)
+    contact_count = count_resources(repo.table, workspace_id, "CONTACT#")
+    enforce_limit(plan, "contacts", contact_count)
+
     try:
         body = json.loads(event.get("body", "{}"))
         request = CreateContactRequest.model_validate(body)
@@ -541,6 +550,11 @@ def import_contacts(
 
     if not mapping:
         return error("mapping is required", 400)
+
+    # Enforce plan limit for contacts before import
+    plan = get_workspace_plan(workspace_id)
+    contact_count = count_resources(repo.table, workspace_id, "CONTACT#")
+    enforce_limit(plan, "contacts", contact_count)
 
     reader = csv.DictReader(io.StringIO(csv_data))
 

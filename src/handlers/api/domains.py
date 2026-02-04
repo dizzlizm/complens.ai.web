@@ -16,6 +16,8 @@ from complens.models.domain import (
 )
 from complens.repositories.domain import DomainRepository
 from complens.repositories.page import PageRepository
+from complens.repositories.workspace import WorkspaceRepository
+from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError
 from complens.utils.responses import (
@@ -67,6 +69,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         else:
             return error("Method not allowed", 405)
 
+    except FeatureGateError as e:
+        return error(str(e), 403, error_code="PLAN_LIMIT_REACHED")
     except ForbiddenError as e:
         return forbidden(str(e))
     except ValueError as e:
@@ -145,6 +149,10 @@ def create_domain(workspace_id: str, event: dict) -> dict:
         ])
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
+
+    # Enforce custom_domain feature gate
+    plan = get_workspace_plan(workspace_id)
+    require_feature(plan, "custom_domain")
 
     domain_repo = DomainRepository()
     page_repo = PageRepository()

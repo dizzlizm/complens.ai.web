@@ -1,43 +1,28 @@
-"""Billing webhook handler for Stripe subscription lifecycle events."""
+"""Billing webhook handler for Stripe subscription lifecycle events via EventBridge."""
 
-import json
+import os
 from typing import Any
 
 import structlog
 
 from complens.repositories.workspace import WorkspaceRepository
-from complens.services.billing_service import get_billing_service
 
 logger = structlog.get_logger()
 
 
 def handler(event: dict[str, Any], context: Any) -> dict:
-    """Handle Stripe billing webhook events.
+    """Handle Stripe billing events from EventBridge.
 
-    Routes:
-        POST /webhooks/stripe-billing
+    EventBridge delivers Stripe events with this structure:
+        detail-type: "checkout.session.completed"
+        detail: { id, type, data: { object: { ... } } }
     """
     try:
-        body = event.get("body", "")
-        sig_header = (event.get("headers", {}) or {}).get("Stripe-Signature", "")
+        event_type = event.get("detail-type", "")
+        detail = event.get("detail", {})
+        event_data = detail.get("data", {}).get("object", {})
 
-        if not sig_header:
-            logger.warning("Missing Stripe-Signature header")
-            return {"statusCode": 400, "body": json.dumps({"error": "Missing signature"})}
-
-        billing = get_billing_service()
-        raw_body = body.encode("utf-8") if isinstance(body, str) else body
-
-        try:
-            stripe_event = billing.verify_webhook_signature(raw_body, sig_header)
-        except Exception as e:
-            logger.warning("Webhook signature verification failed", error=str(e))
-            return {"statusCode": 400, "body": json.dumps({"error": "Invalid signature"})}
-
-        event_type = stripe_event.get("type", "")
-        event_data = stripe_event.get("data", {}).get("object", {})
-
-        logger.info("Billing webhook received", event_type=event_type)
+        logger.info("Billing event received", event_type=event_type, source=event.get("source"))
 
         if event_type == "checkout.session.completed":
             _handle_checkout_completed(event_data)
@@ -53,13 +38,13 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             logger.debug("Unhandled billing event type", event_type=event_type)
 
     except Exception as e:
-        logger.exception("Error processing billing webhook", error=str(e))
+        logger.exception("Error processing billing event", error=str(e))
 
-    return {"statusCode": 200, "body": json.dumps({"received": True})}
+    return {"statusCode": 200}
 
 
 def _handle_checkout_completed(event_data: dict) -> None:
-    """Handle checkout session completed - link customer to workspace.
+    """Handle checkout session completed — link customer to workspace.
 
     Args:
         event_data: Stripe checkout session object.
@@ -78,11 +63,9 @@ def _handle_checkout_completed(event_data: dict) -> None:
         logger.error("Workspace not found for checkout", workspace_id=workspace_id)
         return
 
-    # Update workspace with Stripe customer and subscription info
-    workspace.metadata = workspace.metadata or {}
-    workspace.metadata["stripe_customer_id"] = customer_id
-    workspace.metadata["stripe_subscription_id"] = subscription_id
-    workspace.metadata["subscription_status"] = "active"
+    workspace.stripe_customer_id = customer_id
+    workspace.stripe_subscription_id = subscription_id
+    workspace.subscription_status = "active"
 
     ws_repo.update(workspace, check_version=False)
 
@@ -117,14 +100,19 @@ def _handle_subscription_change(event_data: dict) -> None:
     if not workspace:
         return
 
-    # Map price ID to plan name via metadata or env vars
     plan = _resolve_plan_name(plan_id)
 
-    workspace.metadata = workspace.metadata or {}
-    workspace.metadata["subscription_status"] = status
-    workspace.metadata["stripe_subscription_id"] = event_data.get("id")
+    workspace.subscription_status = status
+    workspace.stripe_subscription_id = event_data.get("id")
     if plan:
-        workspace.metadata["plan"] = plan
+        workspace.plan = plan
+
+    # Extract period end for billing display
+    period_end = event_data.get("current_period_end")
+    if period_end:
+        from datetime import datetime, timezone
+
+        workspace.plan_period_end = datetime.fromtimestamp(period_end, tz=timezone.utc)
 
     ws_repo.update(workspace, check_version=False)
 
@@ -137,7 +125,7 @@ def _handle_subscription_change(event_data: dict) -> None:
 
 
 def _handle_subscription_deleted(event_data: dict) -> None:
-    """Handle subscription deleted - revert to free plan.
+    """Handle subscription deleted — revert to free plan.
 
     Args:
         event_data: Stripe subscription object.
@@ -151,9 +139,8 @@ def _handle_subscription_deleted(event_data: dict) -> None:
     if not workspace:
         return
 
-    workspace.metadata = workspace.metadata or {}
-    workspace.metadata["plan"] = "free"
-    workspace.metadata["subscription_status"] = "canceled"
+    workspace.plan = "free"
+    workspace.subscription_status = "canceled"
 
     ws_repo.update(workspace, check_version=False)
 
@@ -161,7 +148,7 @@ def _handle_subscription_deleted(event_data: dict) -> None:
 
 
 def _handle_payment_failed(event_data: dict) -> None:
-    """Handle invoice payment failed.
+    """Handle invoice payment failed — mark workspace as past_due.
 
     Args:
         event_data: Stripe invoice object.
@@ -169,10 +156,22 @@ def _handle_payment_failed(event_data: dict) -> None:
     subscription_id = event_data.get("subscription")
     customer_id = event_data.get("customer")
 
+    # Try to find workspace by subscription metadata
+    subscription_data = event_data.get("subscription_details", {}) or {}
+    workspace_id = (subscription_data.get("metadata") or {}).get("workspace_id")
+
+    if workspace_id:
+        ws_repo = WorkspaceRepository()
+        workspace = ws_repo.get_by_id(workspace_id)
+        if workspace:
+            workspace.subscription_status = "past_due"
+            ws_repo.update(workspace, check_version=False)
+
     logger.warning(
         "Billing payment failed",
         subscription_id=subscription_id,
         customer_id=customer_id,
+        workspace_id=workspace_id,
     )
 
 
@@ -185,8 +184,6 @@ def _resolve_plan_name(price_id: str | None) -> str | None:
     Returns:
         Plan name or None.
     """
-    import os
-
     if not price_id:
         return None
 

@@ -50,6 +50,28 @@ def check_limit(
     return current_count < limit
 
 
+def enforce_limit(plan: str, resource: str, current_count: int) -> None:
+    """Enforce a resource limit, raising FeatureGateError if exceeded.
+
+    Args:
+        plan: Workspace plan (free, pro, business).
+        resource: Resource name (contacts, pages, workflows, etc.).
+        current_count: Current count of the resource.
+
+    Raises:
+        FeatureGateError: If limit is reached.
+    """
+    if check_limit(plan, resource, current_count):
+        return
+
+    # Find minimum upgrade plan that would allow this
+    for upgrade_plan in ("pro", "business"):
+        upgrade_limit = PLAN_LIMITS.get(upgrade_plan, {}).get(resource, 0)
+        if upgrade_limit == -1 or current_count < upgrade_limit:
+            raise FeatureGateError(resource, plan, upgrade_plan)
+    raise FeatureGateError(resource, plan, "business")
+
+
 def require_feature(plan: str, feature: str) -> None:
     """Require a boolean feature to be enabled on the plan.
 
@@ -64,6 +86,43 @@ def require_feature(plan: str, feature: str) -> None:
     if not limits.get(feature, False):
         required = "pro" if PLAN_LIMITS["pro"].get(feature) else "business"
         raise FeatureGateError(feature, plan, required)
+
+
+def get_workspace_plan(workspace_id: str) -> str:
+    """Get the plan for a workspace.
+
+    Args:
+        workspace_id: Workspace ID.
+
+    Returns:
+        Plan name (free, pro, business).
+    """
+    from complens.repositories.workspace import WorkspaceRepository
+
+    ws = WorkspaceRepository().get_by_id(workspace_id)
+    return ws.plan if ws else "free"
+
+
+def count_resources(table, workspace_id: str, sk_prefix: str) -> int:
+    """Count resources in a workspace using efficient DynamoDB Select='COUNT'.
+
+    Args:
+        table: DynamoDB table resource.
+        workspace_id: Workspace ID.
+        sk_prefix: Sort key prefix (e.g., 'PAGE#', 'WF#', 'CONTACT#').
+
+    Returns:
+        Count of matching items.
+    """
+    response = table.query(
+        KeyConditionExpression="PK = :pk AND begins_with(SK, :sk)",
+        ExpressionAttributeValues={
+            ":pk": f"WS#{workspace_id}",
+            ":sk": sk_prefix,
+        },
+        Select="COUNT",
+    )
+    return response["Count"]
 
 
 def get_usage_summary(plan: str, counts: dict[str, int]) -> dict:

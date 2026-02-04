@@ -63,6 +63,8 @@ from complens.repositories.form import FormRepository
 from complens.repositories.page import PageRepository
 from complens.repositories.workflow import WorkflowRepository
 from complens.services.cdn_service import invalidate_page_cache
+from complens.repositories.workspace import WorkspaceRepository
+from complens.services.feature_gate import FeatureGateError, enforce_limit, get_workspace_plan, count_resources
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
@@ -263,6 +265,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         return validation_error(e.errors)
     except NotFoundError as e:
         return not_found(e.resource_type, e.resource_id)
+    except FeatureGateError as e:
+        return error(str(e), 403, error_code="PLAN_LIMIT_REACHED")
     except ForbiddenError as e:
         return error(e.message, 403, error_code="FORBIDDEN")
     except ValueError as e:
@@ -332,6 +336,11 @@ def create_page(
     except json.JSONDecodeError as e:
         logger.warning("Invalid JSON body", error=str(e))
         return error("Invalid JSON body", 400)
+
+    # Enforce plan limit for pages
+    plan = get_workspace_plan(workspace_id)
+    page_count = count_resources(repo.table, workspace_id, "PAGE#")
+    enforce_limit(plan, "pages", page_count)
 
     # Check if slug already exists
     if repo.slug_exists(workspace_id, request.slug):
@@ -634,7 +643,12 @@ def create_complete_page(
     if request.page_id:
         return _update_complete_page(repo, workspace_id, request)
 
-    # CREATE MODE: Validate required fields for create
+    # CREATE MODE: Enforce plan limit for pages
+    plan = get_workspace_plan(workspace_id)
+    page_count = count_resources(repo.table, workspace_id, "PAGE#")
+    enforce_limit(plan, "pages", page_count)
+
+    # Validate required fields for create
     if not request.name or not request.slug:
         return error("name and slug are required when creating a new page", 400)
 
@@ -1974,6 +1988,11 @@ def create_page_workflow(
     event: dict,
 ) -> dict:
     """Create a new workflow for a page."""
+    # Enforce plan limit for workflows
+    plan = get_workspace_plan(workspace_id)
+    wf_count = count_resources(repo.table, workspace_id, "WF#")
+    enforce_limit(plan, "workflows", wf_count)
+
     try:
         body = json.loads(event.get("body", "{}"))
         logger.info("Create page workflow request", workspace_id=workspace_id, page_id=page_id, body=body)
