@@ -13,7 +13,7 @@ from complens.models.invitation import Invitation
 from complens.models.team_member import MemberStatus, TeamMember, TeamRole
 from complens.repositories.team import InvitationRepository, TeamRepository
 from complens.utils.auth import get_auth_context, require_workspace_access
-from complens.utils.exceptions import NotFoundError, ValidationError
+from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
 
 logger = structlog.get_logger()
@@ -81,6 +81,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
     except ValidationError as e:
         return validation_error(e.errors)
+    except ForbiddenError as e:
+        return error(e.message, 403, error_code="FORBIDDEN")
     except NotFoundError as e:
         return not_found(e.resource_type, e.resource_id)
     except ValueError as e:

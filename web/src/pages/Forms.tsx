@@ -25,7 +25,7 @@ export default function Forms() {
     setAiDescription('');
   };
 
-  const createId = () => Math.random().toString(36).slice(2, 10);
+  const createId = () => crypto.randomUUID().slice(0, 8);
 
   const mapSynthesizedField = (field: Record<string, unknown>, index: number): FormField => {
     const allowedTypes: FormField['type'][] = [

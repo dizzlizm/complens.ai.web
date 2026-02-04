@@ -770,151 +770,181 @@ def create_complete_page(
         "workflow": None,
     }
 
-    # Create form if requested
-    if request.include_form:
-        form_repo = FormRepository()
+    # Create form and workflow with rollback on failure
+    form_repo = FormRepository()
+    created_form = None
+    created_workflow = None
 
-        # Use synthesized form config if provided, otherwise use defaults
-        if request.synthesized_form_config:
-            synth_form = request.synthesized_form_config
-            # Convert synthesized field dicts to FormField objects
-            form_fields = []
-            for field_dict in synth_form.fields:
-                field_type_str = field_dict.get("type", "text").upper()
-                try:
-                    field_type = FormFieldType[field_type_str]
-                except KeyError:
-                    field_type = FormFieldType.TEXT
-                form_fields.append(
-                    FormField(
-                        id=str(uuid.uuid4())[:8],
-                        name=field_dict.get("name", "field"),
-                        label=field_dict.get("label", "Field"),
-                        type=field_type,
-                        required=field_dict.get("required", False),
-                        placeholder=field_dict.get("placeholder", ""),
-                        map_to_contact_field=field_dict.get("map_to_contact_field"),
+    try:
+        # Create form if requested
+        if request.include_form:
+            # Use synthesized form config if provided, otherwise use defaults
+            if request.synthesized_form_config:
+                synth_form = request.synthesized_form_config
+                # Convert synthesized field dicts to FormField objects
+                form_fields = []
+                for field_dict in synth_form.fields:
+                    field_type_str = field_dict.get("type", "text").upper()
+                    try:
+                        field_type = FormFieldType[field_type_str]
+                    except KeyError:
+                        field_type = FormFieldType.TEXT
+                    form_fields.append(
+                        FormField(
+                            id=str(uuid.uuid4())[:8],
+                            name=field_dict.get("name", "field"),
+                            label=field_dict.get("label", "Field"),
+                            type=field_type,
+                            required=field_dict.get("required", False),
+                            placeholder=field_dict.get("placeholder", ""),
+                            map_to_contact_field=field_dict.get("map_to_contact_field"),
+                        )
                     )
+                form = Form(
+                    workspace_id=workspace_id,
+                    page_id=page.id,
+                    name=synth_form.name or f"Contact - {business_name}",
+                    description=f"Lead capture form for {business_name}",
+                    fields=form_fields,
+                    submit_button_text=synth_form.submit_button_text,
+                    success_message=synth_form.success_message,
+                    add_tags=synth_form.add_tags,
+                    trigger_workflow=True,
                 )
-            form = Form(
-                workspace_id=workspace_id,
-                page_id=page.id,
-                name=synth_form.name or f"Contact - {business_name}",
-                description=f"Lead capture form for {business_name}",
-                fields=form_fields,
-                submit_button_text=synth_form.submit_button_text,
-                success_message=synth_form.success_message,
-                add_tags=synth_form.add_tags,
-                trigger_workflow=True,
-            )
-            logger.info("Using synthesized form config", field_count=len(form_fields))
-        else:
-            # Legacy hardcoded form
-            cta_text = content.get("cta_text", "Get Started")
-            form = Form(
-                workspace_id=workspace_id,
-                page_id=page.id,
-                name=f"Contact - {request.name}",
-                description=f"Lead capture form for {request.name}",
-                fields=[
-                    FormField(
-                        id=str(uuid.uuid4())[:8],
-                        name="email",
-                        label="Email",
-                        type=FormFieldType.EMAIL,
-                        required=True,
-                        placeholder="your@email.com",
-                        map_to_contact_field="email",
-                    ),
-                    FormField(
-                        id=str(uuid.uuid4())[:8],
-                        name="first_name",
-                        label="Name",
-                        type=FormFieldType.TEXT,
-                        required=True,
-                        placeholder="Your name",
-                        map_to_contact_field="first_name",
-                    ),
-                    FormField(
-                        id=str(uuid.uuid4())[:8],
-                        name="phone",
-                        label="Phone",
-                        type=FormFieldType.PHONE,
-                        required=False,
-                        placeholder="(555) 123-4567",
-                        map_to_contact_field="phone",
-                    ),
-                    FormField(
-                        id=str(uuid.uuid4())[:8],
-                        name="message",
-                        label="Message",
-                        type=FormFieldType.TEXTAREA,
-                        required=False,
-                        placeholder="How can we help?",
-                    ),
-                ],
-                submit_button_text=cta_text,
-                success_message="Thanks! We'll be in touch shortly.",
-                add_tags=request.automation.add_tags or ["lead", "website"],
-                trigger_workflow=True,
-            )
-
-        form = form_repo.create_form(form)
-        result["form"] = form.model_dump(mode="json")
-        logger.info("Form created for complete package", form_id=form.id, page_id=page.id)
-
-        # Update page with form reference AND update form block with actual form ID
-        page.form_ids = [form.id]
-        for block in page.blocks:
-            if block.type == "form" and not block.config.get("formId"):
-                block.config["formId"] = form.id
-                break
-        repo.update_page(page)
-
-        # Update result with the updated page data
-        result["page"] = page.model_dump(mode="json")
-
-        # Create automation workflow
-        # Use synthesized_workflow_config if provided, otherwise fall back to request.automation
-        synth_wf = request.synthesized_workflow_config
-        should_create_workflow = (
-            (synth_wf and (synth_wf.send_welcome_email or synth_wf.notify_owner))
-            or (not synth_wf and (request.automation.send_welcome_email or request.automation.notify_owner))
-        )
-
-        if should_create_workflow:
-            workflow_repo = WorkflowRepository()
-
-            if synth_wf:
-                # Use synthesis-generated workflow config
-                automation_config = AutomationConfig(
-                    send_welcome_email=synth_wf.send_welcome_email,
-                    notify_owner=synth_wf.notify_owner,
-                    owner_email=synth_wf.owner_email,
-                    welcome_message=synth_wf.welcome_message,
-                    add_tags=synth_wf.add_tags or ["lead", "website"],
-                )
-                workflow_name = synth_wf.name
-                wf_trigger_type = synth_wf.trigger_type
-                logger.info("Using synthesized workflow config", workflow_name=workflow_name, trigger_type=wf_trigger_type)
+                logger.info("Using synthesized form config", field_count=len(form_fields))
             else:
-                # Legacy automation config
-                automation_config = request.automation
-                workflow_name = f"{business_name} Lead Automation"
-                wf_trigger_type = "trigger_form_submitted"
+                # Legacy hardcoded form
+                cta_text = content.get("cta_text", "Get Started")
+                form = Form(
+                    workspace_id=workspace_id,
+                    page_id=page.id,
+                    name=f"Contact - {request.name}",
+                    description=f"Lead capture form for {request.name}",
+                    fields=[
+                        FormField(
+                            id=str(uuid.uuid4())[:8],
+                            name="email",
+                            label="Email",
+                            type=FormFieldType.EMAIL,
+                            required=True,
+                            placeholder="your@email.com",
+                            map_to_contact_field="email",
+                        ),
+                        FormField(
+                            id=str(uuid.uuid4())[:8],
+                            name="first_name",
+                            label="Name",
+                            type=FormFieldType.TEXT,
+                            required=True,
+                            placeholder="Your name",
+                            map_to_contact_field="first_name",
+                        ),
+                        FormField(
+                            id=str(uuid.uuid4())[:8],
+                            name="phone",
+                            label="Phone",
+                            type=FormFieldType.PHONE,
+                            required=False,
+                            placeholder="(555) 123-4567",
+                            map_to_contact_field="phone",
+                        ),
+                        FormField(
+                            id=str(uuid.uuid4())[:8],
+                            name="message",
+                            label="Message",
+                            type=FormFieldType.TEXTAREA,
+                            required=False,
+                            placeholder="How can we help?",
+                        ),
+                    ],
+                    submit_button_text=cta_text,
+                    success_message="Thanks! We'll be in touch shortly.",
+                    add_tags=request.automation.add_tags or ["lead", "website"],
+                    trigger_workflow=True,
+                )
 
-            workflow = _build_automation_workflow(
-                workspace_id=workspace_id,
-                page_id=page.id,
-                form_id=form.id,
-                business_name=business_name,
-                automation=automation_config,
-                trigger_type=wf_trigger_type,
+            created_form = form_repo.create_form(form)
+            result["form"] = created_form.model_dump(mode="json")
+            logger.info("Form created for complete package", form_id=created_form.id, page_id=page.id)
+
+            # Update page with form reference AND update form block with actual form ID
+            page.form_ids = [created_form.id]
+            for block in page.blocks:
+                if block.type == "form" and not block.config.get("formId"):
+                    block.config["formId"] = created_form.id
+                    break
+            repo.update_page(page)
+
+            # Update result with the updated page data
+            result["page"] = page.model_dump(mode="json")
+
+            # Create automation workflow
+            # Use synthesized_workflow_config if provided, otherwise fall back to request.automation
+            synth_wf = request.synthesized_workflow_config
+            should_create_workflow = (
+                (synth_wf and (synth_wf.send_welcome_email or synth_wf.notify_owner))
+                or (not synth_wf and (request.automation.send_welcome_email or request.automation.notify_owner))
             )
-            workflow.name = workflow_name
-            workflow = workflow_repo.create_workflow(workflow)
-            result["workflow"] = workflow.model_dump(mode="json", by_alias=True)
-            logger.info("Workflow created for complete package", workflow_id=workflow.id, page_id=page.id)
+
+            if should_create_workflow:
+                workflow_repo = WorkflowRepository()
+
+                if synth_wf:
+                    # Use synthesis-generated workflow config
+                    automation_config = AutomationConfig(
+                        send_welcome_email=synth_wf.send_welcome_email,
+                        notify_owner=synth_wf.notify_owner,
+                        owner_email=synth_wf.owner_email,
+                        welcome_message=synth_wf.welcome_message,
+                        add_tags=synth_wf.add_tags or ["lead", "website"],
+                    )
+                    workflow_name = synth_wf.name
+                    wf_trigger_type = synth_wf.trigger_type
+                    logger.info("Using synthesized workflow config", workflow_name=workflow_name, trigger_type=wf_trigger_type)
+                else:
+                    # Legacy automation config
+                    automation_config = request.automation
+                    workflow_name = f"{business_name} Lead Automation"
+                    wf_trigger_type = "trigger_form_submitted"
+
+                workflow = _build_automation_workflow(
+                    workspace_id=workspace_id,
+                    page_id=page.id,
+                    form_id=created_form.id,
+                    business_name=business_name,
+                    automation=automation_config,
+                    trigger_type=wf_trigger_type,
+                )
+                workflow.name = workflow_name
+                created_workflow = workflow_repo.create_workflow(workflow)
+                result["workflow"] = created_workflow.model_dump(mode="json", by_alias=True)
+                logger.info("Workflow created for complete package", workflow_id=created_workflow.id, page_id=page.id)
+
+    except Exception as e:
+        # Rollback: clean up orphaned resources on failure
+        logger.exception(
+            "Failed during complete package creation, rolling back",
+            page_id=page.id,
+            error=str(e),
+        )
+        if created_workflow:
+            try:
+                WorkflowRepository().delete_workflow(workspace_id, created_workflow.id)
+                logger.info("Rollback: deleted workflow", workflow_id=created_workflow.id)
+            except Exception as rollback_err:
+                logger.error("Rollback failed for workflow", error=str(rollback_err))
+        if created_form:
+            try:
+                form_repo.delete_form(workspace_id, created_form.id)
+                logger.info("Rollback: deleted form", form_id=created_form.id)
+            except Exception as rollback_err:
+                logger.error("Rollback failed for form", error=str(rollback_err))
+        try:
+            repo.delete_page(workspace_id, page.id)
+            logger.info("Rollback: deleted page", page_id=page.id)
+        except Exception as rollback_err:
+            logger.error("Rollback failed for page", error=str(rollback_err))
+        return error("Failed to create complete package", 500)
 
     logger.info(
         "Complete package created",
