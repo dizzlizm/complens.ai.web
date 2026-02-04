@@ -188,7 +188,7 @@ def process_generate_response(data: dict) -> dict:
         body["system"] = context["system_prompt"]
 
     response = bedrock.invoke_model(
-        modelId=data.get("model", "anthropic.claude-3-sonnet-20240229-v1:0"),
+        modelId=data.get("model", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
         body=json.dumps(body),
         contentType="application/json",
     )

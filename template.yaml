@@ -108,6 +108,17 @@ Globals:
         AI_QUEUE_URL: !Ref AIProcessingQueue
         WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
         EVENT_BUS_NAME: !Sub "complens-${Stage}-workflow-events"
+        # Sharded queue configuration
+        SHARD_QUEUE_URL_0: !Ref WorkflowQueueShard0
+        SHARD_QUEUE_URL_1: !Ref WorkflowQueueShard1
+        SHARD_QUEUE_URL_2: !Ref WorkflowQueueShard2
+        SHARD_QUEUE_URL_3: !Ref WorkflowQueueShard3
+        PRIORITY_QUEUE_URL: !Ref WorkflowPriorityQueue
+        SHARD_COUNT: "4"
+        # DLQ alert configuration
+        DLQ_ALERT_TOPIC_ARN: !Ref DLQAlertTopic
+        # Express State Machine for fast workflows
+        WORKFLOW_EXPRESS_STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor-express"
         WEBSOCKET_ENDPOINT: !If [CustomDomainEnabled, !Sub "wss://ws.${DomainName}", !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"]
         # CORS configuration - restrict to frontend origin
         CORS_ALLOWED_ORIGIN: !If
@@ -353,6 +364,128 @@ Resources:
       FifoQueue: true
       ContentBasedDeduplication: false
       MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 300  # Must be >= Lambda timeout (120s)
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  # ============================================
+  # Sharded Queues for Scalable Workflow Processing
+  # ============================================
+  # These standard SQS queues replace the FIFO queue for unlimited throughput.
+  # Workspaces are routed to shards using consistent hashing.
+
+  # Shared DLQ for all sharded queues
+  ShardedWorkflowDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "complens-${Stage}-workflow-sharded-dlq"
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 300
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  # Shard 0
+  WorkflowQueueShard0:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "complens-${Stage}-workflow-shard-0"
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ShardedWorkflowDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+        - Key: ShardIndex
+          Value: "0"
+
+  # Shard 1
+  WorkflowQueueShard1:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "complens-${Stage}-workflow-shard-1"
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ShardedWorkflowDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+        - Key: ShardIndex
+          Value: "1"
+
+  # Shard 2
+  WorkflowQueueShard2:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "complens-${Stage}-workflow-shard-2"
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ShardedWorkflowDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+        - Key: ShardIndex
+          Value: "2"
+
+  # Shard 3
+  WorkflowQueueShard3:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "complens-${Stage}-workflow-shard-3"
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ShardedWorkflowDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+        - Key: ShardIndex
+          Value: "3"
+
+  # Priority Queue for time-sensitive workflows
+  WorkflowPriorityQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "complens-${Stage}-workflow-priority"
+      VisibilityTimeout: 120
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ShardedWorkflowDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  # ============================================
+  # SNS Topic for DLQ Alerts
+  # ============================================
+  DLQAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "complens-${Stage}-dlq-alerts"
+      DisplayName: "Complens DLQ Alerts"
       Tags:
         - Key: Service
           Value: complens
@@ -699,6 +832,105 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}
             Method: DELETE
+        GetIntegrations:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations
+            Method: GET
+        SaveTwilio:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations/twilio
+            Method: PUT
+        SaveSegment:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations/segment
+            Method: PUT
+        TestTwilio:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations/twilio/test
+            Method: POST
+        DisconnectTwilio:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations/twilio
+            Method: DELETE
+        DisconnectSegment:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/integrations/segment
+            Method: DELETE
+
+  TeamFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-team"
+      Handler: team.handler
+      CodeUri: src/handlers/api/
+      Description: Team management and invitations
+      Environment:
+        Variables:
+          COGNITO_USER_POOL_ID: !Ref UserPool
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:AdminGetUser
+                - cognito-idp:AdminUpdateUserAttributes
+              Resource: !GetAtt UserPool.Arn
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+      Events:
+        ListTeam:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/team
+            Method: GET
+        InviteMember:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/team/invite
+            Method: POST
+        UpdateMember:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/team/{user_id}
+            Method: PUT
+        RemoveMember:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/team/{user_id}
+            Method: DELETE
+        RevokeInvitation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/team/invitations/{email}
+            Method: DELETE
+        AcceptInvitation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /team/accept-invite
+            Method: POST
 
   ContactsFunction:
     Type: AWS::Serverless::Function
@@ -741,6 +973,48 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/contacts/{contact_id}
             Method: DELETE
+        GetActivity:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/activity
+            Method: GET
+        ListNotes:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/notes
+            Method: GET
+        CreateNote:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/notes
+            Method: POST
+        UpdateNote:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/notes/{note_id}
+            Method: PUT
+        DeleteNote:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/{contact_id}/notes/{note_id}
+            Method: DELETE
+        Import:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/import
+            Method: POST
+        Export:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/contacts/export
+            Method: GET
 
   ConversationsFunction:
     Type: AWS::Serverless::Function
@@ -862,6 +1136,12 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/workflows/{workflow_id}/runs
             Method: GET
+        TestEmail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflows/{workflow_id}/test-email
+            Method: POST
 
   PagesFunction:
     Type: AWS::Serverless::Function
@@ -1597,6 +1877,116 @@ Resources:
                 - ses:SendTemplatedEmail
               Resource: "*"
 
+  # Sharded Queue Processor - processes events from sharded standard queues
+  ShardedQueueProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-sharded-queue-processor"
+      Handler: sharded_queue_processor.handler
+      CodeUri: src/handlers/workers/
+      Description: Processes workflow triggers from sharded queues with fair scheduling
+      Timeout: 60
+      Environment:
+        Variables:
+          WORKFLOW_STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor"
+          SHARD_COUNT: "4"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource:
+                - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor"
+      Events:
+        Shard0:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt WorkflowQueueShard0.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+        Shard1:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt WorkflowQueueShard1.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+        Shard2:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt WorkflowQueueShard2.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+        Shard3:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt WorkflowQueueShard3.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+        Priority:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt WorkflowPriorityQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  # DLQ Handler - automatic remediation of failed messages
+  WorkflowDLQHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-workflow-dlq-handler"
+      Handler: dlq_handler.handler
+      CodeUri: src/handlers/workers/
+      Description: Processes DLQ messages with automatic error remediation
+      Timeout: 120
+      Environment:
+        Variables:
+          DLQ_ALERT_TOPIC_ARN: !Ref DLQAlertTopic
+          WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
+          SHARD_QUEUE_URL_PREFIX: !Sub "https://sqs.${AWS::Region}.amazonaws.com/${AWS::AccountId}/complens-${Stage}-workflow-shard-"
+          SHARD_COUNT: "4"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WorkflowQueue.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WorkflowQueueShard0.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WorkflowQueueShard1.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WorkflowQueueShard2.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WorkflowQueueShard3.QueueName
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt DLQAlertTopic.TopicName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: "*"
+      Events:
+        FifoDLQ:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt WorkflowDeadLetterQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+        ShardedDLQ:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ShardedWorkflowDLQ.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
   # IAM Role for EventBridge Scheduler to start Step Functions
   # Uses pattern-based ARN to avoid circular dependency
   SchedulerRole:
@@ -1684,6 +2074,25 @@ Resources:
   # ============================================
   # Stripe Connect API
   # ============================================
+  AnalyticsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-analytics"
+      Handler: analytics.handler
+      CodeUri: src/handlers/api/
+      Description: Analytics and reporting
+      Timeout: 60
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Events:
+        GetAnalytics:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/analytics
+            Method: GET
+
   StripeFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -1783,6 +2192,51 @@ Resources:
         Service: complens
         Stage: !Ref Stage
 
+  # Express State Machine for fast, simple workflows (<5 min)
+  WorkflowExecutorExpressStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "complens-${Stage}-workflow-executor-express"
+      DefinitionUri: step-functions/workflow-executor-express.asl.json
+      DefinitionSubstitutions:
+        WorkflowExecutorFunctionArn: !GetAtt WorkflowExecutorFunction.Arn
+        TableName: !Ref MainTable
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref WorkflowExecutorFunction
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+              Resource: "*"
+      Tracing:
+        Enabled: true
+      Type: EXPRESS
+      Logging:
+        Level: ERROR
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt ExpressStateMachineLogGroup.Arn
+      Tags:
+        Service: complens
+        Stage: !Ref Stage
+
+  ExpressStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/complens-${Stage}-workflow-executor-express"
+      RetentionInDays: !If [IsProd, 30, 7]
+
   # ============================================
   # CloudWatch Log Groups
   # ============================================
@@ -1844,6 +2298,18 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflow-trigger"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  ShardedQueueProcessorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-sharded-queue-processor"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  WorkflowDLQHandlerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflow-dlq-handler"
       RetentionInDays: !If [IsProd, 90, 14]
 
   PagesLogGroup:
@@ -2447,6 +2913,12 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-WorkflowStateMachineArn"
 
+  WorkflowExpressStateMachineArn:
+    Description: Workflow Executor Express State Machine ARN (for fast workflows)
+    Value: !Ref WorkflowExecutorExpressStateMachine
+    Export:
+      Name: !Sub "${AWS::StackName}-WorkflowExpressStateMachineArn"
+
   FrontendUrl:
     Condition: CustomDomainEnabled
     Description: Frontend URL
@@ -2516,3 +2988,46 @@ Outputs:
     Value: !Sub "*.${DomainName}"
     Export:
       Name: !Sub "${AWS::StackName}-SubdomainBaseUrl"
+
+  # Sharded Queue Outputs
+  WorkflowQueueShard0Url:
+    Description: Workflow Queue Shard 0 URL
+    Value: !Ref WorkflowQueueShard0
+    Export:
+      Name: !Sub "${AWS::StackName}-WorkflowQueueShard0Url"
+
+  WorkflowQueueShard1Url:
+    Description: Workflow Queue Shard 1 URL
+    Value: !Ref WorkflowQueueShard1
+    Export:
+      Name: !Sub "${AWS::StackName}-WorkflowQueueShard1Url"
+
+  WorkflowQueueShard2Url:
+    Description: Workflow Queue Shard 2 URL
+    Value: !Ref WorkflowQueueShard2
+    Export:
+      Name: !Sub "${AWS::StackName}-WorkflowQueueShard2Url"
+
+  WorkflowQueueShard3Url:
+    Description: Workflow Queue Shard 3 URL
+    Value: !Ref WorkflowQueueShard3
+    Export:
+      Name: !Sub "${AWS::StackName}-WorkflowQueueShard3Url"
+
+  WorkflowPriorityQueueUrl:
+    Description: Workflow Priority Queue URL
+    Value: !Ref WorkflowPriorityQueue
+    Export:
+      Name: !Sub "${AWS::StackName}-WorkflowPriorityQueueUrl"
+
+  ShardedWorkflowDLQUrl:
+    Description: Sharded Workflow DLQ URL
+    Value: !Ref ShardedWorkflowDLQ
+    Export:
+      Name: !Sub "${AWS::StackName}-ShardedWorkflowDLQUrl"
+
+  DLQAlertTopicArn:
+    Description: DLQ Alert SNS Topic ARN
+    Value: !Ref DLQAlertTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-DLQAlertTopicArn"

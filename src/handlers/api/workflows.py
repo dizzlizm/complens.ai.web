@@ -56,7 +56,9 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         run_repo = WorkflowRunRepository()
 
         # Route to appropriate handler
-        if "/execute" in path and http_method == "POST":
+        if "/test-email" in path and http_method == "POST":
+            return send_test_email(workspace_id, workflow_id, event)
+        elif "/execute" in path and http_method == "POST":
             return execute_workflow(repo, workspace_id, workflow_id, event)
         elif "/runs" in path and http_method == "GET":
             return list_workflow_runs(run_repo, workflow_id, event)
@@ -438,3 +440,62 @@ def list_workflow_runs(
             "limit": limit,
         },
     })
+
+
+def send_test_email(
+    workspace_id: str,
+    workflow_id: str,
+    event: dict,
+) -> dict:
+    """Send a test email for previewing email node output.
+
+    Request body:
+        to_email: Recipient email address
+        subject: Email subject line
+        body_html: HTML body content
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    to_email = body.get("to_email", "").strip()
+    subject = body.get("subject", "").strip()
+    body_html = body.get("body_html", "").strip()
+
+    if not to_email:
+        return error("to_email is required", 400)
+
+    if not subject and not body_html:
+        return error("subject or body_html is required", 400)
+
+    # Prefix subject with [TEST]
+    test_subject = f"[TEST] {subject}" if subject else "[TEST] No Subject"
+
+    try:
+        from complens.services.email_service import get_email_service
+
+        email_service = get_email_service()
+        result = email_service.send_email(
+            to=to_email,
+            subject=test_subject,
+            body_html=body_html or "<p>No content</p>",
+            body_text=f"Test email from workflow {workflow_id}",
+        )
+
+        logger.info(
+            "Test email sent",
+            workspace_id=workspace_id,
+            workflow_id=workflow_id,
+            to=to_email,
+        )
+
+        return success({
+            "success": True,
+            "message": "Test email sent successfully",
+            "message_id": result.get("message_id"),
+        })
+
+    except Exception as e:
+        logger.error("Test email failed", error=str(e), workspace_id=workspace_id)
+        return error(f"Failed to send test email: {str(e)}", 400)

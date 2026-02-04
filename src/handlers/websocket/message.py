@@ -13,7 +13,7 @@ from complens.repositories.page import PageRepository
 logger = structlog.get_logger()
 
 # Bedrock model for chat responses
-CHAT_MODEL = os.environ.get("CHAT_MODEL", "us.anthropic.claude-3-sonnet-20240229-v1:0")
+CHAT_MODEL = os.environ.get("CHAT_MODEL", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
 
 
 def handler(event: dict[str, Any], context: Any) -> dict:

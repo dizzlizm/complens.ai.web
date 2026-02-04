@@ -22,6 +22,7 @@ import {
   Play,
   Building2,
   Pencil,
+  Settings,
 } from 'lucide-react';
 import {
   PageBlock,
@@ -31,6 +32,7 @@ import {
   getWidthLabel,
 } from './types';
 import BlockRenderer, { blockHasContent } from './BlockRenderer';
+import BlockSettingsModal from './BlockSettingsModal';
 
 // Icon mapping for blocks
 const BLOCK_ICONS: Record<string, React.ElementType> = {
@@ -80,6 +82,7 @@ interface LayoutSlotProps {
   isFirst?: boolean;
   isLast?: boolean;
   forms?: FormInfo[];
+  workspaceId?: string;
 }
 
 export default function LayoutSlot({
@@ -92,10 +95,12 @@ export default function LayoutSlot({
   onConfigChange,
   showDeleteButton = true,
   forms = [],
+  workspaceId,
 }: LayoutSlotProps) {
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
   const [showWidthDropdown, setShowWidthDropdown] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const widthDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -256,6 +261,20 @@ export default function LayoutSlot({
             </button>
           )}
 
+          {/* Settings button - opens full settings modal */}
+          {hasContent && onConfigChange && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowSettingsModal(true);
+              }}
+              className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+              title="Block settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          )}
+
           {/* Width Dropdown */}
           <div className="relative" ref={widthDropdownRef}>
             <button
@@ -384,6 +403,18 @@ export default function LayoutSlot({
       {/* Selection border overlay */}
       {isSelected && (
         <div className="absolute inset-0 rounded-xl pointer-events-none border-2 border-purple-500" />
+      )}
+
+      {/* Block Settings Modal */}
+      {showSettingsModal && onConfigChange && (
+        <BlockSettingsModal
+          isOpen={showSettingsModal}
+          onClose={() => setShowSettingsModal(false)}
+          block={slot}
+          onConfigChange={handleConfigChange}
+          forms={forms}
+          workspaceId={workspaceId}
+        />
       )}
     </div>
   );

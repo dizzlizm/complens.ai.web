@@ -45,6 +45,7 @@ export default function WorkflowEditor() {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const isLoadingDataRef = useRef(false); // Suppress onChange during data load
 
   // AI help modal state
   const [showAIModal, setShowAIModal] = useState(false);
@@ -59,6 +60,9 @@ export default function WorkflowEditor() {
       setName(workflow.name);
       // Convert API nodes/edges to React Flow format
       if (workflow.nodes && canvasRef.current) {
+        // Suppress onChange during data load to prevent false "unsaved changes"
+        isLoadingDataRef.current = true;
+
         const rfNodes: Node[] = workflow.nodes.map((n: WorkflowNode) => {
           // Derive React Flow type (category) from specific node type
           // e.g., "trigger_form_submitted" -> "trigger", "action_send_email" -> "action"
@@ -89,6 +93,12 @@ export default function WorkflowEditor() {
         }));
         canvasRef.current.setNodes(rfNodes);
         canvasRef.current.setEdges(rfEdges);
+
+        // Reset after React processes the state updates
+        setTimeout(() => {
+          isLoadingDataRef.current = false;
+          setHasChanges(false);
+        }, 0);
       }
     }
   }, [workflow]);
@@ -98,9 +108,11 @@ export default function WorkflowEditor() {
     ? canvasRef.current.getNodes().find(n => n.id === selectedNodeId) || null
     : null;
 
-  // Track changes
+  // Track changes (suppressed during data load from API)
   const handleCanvasChange = useCallback(() => {
-    setHasChanges(true);
+    if (!isLoadingDataRef.current) {
+      setHasChanges(true);
+    }
   }, []);
 
   // Handle node selection - just track the ID, not the full node
@@ -180,24 +192,32 @@ export default function WorkflowEditor() {
           edges: apiEdges,
           viewport,
         };
-        console.log('Creating workflow with payload:', JSON.stringify(input, null, 2));
         const { data: created } = await api.post<Workflow>(
           `/workspaces/${effectiveWorkspaceId}/workflows`,
           input
         );
+        // Activate immediately after creation (workflows start as draft)
+        if (created.status === 'draft') {
+          await api.put(`/workspaces/${effectiveWorkspaceId}/workflows/${created.id}`, {
+            status: 'active',
+          });
+        }
         setHasChanges(false);
-        toast.success('Workflow created successfully!');
+        toast.success('Workflow created and activated!');
         // Navigate to the created workflow
         navigate(`/workflows/${created.id}`, { replace: true });
       } else {
+        // Include status: active if still in draft (auto-publish on save)
+        const currentStatus = workflow?.status;
         await updateWorkflow.mutateAsync({
           name,
           nodes: apiNodes,
           edges: apiEdges,
           viewport,
+          ...(currentStatus === 'draft' ? { status: 'active' } : {}),
         });
         setHasChanges(false);
-        toast.success('Workflow saved!');
+        toast.success(currentStatus === 'draft' ? 'Workflow saved and activated!' : 'Workflow saved!');
       }
     } catch (error) {
       console.error('Failed to save workflow:', error);

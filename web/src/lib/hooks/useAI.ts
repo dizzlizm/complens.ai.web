@@ -143,6 +143,11 @@ export interface GenerateImageInput {
   style?: string;
   width?: number;
   height?: number;
+  colors?: {
+    primary?: string;
+    secondary?: string;
+    accent?: string;
+  };
 }
 
 export interface GeneratedImage {
@@ -280,6 +285,7 @@ export interface SynthesisFormConfig {
 
 export interface SynthesisWorkflowConfig {
   name: string;
+  trigger_type?: string;
   send_welcome_email: boolean;
   notify_owner: boolean;
   owner_email?: string;

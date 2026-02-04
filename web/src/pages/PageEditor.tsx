@@ -12,6 +12,7 @@ import {
   useBusinessProfile,
   useUpdateBusinessProfile,
   useAnalyzeContent,
+  useSynthesizePage,
   INDUSTRY_OPTIONS,
   BUSINESS_TYPE_OPTIONS,
   BRAND_VOICE_OPTIONS,
@@ -47,6 +48,7 @@ export default function PageEditor() {
   const { data: profile, isLoading: profileLoading } = useBusinessProfile(workspaceId, pageId);
   const updateProfile = useUpdateBusinessProfile(workspaceId || '', pageId);
   const analyzeContent = useAnalyzeContent(workspaceId || '');
+  const synthesizePage = useSynthesizePage(workspaceId || '');
 
   // Content analysis state
   const [showContentInput, setShowContentInput] = useState(false);
@@ -357,6 +359,7 @@ export default function PageEditor() {
   // Form builder state
   const [editingForm, setEditingForm] = useState<Form | null>(null);
   const [showFormBuilder, setShowFormBuilder] = useState(false);
+  const [aiFormDescription, setAiFormDescription] = useState('');
   const [formBuilderData, setFormBuilderData] = useState<{
     name: string;
     fields: FormField[];
@@ -368,6 +371,40 @@ export default function PageEditor() {
     submitButtonText: 'Submit',
     successMessage: 'Thank you for your submission!',
   });
+
+  const createFormFieldId = () => Math.random().toString(36).slice(2, 10);
+
+  const mapSynthesizedField = (field: Record<string, unknown>, index: number): FormField => {
+    const allowedTypes: FormField['type'][] = [
+      'text',
+      'email',
+      'phone',
+      'textarea',
+      'select',
+      'checkbox',
+      'radio',
+      'date',
+      'number',
+      'hidden',
+    ];
+
+    const rawType = typeof field.type === 'string' ? field.type : 'text';
+    const type = (allowedTypes.includes(rawType as FormField['type']) ? rawType : 'text') as FormField['type'];
+    const name = typeof field.name === 'string' && field.name.trim() ? field.name : `field_${index + 1}`;
+
+    return {
+      id: createFormFieldId(),
+      name,
+      label: typeof field.label === 'string' && field.label.trim() ? field.label : name,
+      type,
+      required: typeof field.required === 'boolean' ? field.required : false,
+      placeholder: typeof field.placeholder === 'string' ? field.placeholder : null,
+      options: Array.isArray(field.options) ? field.options.filter((o) => typeof o === 'string') : [],
+      validation_pattern: typeof field.validation_pattern === 'string' ? field.validation_pattern : null,
+      default_value: typeof field.default_value === 'string' ? field.default_value : null,
+      map_to_contact_field: typeof field.map_to_contact_field === 'string' ? field.map_to_contact_field : null,
+    };
+  };
 
   const handleCreateForm = async () => {
     try {
@@ -386,10 +423,67 @@ export default function PageEditor() {
         submitButtonText: 'Submit',
         successMessage: 'Thank you for your submission!',
       });
+      setAiFormDescription('');
       toast.success('Form created successfully');
     } catch (err) {
       console.error('Failed to create form:', err);
       toast.error('Failed to create form');
+    }
+  };
+
+  const handleAIGenerateForm = async () => {
+    if (!aiFormDescription.trim()) {
+      toast.warning('Please describe the form you want to create.');
+      return;
+    }
+
+    try {
+      const result = await synthesizePage.mutateAsync({
+        description: aiFormDescription.trim(),
+        include_form: true,
+        include_chat: false,
+        block_types: ['form'],
+        page_id: pageId || undefined,
+      });
+
+      if (!result.form_config) {
+        toast.error('AI did not return a form configuration. Please try again.');
+        return;
+      }
+
+      const fallbackFields: FormField[] = [
+        {
+          id: createFormFieldId(),
+          name: 'email',
+          label: 'Email',
+          type: 'email',
+          required: true,
+          placeholder: 'your@email.com',
+          options: [],
+          validation_pattern: null,
+          default_value: null,
+          map_to_contact_field: 'email',
+        },
+      ];
+
+      const fields = result.form_config?.fields?.length
+        ? result.form_config.fields.map(mapSynthesizedField)
+        : fallbackFields;
+
+      const name = formBuilderData.name.trim() || result.form_config?.name || 'New Form';
+
+      setFormBuilderData((prev) => ({
+        ...prev,
+        name,
+        fields,
+        submitButtonText: result.form_config?.submit_button_text ?? 'Submit',
+        successMessage: result.form_config?.success_message ?? 'Thank you for your submission!',
+      }));
+
+      toast.success('AI form draft ready. Review and save.');
+    } catch (err) {
+      console.error('Failed to generate form with AI:', err);
+      toast.error('Failed to generate form with AI');
     }
   };
 
@@ -464,7 +558,13 @@ export default function PageEditor() {
         </div>
         <div className="flex items-center gap-3">
           <a
-            href={`/p/${page.slug}?ws=${workspaceId}`}
+            href={
+              page.custom_domain
+                ? `https://${page.custom_domain}`
+                : page.subdomain
+                  ? `https://${page.subdomain}.${SUBDOMAIN_SUFFIX}`
+                  : `/p/${page.slug}?ws=${workspaceId}`
+            }
             target="_blank"
             rel="noopener noreferrer"
             className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2"
@@ -844,6 +944,7 @@ export default function PageEditor() {
                     onClick={() => {
                       setShowFormBuilder(false);
                       setEditingForm(null);
+                      setAiFormDescription('');
                     }}
                     className="text-gray-500 hover:text-gray-700"
                   >
@@ -863,6 +964,45 @@ export default function PageEditor() {
                   />
                 </div>
 
+                <div className="border border-indigo-100 rounded-lg p-4 bg-indigo-50/40">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-indigo-900">Build with AI</p>
+                      <p className="text-xs text-indigo-700">Describe the form and we’ll draft the fields for you.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAIGenerateForm}
+                      disabled={synthesizePage.isPending}
+                      className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
+                    >
+                      {synthesizePage.isPending ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          Build with AI
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <div className="mt-3">
+                    <label className="block text-xs font-medium text-indigo-900 mb-1">
+                      Form description
+                    </label>
+                    <textarea
+                      value={aiFormDescription}
+                      onChange={(e) => setAiFormDescription(e.target.value)}
+                      rows={3}
+                      placeholder="e.g., Intake form for a photography studio with name, email, event date, and budget."
+                      className="w-full px-3 py-2 border border-indigo-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                    />
+                  </div>
+                </div>
+
                 <FormBuilder
                   fields={formBuilderData.fields}
                   onChange={(fields) => setFormBuilderData(prev => ({ ...prev, fields }))}
@@ -877,6 +1017,7 @@ export default function PageEditor() {
                     onClick={() => {
                       setShowFormBuilder(false);
                       setEditingForm(null);
+                      setAiFormDescription('');
                     }}
                     className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
                   >
@@ -884,7 +1025,7 @@ export default function PageEditor() {
                   </button>
                   <button
                     onClick={handleCreateForm}
-                    disabled={createForm.isPending || !formBuilderData.name.trim()}
+                    disabled={createForm.isPending || synthesizePage.isPending || !formBuilderData.name.trim()}
                     className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                   >
                     {createForm.isPending ? 'Creating...' : 'Create Form'}

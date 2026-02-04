@@ -392,6 +392,7 @@ def generate_image(workspace_id: str, event: dict) -> dict:
         context = body.get("context", "")  # What the image should represent
         prompt = body.get("prompt")  # Direct prompt (optional)
         style = body.get("style", "professional")
+        colors = body.get("colors")  # Optional color palette dict
         width = body.get("width", 1024)
         height = body.get("height", 1024)
     except json.JSONDecodeError:
@@ -410,7 +411,7 @@ def generate_image(workspace_id: str, event: dict) -> dict:
     try:
         # Generate prompt from context if not provided
         if not prompt:
-            prompt = ai_service.generate_image_prompt(workspace_id, context, style)
+            prompt = ai_service.generate_image_prompt(workspace_id, context, style, colors=colors)
 
         logger.info("Generating image", prompt=prompt[:100], workspace_id=workspace_id)
 

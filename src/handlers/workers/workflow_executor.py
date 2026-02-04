@@ -2,6 +2,9 @@
 
 Executes individual workflow steps, called by Step Functions.
 Supports long wait scheduling via EventBridge Scheduler.
+
+Integrates with the node dispatcher for fault-tolerant execution when
+the USE_NODE_DISPATCHER feature flag is enabled.
 """
 
 import asyncio
@@ -13,7 +16,10 @@ from typing import Any
 import boto3
 import structlog
 
+from complens.execution.node_dispatcher import dispatch_node, get_node_dispatcher
 from complens.models.workflow_run import RunStatus, WorkflowRun
+from complens.nodes.base import NodeContext, NodeResult
+from complens.queue.feature_flags import FeatureFlag, is_flag_enabled
 from complens.repositories.contact import ContactRepository
 from complens.repositories.workflow import WorkflowRepository, WorkflowRunRepository
 from complens.repositories.workspace import WorkspaceRepository
@@ -215,8 +221,6 @@ def execute_node(event: dict) -> dict:
     if not node_class:
         raise ValueError(f"Unknown node type: {node_def.node_type}")
 
-    from complens.nodes.base import NodeContext
-
     node = node_class(node_id=current_node_id, config=node_def.get_config())
 
     context = NodeContext(
@@ -240,10 +244,29 @@ def execute_node(event: dict) -> dict:
         node_label=node_label,
     )
 
-    # Run async execution
+    # Execute the node
     loop = asyncio.new_event_loop()
     try:
-        result = loop.run_until_complete(node.execute(context))
+        # Check if node dispatcher is enabled for fault tolerance
+        if is_flag_enabled(FeatureFlag.USE_NODE_DISPATCHER, workspace_id):
+            # Use node dispatcher with circuit breaker and retry
+            dispatch_result = loop.run_until_complete(
+                dispatch_node(node, context)
+            )
+            result = dispatch_result.node_result
+
+            # Log dispatcher metrics
+            logger.info(
+                "Node dispatched",
+                node_id=current_node_id,
+                category=dispatch_result.category.value,
+                retry_attempts=dispatch_result.retry_attempts,
+                execution_time_ms=dispatch_result.execution_time_ms,
+                circuit_state=dispatch_result.circuit_state.value if dispatch_result.circuit_state else None,
+            )
+        else:
+            # Direct execution (legacy path)
+            result = loop.run_until_complete(node.execute(context))
     finally:
         loop.close()
 

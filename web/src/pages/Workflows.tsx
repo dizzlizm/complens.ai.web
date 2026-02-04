@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2, AlertTriangle } from 'lucide-react';
-import { useWorkflows, useCurrentWorkspace, useDeleteWorkflow, type Workflow } from '../lib/hooks';
+import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2, AlertTriangle, X, History, LayoutTemplate } from 'lucide-react';
+import { useWorkflows, useCurrentWorkspace, useDeleteWorkflow, useCreateWorkflow, type Workflow } from '../lib/hooks';
 import api from '../lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../components/Toast';
 import DropdownMenu, { DropdownItem } from '../components/ui/DropdownMenu';
+import WorkflowRuns from '../components/WorkflowRuns';
+import TemplateLibrary from '../components/workflows/TemplateLibrary';
+import type { WorkflowTemplate } from '../data/workflowTemplates';
 
 // Format trigger type for display
 function formatTriggerType(triggerType: string): string {
@@ -42,15 +45,34 @@ export default function Workflows() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [viewingRunsWorkflow, setViewingRunsWorkflow] = useState<Workflow | null>(null);
+  const [showTemplates, setShowTemplates] = useState(false);
 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { data: workflows, isLoading, error, refetch } = useWorkflows(workspaceId || '');
   const deleteWorkflow = useDeleteWorkflow(workspaceId || '');
+  const createWorkflow = useCreateWorkflow(workspaceId || '');
   const toast = useToast();
 
-  // Toggle workflow status (active <-> paused)
+  const handleUseTemplate = async (template: WorkflowTemplate) => {
+    if (!workspaceId) return;
+    try {
+      const result = await createWorkflow.mutateAsync({
+        name: template.name,
+        description: template.description,
+        nodes: template.nodes,
+        edges: template.edges,
+      });
+      toast.success(`Workflow "${template.name}" created from template`);
+      navigate(`/workflows/${result.id}`);
+    } catch {
+      toast.error('Failed to create workflow from template');
+    }
+  };
+
+  // Toggle workflow status (draft/paused -> active, active -> paused)
   const handleToggleStatus = async (workflow: Workflow) => {
     if (!workspaceId || togglingId) return;
 
@@ -63,7 +85,8 @@ export default function Workflows() {
       });
       // Invalidate queries to refresh the list
       queryClient.invalidateQueries({ queryKey: ['workflows', workspaceId] });
-      toast.success(`Workflow ${newStatus === 'active' ? 'activated' : 'paused'}`);
+      const label = newStatus === 'active' ? 'activated' : 'paused';
+      toast.success(`Workflow ${label}`);
     } catch (error) {
       console.error('Failed to toggle workflow status:', error);
       toast.error('Failed to update workflow status');
@@ -107,11 +130,39 @@ export default function Workflows() {
           <h1 className="text-2xl font-bold text-gray-900">Workflows</h1>
           <p className="mt-1 text-gray-500">Workspace-level automation workflows</p>
         </div>
-        <Link to="/workflows/new" className="btn btn-primary inline-flex items-center gap-2">
-          <Plus className="w-5 h-5" />
-          Create Workflow
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowTemplates(!showTemplates)}
+            className={`btn inline-flex items-center gap-2 ${showTemplates ? 'btn-primary' : 'btn-secondary'}`}
+          >
+            <LayoutTemplate className="w-5 h-5" />
+            Templates
+          </button>
+          <Link to="/workflows/new" className="btn btn-primary inline-flex items-center gap-2">
+            <Plus className="w-5 h-5" />
+            Create Workflow
+          </Link>
+        </div>
       </div>
+
+      {/* Templates library */}
+      {showTemplates && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Workflow Templates</h2>
+            <button
+              onClick={() => setShowTemplates(false)}
+              className="p-1 text-gray-400 hover:text-gray-600 rounded"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <TemplateLibrary
+            onUseTemplate={handleUseTemplate}
+            isCreating={createWorkflow.isPending}
+          />
+        </div>
+      )}
 
       {/* Info banner about page-specific workflows */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
@@ -239,8 +290,13 @@ export default function Workflows() {
                       {workflow.status}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">
-                    {(workflow.runs_count || 0).toLocaleString()}
+                  <td className="px-6 py-4 text-sm">
+                    <button
+                      onClick={() => setViewingRunsWorkflow(workflow)}
+                      className="text-indigo-600 hover:text-indigo-800 hover:underline"
+                    >
+                      {(workflow.runs_count || 0).toLocaleString()}
+                    </button>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-500">
                     {formatRelativeTime(workflow.last_run_at)}
@@ -249,9 +305,9 @@ export default function Workflows() {
                     <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => handleToggleStatus(workflow)}
-                        disabled={togglingId === workflow.id || workflow.status === 'draft'}
+                        disabled={togglingId === workflow.id}
                         className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                        title={workflow.status === 'active' ? 'Pause workflow' : workflow.status === 'draft' ? 'Publish to enable' : 'Activate workflow'}
+                        title={workflow.status === 'active' ? 'Pause workflow' : 'Activate workflow'}
                       >
                         {togglingId === workflow.id ? (
                           <Loader2 className="w-5 h-5 animate-spin" />
@@ -271,6 +327,9 @@ export default function Workflows() {
                         <DropdownItem onClick={() => navigate(`/workflows/${workflow.id}`)}>
                           Edit
                         </DropdownItem>
+                        <DropdownItem onClick={() => setViewingRunsWorkflow(workflow)}>
+                          View Runs
+                        </DropdownItem>
                         <DropdownItem
                           variant="danger"
                           onClick={() => handleDelete(workflow.id)}
@@ -285,6 +344,37 @@ export default function Workflows() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Workflow Runs Modal */}
+      {viewingRunsWorkflow && workspaceId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div className="flex items-center gap-3">
+                <History className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    {viewingRunsWorkflow.name}
+                  </h2>
+                  <p className="text-sm text-gray-500">Execution History</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setViewingRunsWorkflow(null)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <WorkflowRuns
+                workspaceId={workspaceId}
+                workflowId={viewingRunsWorkflow.id}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

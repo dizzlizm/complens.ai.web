@@ -556,6 +556,7 @@ export default function LayoutCanvas({
                 isOnlyRow={rows.length === 1}
                 activeSlotId={activeSlotId}
                 forms={forms}
+                workspaceId={workspaceId}
               />
             ))}
           </div>

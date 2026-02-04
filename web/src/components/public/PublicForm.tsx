@@ -36,7 +36,13 @@ export default function PublicForm({
       });
 
       setSubmitted(true);
-      setSuccessMessage(result.message);
+      // Handle cases where message might be boolean-like or empty
+      const message = result.message;
+      if (!message || message === 'true' || message === 'True' || message === 'false' || message === 'False') {
+        setSuccessMessage('Thank you for your submission!');
+      } else {
+        setSuccessMessage(message);
+      }
 
       if (result.redirect_url) {
         window.location.href = result.redirect_url;

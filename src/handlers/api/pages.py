@@ -118,6 +118,7 @@ class SynthesizedWorkflowConfig(PydanticBaseModel):
     """Workflow configuration from synthesis engine."""
 
     name: str = Field(default="Lead Automation")
+    trigger_type: str = Field(default="trigger_form_submitted")
     send_welcome_email: bool = Field(default=True)
     notify_owner: bool = Field(default=True)
     owner_email: str | None = Field(default=None)
@@ -345,6 +346,10 @@ def create_page(
                 "type": block_data.type,
                 "config": block_data.config,
                 "order": block_data.order,
+                # Include 12-column layout fields
+                "row": block_data.row,
+                "colSpan": block_data.colSpan,
+                "colStart": block_data.colStart,
             }
             if block_data.id:
                 block_dict["id"] = block_data.id
@@ -461,6 +466,10 @@ def update_page(
                 "config": block_data.config,
                 "order": block_data.order,
                 "width": block_data.width,
+                # Include 12-column layout fields
+                "row": block_data.row,
+                "colSpan": block_data.colSpan,
+                "colStart": block_data.colStart,
             }
             if block_data.id:
                 block_dict["id"] = block_data.id
@@ -716,6 +725,45 @@ def create_complete_page(
     page = repo.create_page(page)
     logger.info("Page created for complete package", page_id=page.id, workspace_id=workspace_id)
 
+    # Auto-generate OG (social sharing) image — abstract design using page colors
+    try:
+        from complens.services.image_generator import ImageGeneratorService
+
+        og_color_desc = f"primary color {colors.get('primary', '#6366f1')}"
+        if colors.get("secondary"):
+            og_color_desc += f", secondary color {colors['secondary']}"
+        if colors.get("accent"):
+            og_color_desc += f", accent color {colors['accent']}"
+
+        style_desc = request.style or "professional"
+        business_desc = business_info.get("business_name", request.name)
+        industry = business_info.get("industry", "")
+        industry_hint = f" in the {industry} industry" if industry else ""
+
+        og_prompt = (
+            f"Abstract {style_desc} geometric design with smooth gradients using {og_color_desc}. "
+            f"Modern, clean composition suitable for a social media sharing card for {business_desc}{industry_hint}. "
+            f"No text, no logos, no words. Subtle shapes, flowing lines, and professional feel. "
+            f"Wide landscape format, high quality."
+        )[:512]  # Titan 512 char limit
+
+        img_service = ImageGeneratorService()
+        og_result = img_service.generate_and_upload(
+            prompt=og_prompt,
+            folder=f"og-images/{workspace_id}",
+            width=1024,   # Closest Titan-supported size to 1200x630
+            height=512,
+        )
+
+        if "image_url" in og_result:
+            page.og_image_url = og_result["image_url"]
+            repo.update_page(page)
+            logger.info("OG image generated", page_id=page.id, url=og_result["image_url"])
+        else:
+            logger.warning("OG image generation returned no URL", result=og_result)
+    except Exception as e:
+        logger.warning("Failed to generate OG image", error=str(e), page_id=page.id)
+
     result = {
         "page": page.model_dump(mode="json"),
         "form": None,
@@ -847,11 +895,13 @@ def create_complete_page(
                     add_tags=synth_wf.add_tags or ["lead", "website"],
                 )
                 workflow_name = synth_wf.name
-                logger.info("Using synthesized workflow config", workflow_name=workflow_name)
+                wf_trigger_type = synth_wf.trigger_type
+                logger.info("Using synthesized workflow config", workflow_name=workflow_name, trigger_type=wf_trigger_type)
             else:
                 # Legacy automation config
                 automation_config = request.automation
                 workflow_name = f"{business_name} Lead Automation"
+                wf_trigger_type = "trigger_form_submitted"
 
             workflow = _build_automation_workflow(
                 workspace_id=workspace_id,
@@ -859,6 +909,7 @@ def create_complete_page(
                 form_id=form.id,
                 business_name=business_name,
                 automation=automation_config,
+                trigger_type=wf_trigger_type,
             )
             workflow.name = workflow_name
             workflow = workflow_repo.create_workflow(workflow)
@@ -1038,7 +1089,8 @@ def _update_complete_page(
         result["form"] = form.model_dump(mode="json")
         logger.info("Form created for updated page", form_id=form.id, page_id=page.id)
 
-        # Update form block with actual form ID
+        # Update page with form reference AND update form block with actual form ID
+        page.form_ids = [form.id]
         for block in page.blocks:
             if block.type == "form" and not block.config.get("formId"):
                 block.config["formId"] = form.id
@@ -1049,6 +1101,9 @@ def _update_complete_page(
         # Use first existing form for the form block
         existing_form = existing_forms[0]
         result["form"] = existing_form.model_dump(mode="json")
+        # Ensure page.form_ids is set for existing forms
+        if existing_form.id not in (page.form_ids or []):
+            page.form_ids = list(page.form_ids or []) + [existing_form.id]
         for block in page.blocks:
             if block.type == "form" and not block.config.get("formId"):
                 block.config["formId"] = existing_form.id
@@ -1081,11 +1136,13 @@ def _update_complete_page(
                     add_tags=synth_wf.add_tags or ["lead", "website"],
                 )
                 workflow_name = synth_wf.name
-                logger.info("Using synthesized workflow config for update", workflow_name=workflow_name)
+                wf_trigger_type = synth_wf.trigger_type
+                logger.info("Using synthesized workflow config for update", workflow_name=workflow_name, trigger_type=wf_trigger_type)
             else:
                 # Legacy automation config
                 automation_config = request.automation
                 workflow_name = f"{page.name} Lead Automation"
+                wf_trigger_type = "trigger_form_submitted"
 
             workflow = _build_automation_workflow(
                 workspace_id=workspace_id,
@@ -1093,6 +1150,7 @@ def _update_complete_page(
                 form_id=form_id,
                 business_name=business_info.get("business_name", page.name),
                 automation=automation_config,
+                trigger_type=wf_trigger_type,
             )
             workflow.name = workflow_name
             workflow = workflow_repo.create_workflow(workflow)
@@ -1296,27 +1354,48 @@ def _build_blocks_from_content(
     return blocks
 
 
+_TRIGGER_LABELS = {
+    "trigger_form_submitted": "Form Submitted",
+    "trigger_chat_message": "Chat Message",
+    "trigger_page_visit": "Page Visit",
+}
+
+
 def _build_automation_workflow(
     workspace_id: str,
     page_id: str,
     form_id: str,
     business_name: str,
     automation: AutomationConfig,
+    trigger_type: str = "trigger_form_submitted",
 ) -> Workflow:
-    """Build an automation workflow for form submissions."""
+    """Build an automation workflow for the specified trigger type."""
     nodes = []
     edges = []
     node_y = 100
+
+    # Build trigger config based on type
+    if trigger_type == "trigger_form_submitted":
+        trigger_config = {"form_id": form_id}
+    elif trigger_type == "trigger_chat_message":
+        trigger_config = {"page_id": page_id}
+    elif trigger_type == "trigger_page_visit":
+        trigger_config = {"page_id": page_id}
+    else:
+        trigger_config = {"form_id": form_id}
+        trigger_type = "trigger_form_submitted"
+
+    trigger_label = _TRIGGER_LABELS.get(trigger_type, "Form Submitted")
 
     # Trigger node
     trigger_id = str(uuid.uuid4())[:8]
     nodes.append(WorkflowNode(
         id=trigger_id,
-        node_type="trigger_form_submitted",
+        node_type=trigger_type,
         position={"x": 250, "y": node_y},
         data={
-            "label": "Form Submitted",
-            "config": {"form_id": form_id},
+            "label": trigger_label,
+            "config": trigger_config,
         },
     ))
     last_node_id = trigger_id

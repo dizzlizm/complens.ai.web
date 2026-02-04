@@ -235,12 +235,19 @@ CONTENT_SCHEMA = {
 }
 
 
-def render_block_html(block: dict, primary_color: str = "#6366f1") -> str:
+def render_block_html(
+    block: dict,
+    primary_color: str = "#6366f1",
+    forms: list[dict] | None = None,
+    workspace_id: str = "",
+) -> str:
     """Render a single block to HTML.
 
     Args:
         block: Block data (id, type, config, order).
         primary_color: Primary color for styling.
+        forms: List of form dicts for rendering form blocks.
+        workspace_id: Workspace ID for form blocks.
 
     Returns:
         HTML string for the block.
@@ -270,8 +277,40 @@ def render_block_html(block: dict, primary_color: str = "#6366f1") -> str:
         return _render_divider_block(config)
     elif block_type == "pricing":
         return _render_pricing_block(config, primary_color)
+    elif block_type == "form":
+        return _render_form_block(config, primary_color, forms, workspace_id)
     else:
         return f'<!-- Unknown block type: {block_type} -->'
+
+
+def _render_form_block(
+    config: dict,
+    primary_color: str,
+    forms: list[dict] | None,
+    workspace_id: str,
+) -> str:
+    """Render a form block by finding and rendering the referenced form.
+
+    Args:
+        config: Block config containing formId.
+        primary_color: Primary color for styling.
+        forms: List of available forms.
+        workspace_id: Workspace ID for form submission.
+
+    Returns:
+        HTML string for the form block.
+    """
+    form_id = config.get("formId", "")
+    if not form_id or not forms:
+        return '<!-- Form block: no form configured -->'
+
+    # Find the matching form
+    form = next((f for f in forms if f.get("id") == form_id), None)
+    if not form:
+        return f'<!-- Form block: form {_escape_html(form_id)} not found -->'
+
+    # Render the form
+    return render_form_html(form, workspace_id, primary_color)
 
 
 def _sanitize_url(url: str | None) -> str:
@@ -670,12 +709,63 @@ def _render_pricing_block(config: dict, primary_color: str) -> str:
     </section>'''
 
 
-def render_blocks_html(blocks: list[dict], primary_color: str = "#6366f1") -> str:
-    """Render a list of blocks to HTML.
+def _get_col_span_class(block: dict) -> str:
+    """Get the Tailwind col-span class for a block.
+
+    Args:
+        block: Block data dict.
+
+    Returns:
+        Tailwind col-span class string.
+    """
+    # Use colSpan (12-column grid) if set
+    col_span = block.get("colSpan")
+    if col_span:
+        return f"col-span-12 md:col-span-{col_span}"
+
+    # Fall back to legacy width (1-4 scale -> 12-column)
+    width = block.get("width", 4)
+    col_map = {1: 3, 2: 6, 3: 9, 4: 12}
+    span = col_map.get(width, 12)
+    return f"col-span-12 md:col-span-{span}"
+
+
+def _get_col_start_class(block: dict) -> str:
+    """Get the Tailwind col-start class for a block.
+
+    Args:
+        block: Block data dict.
+
+    Returns:
+        Tailwind col-start class string or empty.
+    """
+    col_start = block.get("colStart")
+    if col_start is not None and col_start > 0:
+        # colStart is 0-indexed, but Tailwind col-start is 1-indexed
+        return f"md:col-start-{col_start + 1}"
+    return ""
+
+
+def render_blocks_html(
+    blocks: list[dict],
+    primary_color: str = "#6366f1",
+    forms: list[dict] | None = None,
+    workspace_id: str = "",
+) -> str:
+    """Render a list of blocks to HTML with grid layout support.
+
+    Supports:
+    - colSpan: Column span in 12-column grid (4, 6, 8, 12)
+    - colStart: Starting column position
+    - row: Blocks with same row are grouped side-by-side
+    - width: Legacy 1-4 scale (converted to 12-column)
+    - form blocks: Renders embedded forms with layout support
 
     Args:
         blocks: List of block data dicts.
         primary_color: Primary color for styling.
+        forms: List of form dicts for form blocks.
+        workspace_id: Workspace ID for form blocks.
 
     Returns:
         Combined HTML string for all blocks.
@@ -683,12 +773,65 @@ def render_blocks_html(blocks: list[dict], primary_color: str = "#6366f1") -> st
     if not blocks:
         return ""
 
-    # Sort blocks by order
+    # Sort blocks by order first
     sorted_blocks = sorted(blocks, key=lambda b: b.get("order", 0))
 
-    html_parts = []
+    # Group blocks by row for side-by-side layout
+    # Blocks without a row get their own implicit row
+    rows: dict[int | str, list[dict]] = {}
+    implicit_row = 0
+
     for block in sorted_blocks:
-        html_parts.append(render_block_html(block, primary_color))
+        row = block.get("row")
+        if row is not None:
+            row_key = row
+        else:
+            # Each block without explicit row gets its own row
+            row_key = f"implicit_{implicit_row}"
+            implicit_row += 1
+
+        if row_key not in rows:
+            rows[row_key] = []
+        rows[row_key].append(block)
+
+    # Render rows
+    html_parts = []
+
+    # Sort rows: numeric rows first (sorted), then implicit rows in order
+    numeric_rows = sorted([k for k in rows.keys() if isinstance(k, int)])
+    implicit_rows = sorted([k for k in rows.keys() if isinstance(k, str)])
+    row_order = numeric_rows + implicit_rows
+
+    for row_key in row_order:
+        row_blocks = rows[row_key]
+
+        # Check if any block in this row needs grid layout (has colSpan < 12 or width < 4)
+        needs_grid = any(
+            block.get("colSpan", 12) < 12 or block.get("width", 4) < 4
+            for block in row_blocks
+        )
+
+        if needs_grid and len(row_blocks) > 0:
+            # Wrap row in a grid container
+            block_html_parts = []
+            for block in row_blocks:
+                col_span_class = _get_col_span_class(block)
+                col_start_class = _get_col_start_class(block)
+                block_html = render_block_html(block, primary_color, forms, workspace_id)
+
+                # Wrap block in grid cell
+                block_html_parts.append(
+                    f'<div class="{col_span_class} {col_start_class}">{block_html}</div>'
+                )
+
+            row_html = f'''<div class="grid grid-cols-12 gap-4 md:gap-6">
+                {"".join(block_html_parts)}
+            </div>'''
+            html_parts.append(row_html)
+        else:
+            # No grid needed - render blocks directly (full width)
+            for block in row_blocks:
+                html_parts.append(render_block_html(block, primary_color, forms, workspace_id))
 
     return "\n".join(html_parts)
 
@@ -842,6 +985,7 @@ def render_full_page(
     meta_title = _escape_html(page.get("meta_title") or page.get("name", ""))
     meta_description = _escape_html(page.get("meta_description") or page.get("subheadline", ""))
     primary_color = _sanitize_color(page.get("primary_color"), "#6366f1")
+    og_image_url = _escape_html(page.get("og_image_url") or "")
     # SECURITY: Sanitize custom CSS to prevent injection attacks
     custom_css = sanitize_css(page.get("custom_css", ""))
     page_id = _escape_js_string(page.get("id", ""))
@@ -856,9 +1000,16 @@ def render_full_page(
     ws_url_safe = _escape_js_string(ws_url) if ws_url.startswith(("wss://", "ws://")) else ""
     api_url_safe = _escape_js_string(api_url) if api_url.startswith(("https://", "http://")) else ""
 
+    # Track which forms are rendered via form blocks (to avoid double-rendering)
+    form_block_ids = {
+        block.get("config", {}).get("formId")
+        for block in blocks
+        if block.get("type") == "form"
+    }
+
     # Render blocks if present, otherwise use body_content
     if blocks:
-        body_content = render_blocks_html(blocks, primary_color)
+        body_content = render_blocks_html(blocks, primary_color, forms, workspace_id)
 
     # Build chat widget script
     chat_script = ""
@@ -869,6 +1020,7 @@ def render_full_page(
   try {{
     var WS_URL = '{ws_url_safe}';
     var PAGE_ID = '{page_id}';
+    var WORKSPACE_ID = '{_escape_js_string(workspace_id)}';
     var ws = null;
     var visitorId = localStorage.getItem('complens_vid');
     if (!visitorId) {{
@@ -911,7 +1063,7 @@ def render_full_page(
     function connectWS() {{
       try {{
         console.log('[Complens Chat] Connecting to', WS_URL);
-        ws = new WebSocket(WS_URL + '?page_id=' + PAGE_ID + '&visitor_id=' + visitorId);
+        ws = new WebSocket(WS_URL + '?page_id=' + PAGE_ID + '&workspace_id=' + WORKSPACE_ID + '&visitor_id=' + visitorId);
         ws.onopen = function() {{
           console.log('[Complens Chat] Connected');
           var initial = '{chat_initial_message}';
@@ -950,7 +1102,7 @@ def render_full_page(
           return;
         }}
         addMessage(msg, 'user');
-        ws.send(JSON.stringify({{ action: 'public_chat', page_id: PAGE_ID, message: msg, visitor_id: visitorId }}));
+        ws.send(JSON.stringify({{ action: 'public_chat', page_id: PAGE_ID, workspace_id: WORKSPACE_ID, message: msg, visitor_id: visitorId }}));
         input.value = '';
       }} catch (err) {{
         console.error('[Complens Chat] Error sending:', err);
@@ -985,12 +1137,14 @@ def render_full_page(
 </script>"""
 
     # Build form HTML and script if forms exist
+    # Skip forms that were already rendered as form blocks
     forms_html = ""
     form_script = ""
     if forms:
-        # Render each form
+        # Render forms that aren't already rendered in blocks
         for form in forms:
-            forms_html += render_form_html(form, workspace_id, primary_color)
+            if form.get("id") not in form_block_ids:
+                forms_html += render_form_html(form, workspace_id, primary_color)
 
         # Add form submission handler script
         form_script = f"""
@@ -1043,6 +1197,14 @@ def render_full_page(
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{meta_title}</title>
     <meta name="description" content="{meta_description}">
+    <meta property="og:title" content="{meta_title}">
+    <meta property="og:description" content="{meta_description}">
+    <meta property="og:type" content="website">{f"""
+    <meta property="og:image" content="{og_image_url}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="{og_image_url}">""" if og_image_url else ""}
+    <meta name="twitter:title" content="{meta_title}">
+    <meta name="twitter:description" content="{meta_description}">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {{

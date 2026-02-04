@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { PageBlock, BlockType, groupBlocksIntoRows, flattenRowsToBlocks } from './types';
 import LayoutCanvas from './LayoutCanvas';
-import SynthesisPopup from './SynthesisPopup';
+import SynthesisPopup, { type ApplyOptions } from './SynthesisPopup';
 import ProfilePromptBanner from './ProfilePromptBanner';
 import SeoSection from './SeoSection';
 import ScriptsSection from './ScriptsSection';
@@ -65,17 +65,6 @@ interface ContentTabV2Props {
   // Callbacks for resource creation
   onFormCreated?: (formId: string) => void;
   onWorkflowCreated?: (workflowId: string) => void;
-}
-
-interface ApplyOptions {
-  createForm: boolean;
-  createWorkflow: boolean;
-  generateImages: boolean;
-  // Workflow configuration
-  workflowTags: string[];
-  notifyOwner: boolean;
-  ownerEmail: string;
-  sendWelcomeEmail: boolean;
 }
 
 export default function ContentTabV2({
@@ -260,13 +249,16 @@ export default function ContentTabV2({
               })),
               synthesized_form_config: options.createForm ? {
                 name: synthesisResult.form_config.name,
-                fields: synthesisResult.form_config.fields,
+                fields: options.formFields.length > 0
+                  ? options.formFields.map(f => ({ ...f }) as Record<string, unknown>)
+                  : synthesisResult.form_config.fields,
                 submit_button_text: synthesisResult.form_config.submit_button_text,
                 success_message: synthesisResult.form_config.success_message,
                 add_tags: synthesisResult.form_config.add_tags,
               } : undefined,
               synthesized_workflow_config: options.createWorkflow ? {
                 name: synthesisResult.workflow_config?.name || 'Lead Follow-up',
+                trigger_type: options.workflowTrigger,
                 send_welcome_email: options.sendWelcomeEmail,
                 notify_owner: options.notifyOwner,
                 owner_email: options.ownerEmail || synthesisResult.workflow_config?.owner_email,
@@ -369,6 +361,20 @@ export default function ContentTabV2({
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
               />
             </div>
+            {pageUrl && (
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    pageUrl.startsWith('http') ? pageUrl : `${window.location.origin}${pageUrl}`
+                  );
+                }}
+                className="mt-1.5 text-xs text-indigo-600 hover:text-indigo-800 truncate max-w-full text-left"
+                title="Click to copy public URL"
+              >
+                {pageUrl.startsWith('http') ? pageUrl : `${window.location.origin}${pageUrl}`} — click to copy
+              </button>
+            )}
           </div>
         </div>
 

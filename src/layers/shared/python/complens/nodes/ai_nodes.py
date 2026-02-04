@@ -31,7 +31,7 @@ class AIDecisionNode(BaseNode):
         """
         options = self._get_config_value("decision_options", [])
         decision_prompt = self._get_config_value("decision_prompt", "")
-        model = self._get_config_value("model", "anthropic.claude-3-sonnet-20240229-v1:0")
+        model = self._get_config_value("model", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
         max_tokens = self._get_config_value("max_tokens", 500)
 
         if not options:
@@ -155,7 +155,7 @@ class AIGenerateNode(BaseNode):
         generate_prompt = self._get_config_value("generate_prompt", "")
         output_variable = self._get_config_value("generate_output_variable", "ai_output")
         generate_format = self._get_config_value("generate_format", "text")
-        model = self._get_config_value("model", "anthropic.claude-3-sonnet-20240229-v1:0")
+        model = self._get_config_value("model", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
         max_tokens = self._get_config_value("max_tokens", 500)
         temperature = self._get_config_value("temperature", 0.7)
         system_prompt = self._get_config_value("system_prompt", "")
@@ -257,7 +257,7 @@ class AIAnalyzeNode(BaseNode):
         analyze_type = self._get_config_value("analyze_type", "sentiment")
         analyze_prompt = self._get_config_value("analyze_prompt", "")
         output_variable = self._get_config_value("analyze_output_variable", "analysis")
-        model = self._get_config_value("model", "anthropic.claude-3-sonnet-20240229-v1:0")
+        model = self._get_config_value("model", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
         max_tokens = self._get_config_value("max_tokens", 500)
 
         # Get content to analyze from variables or trigger data
@@ -362,7 +362,7 @@ class AIConversationNode(BaseNode):
             "system_prompt",
             "You are a helpful marketing assistant.",
         )
-        model = self._get_config_value("model", "anthropic.claude-3-sonnet-20240229-v1:0")
+        model = self._get_config_value("model", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
         max_tokens = self._get_config_value("max_tokens", 500)
         context_messages = self._get_config_value("conversation_context_messages", 10)
         tools = self._get_config_value("conversation_tools", [])

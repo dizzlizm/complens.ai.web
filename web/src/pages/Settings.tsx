@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle, ExternalLink } from 'lucide-react';
 import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe } from '../lib/hooks';
+import TwilioConfigCard from '../components/settings/TwilioConfigCard';
+import SegmentConfigCard from '../components/settings/SegmentConfigCard';
+import TeamManagement from '../components/settings/TeamManagement';
 
 const settingsSections = [
   {
@@ -210,67 +213,8 @@ function WorkspaceSettings() {
 }
 
 function TeamSettings() {
-  const teamMembers = [
-    { name: 'John Doe', email: 'john@example.com', role: 'Owner', status: 'Active' },
-    { name: 'Jane Smith', email: 'jane@example.com', role: 'Admin', status: 'Active' },
-    { name: 'Bob Wilson', email: 'bob@example.com', role: 'Member', status: 'Pending' },
-  ];
-
-  return (
-    <div className="card">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">Team Members</h2>
-        <button className="btn btn-primary">Invite Member</button>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead>
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                Member
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                Role
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                Status
-              </th>
-              <th className="px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {teamMembers.map((member) => (
-              <tr key={member.email}>
-                <td className="px-4 py-3">
-                  <div>
-                    <p className="font-medium text-gray-900">{member.name}</p>
-                    <p className="text-sm text-gray-500">{member.email}</p>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-sm text-gray-700">{member.role}</td>
-                <td className="px-4 py-3">
-                  <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                      member.status === 'Active'
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-yellow-100 text-yellow-800'
-                    }`}
-                  >
-                    {member.status}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <button className="text-sm text-primary-600 hover:text-primary-700">
-                    Edit
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+  const { workspaceId } = useCurrentWorkspace();
+  return <TeamManagement workspaceId={workspaceId || ''} />;
 }
 
 function NotificationSettings() {
@@ -305,18 +249,22 @@ function IntegrationSettings() {
 
   return (
     <div className="space-y-6">
-      {/* Stripe Connect - Featured Integration */}
+      {/* Stripe Connect */}
       <StripeIntegrationCard workspaceId={workspaceId || ''} />
 
-      {/* Other Integrations */}
+      {/* Twilio */}
+      <TwilioConfigCard workspaceId={workspaceId || ''} />
+
+      {/* Segment */}
+      <SegmentConfigCard workspaceId={workspaceId || ''} />
+
+      {/* Coming Soon Integrations */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Other Integrations</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">More Integrations</h2>
         <div className="space-y-3">
           {[
-            { name: 'Twilio', description: 'SMS messaging and phone calls', connected: false, comingSoon: false },
-            { name: 'Segment', description: 'Customer data platform', connected: true, comingSoon: false },
-            { name: 'Slack', description: 'Team notifications', connected: false, comingSoon: true },
-            { name: 'Zapier', description: 'Workflow automation', connected: false, comingSoon: true },
+            { name: 'Slack', description: 'Team notifications', comingSoon: true },
+            { name: 'Zapier', description: 'Workflow automation', comingSoon: true },
           ].map((integration) => (
             <div
               key={integration.name}
@@ -329,22 +277,15 @@ function IntegrationSettings() {
                 <div>
                   <p className="font-medium text-gray-900">
                     {integration.name}
-                    {integration.comingSoon && (
-                      <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
-                        Coming Soon
-                      </span>
-                    )}
+                    <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+                      Coming Soon
+                    </span>
                   </p>
                   <p className="text-sm text-gray-500">{integration.description}</p>
                 </div>
               </div>
-              <button
-                className={`btn ${
-                  integration.connected ? 'btn-secondary' : 'btn-primary'
-                }`}
-                disabled={integration.comingSoon}
-              >
-                {integration.connected ? 'Configure' : 'Connect'}
+              <button className="btn btn-primary" disabled>
+                Connect
               </button>
             </div>
           ))}

@@ -9,12 +9,14 @@ import AuthLayout from './layouts/AuthLayout';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 import ForgotPassword from './pages/auth/ForgotPassword';
+import AcceptInvite from './pages/auth/AcceptInvite';
 
 // App pages
 import Dashboard from './pages/Dashboard';
 import Workflows from './pages/Workflows';
 import WorkflowEditor from './pages/WorkflowEditor';
 import Contacts from './pages/Contacts';
+import ContactDetail from './pages/ContactDetail';
 import Pages from './pages/Pages';
 import PageEditor from './pages/PageEditor';
 import BusinessProfile from './pages/BusinessProfile';
@@ -51,6 +53,7 @@ function App() {
             <Route path="/workflows" element={<Workflows />} />
             <Route path="/workflows/:id" element={<WorkflowEditor />} />
             <Route path="/contacts" element={<Contacts />} />
+            <Route path="/contacts/:id" element={<ContactDetail />} />
             <Route path="/pages" element={<Pages />} />
             <Route path="/pages/:id" element={<PageEditor />} />
             {/* Forms routes removed - forms are now managed inside Page Editor */}
@@ -58,6 +61,9 @@ function App() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/profile" element={<Profile />} />
           </Route>
+
+          {/* Accept invitation (handles both auth states internally) */}
+          <Route path="/accept-invite" element={<AcceptInvite />} />
 
           {/* Public pages (no auth required) */}
           <Route path="/p/:pageSlug" element={<PublicPage />} />
