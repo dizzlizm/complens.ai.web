@@ -23,15 +23,20 @@ import BusinessProfile from './pages/BusinessProfile';
 // Forms removed - now managed inside Page Editor
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
+import NotFound from './pages/NotFound';
 
 // Public pages (no auth)
 import PublicPage from './pages/public/PublicPage';
+
+// Error boundary
+import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <ToastProvider>
+        <ErrorBoundary>
         <Routes>
           {/* Auth routes */}
           <Route element={<AuthLayout />}>
@@ -68,9 +73,10 @@ function App() {
           {/* Public pages (no auth required) */}
           <Route path="/p/:pageSlug" element={<PublicPage />} />
 
-          {/* Catch-all redirect */}
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          {/* 404 */}
+          <Route path="*" element={<NotFound />} />
         </Routes>
+        </ErrorBoundary>
         </ToastProvider>
       </AuthProvider>
     </BrowserRouter>

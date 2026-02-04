@@ -7,6 +7,7 @@ import StatCard from '../components/dashboard/StatCard';
 import AnalyticsChart from '../components/dashboard/AnalyticsChart';
 import PageAnalytics from '../components/dashboard/PageAnalytics';
 import FormAnalytics from '../components/dashboard/FormAnalytics';
+import WelcomeCard from '../components/dashboard/WelcomeCard';
 
 const PERIODS = [
   { value: '7d', label: '7 days' },
@@ -52,6 +53,15 @@ export default function Dashboard() {
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 text-primary-600 animate-spin" />
         </div>
+      )}
+
+      {/* Onboarding checklist for new users */}
+      {!isLoading && summary && (
+        <WelcomeCard
+          hasPages={(summary.total_contacts ?? 0) > 0 || (analytics?.page_analytics?.total_page_views ?? 0) > 0}
+          hasContacts={(summary.total_contacts ?? 0) > 0}
+          hasWorkflows={(summary.total_workflows ?? 0) > 0}
+        />
       )}
 
       {/* Stats grid */}

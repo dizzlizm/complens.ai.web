@@ -479,7 +479,7 @@ def _render_testimonials_block(config: dict) -> str:
         company = _escape_html(item.get("company", ""))
         avatar = _sanitize_url(item.get("avatar", ""))
 
-        avatar_html = f'<img src="{avatar}" alt="{author}" class="w-10 h-10 rounded-full object-cover">' if avatar and avatar != "#" else '<div class="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center text-gray-400">👤</div>'
+        avatar_html = f'<img src="{avatar}" alt="{author}" class="w-10 h-10 rounded-full object-cover" loading="lazy">' if avatar and avatar != "#" else '<div class="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center text-gray-400">👤</div>'
 
         items_html += f'''
         <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
@@ -565,7 +565,7 @@ def _render_image_block(config: dict) -> str:
     return f'''
     <section class="py-8 px-6 bg-white">
         <figure class="{width_class} mx-auto">
-            <img src="{url}" alt="{alt}" class="w-full rounded-lg shadow-sm">
+            <img src="{url}" alt="{alt}" class="w-full rounded-lg shadow-sm" loading="lazy">
             {caption_html}
         </figure>
     </section>'''
@@ -966,6 +966,7 @@ def render_full_page(
     ws_url: str,
     api_url: str,
     forms: list[dict] | None = None,
+    canonical_url: str = "",
 ) -> str:
     """Render a page to a complete HTML document.
 
@@ -1205,6 +1206,8 @@ def render_full_page(
     <meta name="twitter:image" content="{og_image_url}">""" if og_image_url else ""}
     <meta name="twitter:title" content="{meta_title}">
     <meta name="twitter:description" content="{meta_description}">
+    <link rel="canonical" href="{canonical_url}">{f"""
+    <meta property="og:url" content="{canonical_url}">""" if canonical_url else ""}
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {{

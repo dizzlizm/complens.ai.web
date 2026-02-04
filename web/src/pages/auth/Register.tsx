@@ -2,12 +2,20 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 
+interface FieldErrors {
+  name?: string;
+  email?: string;
+  password?: string;
+  confirmPassword?: string;
+}
+
 export default function Register() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isLoading, setIsLoading] = useState(false);
   const [showVerification, setShowVerification] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
@@ -16,19 +24,36 @@ export default function Register() {
   const [searchParams] = useSearchParams();
   const redirectTo = searchParams.get('redirect');
 
+  const validate = (): boolean => {
+    const errors: FieldErrors = {};
+
+    if (!name.trim()) {
+      errors.name = 'Name is required';
+    }
+
+    if (!email.trim()) {
+      errors.email = 'Email is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      errors.email = 'Enter a valid email address';
+    }
+
+    if (password.length < 8) {
+      errors.password = 'Password must be at least 8 characters';
+    }
+
+    if (password !== confirmPassword) {
+      errors.confirmPassword = 'Passwords do not match';
+    }
+
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (password !== confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters');
-      return;
-    }
+    if (!validate()) return;
 
     setIsLoading(true);
 
@@ -56,6 +81,9 @@ export default function Register() {
       setIsLoading(false);
     }
   };
+
+  const inputClass = (field: keyof FieldErrors) =>
+    `input ${fieldErrors[field] ? 'border-red-400 focus:ring-red-500' : ''}`;
 
   if (showVerification) {
     return (
@@ -119,11 +147,11 @@ export default function Register() {
             id="name"
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="input"
+            onChange={(e) => { setName(e.target.value); setFieldErrors(prev => ({ ...prev, name: undefined })); }}
+            className={inputClass('name')}
             placeholder="John Doe"
-            required
           />
+          {fieldErrors.name && <p className="mt-1 text-sm text-red-600">{fieldErrors.name}</p>}
         </div>
 
         <div>
@@ -134,11 +162,11 @@ export default function Register() {
             id="email"
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="input"
+            onChange={(e) => { setEmail(e.target.value); setFieldErrors(prev => ({ ...prev, email: undefined })); }}
+            className={inputClass('email')}
             placeholder="you@example.com"
-            required
           />
+          {fieldErrors.email && <p className="mt-1 text-sm text-red-600">{fieldErrors.email}</p>}
         </div>
 
         <div>
@@ -149,11 +177,11 @@ export default function Register() {
             id="password"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="input"
+            onChange={(e) => { setPassword(e.target.value); setFieldErrors(prev => ({ ...prev, password: undefined })); }}
+            className={inputClass('password')}
             placeholder="At least 8 characters"
-            required
           />
+          {fieldErrors.password && <p className="mt-1 text-sm text-red-600">{fieldErrors.password}</p>}
         </div>
 
         <div>
@@ -164,11 +192,11 @@ export default function Register() {
             id="confirmPassword"
             type="password"
             value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            className="input"
+            onChange={(e) => { setConfirmPassword(e.target.value); setFieldErrors(prev => ({ ...prev, confirmPassword: undefined })); }}
+            className={inputClass('confirmPassword')}
             placeholder="Confirm your password"
-            required
           />
+          {fieldErrors.confirmPassword && <p className="mt-1 text-sm text-red-600">{fieldErrors.confirmPassword}</p>}
         </div>
 
         <button

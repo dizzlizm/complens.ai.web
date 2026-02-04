@@ -31,6 +31,7 @@ from complens.services import ai_service
 from complens.services.synthesis_engine import SynthesisEngine
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError
+from complens.utils.rate_limiter import check_rate_limit
 from complens.utils.responses import created, error, not_found, success, validation_error
 
 logger = structlog.get_logger()
@@ -38,6 +39,38 @@ logger = structlog.get_logger()
 # S3 for image storage
 ASSETS_BUCKET = os.environ.get("ASSETS_BUCKET", "")
 s3 = boto3.client("s3")
+
+# AI rate limits: 20 requests/min, 120/hour per workspace
+AI_RATE_LIMIT_PER_MIN = 20
+AI_RATE_LIMIT_PER_HOUR = 120
+
+
+class _AIRateLimitExceeded(Exception):
+    """Raised when AI rate limit is exceeded."""
+
+
+def _check_ai_rate_limit(
+    auth: dict, workspace_id: str, action: str = "ai_generate"
+) -> None:
+    """Check rate limit for AI generation endpoints.
+
+    Args:
+        auth: Auth context.
+        workspace_id: Workspace ID.
+        action: Rate limit action key.
+
+    Raises:
+        _AIRateLimitExceeded: If rate limit exceeded.
+    """
+    user_id = auth.get("userId", workspace_id)
+    result = check_rate_limit(
+        identifier=f"{workspace_id}:{user_id}",
+        action=action,
+        requests_per_minute=AI_RATE_LIMIT_PER_MIN,
+        requests_per_hour=AI_RATE_LIMIT_PER_HOUR,
+    )
+    if not result.allowed:
+        raise _AIRateLimitExceeded()
 
 
 def handler(event: dict[str, Any], context: Any) -> dict:
@@ -90,24 +123,33 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         elif "/ai/onboarding/answer" in path and http_method == "POST":
             return submit_onboarding_answer(workspace_id, event)
         elif "/ai/improve-block" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
             return improve_block(workspace_id, event)
         elif "/ai/generate-blocks" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
             return generate_blocks(workspace_id, event)
         elif "/ai/generate-image" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id, action="ai_image")
             return generate_image(workspace_id, event)
         elif "/ai/generate-workflow" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
             return generate_workflow(workspace_id, event)
         elif "/ai/generate-page-content" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
             return generate_page_content(workspace_id, event)
         elif "/ai/refine-page-content" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
             return refine_page_content(workspace_id, event)
         elif "/ai/synthesize-page" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
             return synthesize_page(workspace_id, event)
         else:
             return error("Not found", 404)
 
     except ForbiddenError as e:
         return error(e.message, 403, error_code="FORBIDDEN")
+    except _AIRateLimitExceeded:
+        return error("AI generation rate limit exceeded. Please wait and try again.", 429)
     except ValueError as e:
         return error(str(e), 400)
     except Exception as e:

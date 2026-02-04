@@ -11,39 +11,43 @@ interface PricingTier {
 
 const tiers: PricingTier[] = [
   {
-    name: 'Free',
+    name: 'Starter',
     price: '$0',
     priceId: '',
-    description: 'Get started with the basics',
+    description: 'Try it out — no credit card needed',
     features: [
       '100 contacts',
       '1 landing page',
       '3 workflows',
       '100 runs/month',
       '1 team member',
+      'AI page builder',
+      'AI chat widget',
     ],
   },
   {
     name: 'Pro',
-    price: '$29',
+    price: '$97',
     priceId: 'pro',
-    description: 'For growing businesses',
+    description: 'Everything you need to grow',
     features: [
-      '5,000 contacts',
-      '10 landing pages',
-      '25 workflows',
-      '5,000 runs/month',
+      '10,000 contacts',
+      '25 landing pages',
+      '50 workflows',
+      '10,000 runs/month',
       '5 team members',
       'Custom domains',
       'Knowledge base',
+      'AI workflow generation',
+      'Priority email support',
     ],
     highlighted: true,
   },
   {
     name: 'Business',
-    price: '$99',
+    price: '$297',
     priceId: 'business',
-    description: 'For scaling teams',
+    description: 'For agencies & scaling teams',
     features: [
       'Unlimited contacts',
       'Unlimited pages',
@@ -52,7 +56,8 @@ const tiers: PricingTier[] = [
       'Unlimited team members',
       'Custom domains',
       'Knowledge base',
-      'Priority support',
+      'White-glove onboarding',
+      'Dedicated support',
     ],
   },
 ];
@@ -134,7 +139,7 @@ export default function PricingTable({ currentPlan, onSelectPlan, isLoading, loa
                 disabled
                 className="w-full py-2.5 px-4 rounded-lg text-sm font-medium bg-gray-50 text-gray-400 cursor-not-allowed"
               >
-                Free Plan
+                Starter Plan
               </button>
             )}
           </div>

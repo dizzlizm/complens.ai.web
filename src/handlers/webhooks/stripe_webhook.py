@@ -144,7 +144,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         # Still return 200 to prevent retries for processing errors
         return {
             "statusCode": 200,
-            "body": json.dumps({"received": True, "processing_error": str(e)}),
+            "body": json.dumps({"received": True, "processing_error": True}),
         }
 
     return {

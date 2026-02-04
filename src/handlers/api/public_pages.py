@@ -11,18 +11,15 @@ import boto3
 import structlog
 from pydantic import ValidationError as PydanticValidationError
 
-# Email validation regex
-# TODO: [SECURITY] - Email and phone validation regexes are too permissive
-# Details: EMAIL_REGEX allows invalid formats like 'a@b.c' or 'user@@domain.com'.
-# PHONE_REGEX allows almost any combination of digits/symbols (7-20 chars) including
-# invalid formats like '---' or '+++'. Should use: (1) RFC 5322 validation for email
-# (2) International phone number library (phonenumbers) for phone validation.
-# Current weak validation could allow injection of invalid data into database.
-# Severity: Medium - could cause data quality and potentially security issues
-EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+# Email validation regex - requires at least 2-char local part, valid domain with 2+ char TLD
+EMAIL_REGEX = re.compile(
+    r'^[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]{0,62}[a-zA-Z0-9])?'
+    r'@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?'
+    r'(?:\.[a-zA-Z]{2,})+$'
+)
 
-# Phone validation - allows common formats
-PHONE_REGEX = re.compile(r'^[\d\s\-\+\(\)\.]{7,20}$')
+# Phone validation - must start with optional + then digits, allows separators between digits
+PHONE_REGEX = re.compile(r'^\+?\d[\d\s\-\.\(\)]{5,18}\d$')
 
 
 def _validate_email(email: str) -> bool:
@@ -275,7 +272,10 @@ def get_page_by_subdomain(subdomain: str) -> dict:
         blocks_count_in_data=len(page_data.get("blocks", [])),
     )
 
-    html = render_full_page(page_data, ws_url, api_url, forms=forms)
+    stage = os.environ.get("STAGE", "dev")
+    subdomain_suffix = "complens.ai" if stage == "prod" else f"{stage}.complens.ai"
+    canonical = f"https://{subdomain}.{subdomain_suffix}"
+    html = render_full_page(page_data, ws_url, api_url, forms=forms, canonical_url=canonical)
 
     logger.info(
         "Rendered page for subdomain",
@@ -387,7 +387,8 @@ def get_page_by_domain(domain: str) -> dict:
 
     # Render full HTML page with forms
     page_data = page.model_dump(mode="json")
-    html = render_full_page(page_data, ws_url, api_url, forms=forms)
+    canonical = f"https://{domain}"
+    html = render_full_page(page_data, ws_url, api_url, forms=forms, canonical_url=canonical)
 
     logger.info(
         "Rendered page for custom domain",

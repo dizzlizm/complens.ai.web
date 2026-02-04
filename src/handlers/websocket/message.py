@@ -9,6 +9,7 @@ import boto3
 import structlog
 
 from complens.repositories.page import PageRepository
+from complens.utils.rate_limiter import check_rate_limit
 
 logger = structlog.get_logger()
 
@@ -105,6 +106,29 @@ def handle_public_chat(
             },
         )
         return {"statusCode": 400, "body": "workspace_id is required"}
+
+    # Rate limit: 5 messages/minute, 30/hour per visitor
+    source_ip = (
+        body.get("requestContext", {}).get("identity", {}).get("sourceIp")
+        or visitor_id
+    )
+    rate_check = check_rate_limit(
+        identifier=source_ip,
+        action="public_chat",
+        requests_per_minute=5,
+        requests_per_hour=30,
+    )
+    if not rate_check.allowed:
+        send_to_connection(
+            connection_id,
+            domain,
+            stage,
+            {
+                "action": "ai_response",
+                "message": "You're sending messages too quickly. Please wait a moment and try again.",
+            },
+        )
+        return {"statusCode": 429}
 
     logger.info(
         "Public chat message",
