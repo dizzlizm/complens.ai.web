@@ -3,6 +3,7 @@
 import json
 import os
 from typing import Any
+from urllib.parse import unquote
 
 import boto3
 import structlog
@@ -66,7 +67,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         if "/invite" in path and http_method == "POST":
             return invite_member(team_repo, invite_repo, workspace_id, auth, event)
         elif "/invitations/" in path and http_method == "DELETE":
-            email = path.split("/invitations/")[-1]
+            # Use pathParameters (URL-decoded by API Gateway) instead of path splitting
+            email = path_params.get("email") or unquote(path.split("/invitations/")[-1])
             return revoke_invitation(invite_repo, workspace_id, email)
         elif http_method == "GET" and not user_id:
             return list_team(team_repo, invite_repo, workspace_id)

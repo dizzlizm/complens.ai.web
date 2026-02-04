@@ -889,6 +889,11 @@ Resources:
                 - cognito-idp:AdminGetUser
                 - cognito-idp:AdminUpdateUserAttributes
               Resource: !GetAtt UserPool.Arn
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
       Events:
         ListTeam:
           Type: Api
