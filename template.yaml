@@ -100,7 +100,7 @@ Parameters:
 
   StripeEventSourceName:
     Type: String
-    Default: "aws.partner/stripe.com/ed_test_61U6Jg6JnQnTwSdV416U6JPy9FSQCT3LQz2DBAY5YKsC"
+    Default: ""
     Description: "Stripe EventBridge partner event source name (e.g., aws.partner/stripe.com/ed_xxx)"
 
   StripeProPriceId:
