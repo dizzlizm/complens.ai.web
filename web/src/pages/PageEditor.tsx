@@ -1,35 +1,31 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { usePage, useUpdatePage, checkSubdomainAvailability, type UpdatePageInput, type ChatConfig } from '../lib/hooks/usePages';
-
-// Auto-save delay in milliseconds
-const AUTO_SAVE_DELAY = 3000;
-import { usePageForms, useCreatePageForm, useDeletePageForm, type Form, type FormField } from '../lib/hooks/useForms';
-import { usePageWorkflows, useDeletePageWorkflow } from '../lib/hooks/useWorkflows';
+import { usePage, useUpdatePage, type UpdatePageInput, type ChatConfig } from '../lib/hooks/usePages';
+import { usePageForms, type Form } from '../lib/hooks/useForms';
+import { usePageWorkflows } from '../lib/hooks/useWorkflows';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
-import { useDomains, useCreateDomain, useDeleteDomain, getDomainStatusInfo } from '../lib/hooks/useDomains';
 import {
   useBusinessProfile,
-  useUpdateBusinessProfile,
-  useAnalyzeContent,
-  useSynthesizePage,
-  INDUSTRY_OPTIONS,
-  BUSINESS_TYPE_OPTIONS,
-  BRAND_VOICE_OPTIONS,
   GeneratedPageContent,
   AutomationConfig,
 } from '../lib/hooks/useAI';
 import { useToast } from '../components/Toast';
-import FormBuilder from '../components/FormBuilder';
 import { PageBlock, AgenticPageBuilder, ContentTabV2 } from '../components/page-builder';
-import { Plus, Trash2, GitBranch, ExternalLink, Sparkles, Loader2, BookOpen } from 'lucide-react';
-import KnowledgeBaseSettings from '../components/settings/KnowledgeBaseSettings';
+import { Loader2 } from 'lucide-react';
+import Tabs from '../components/ui/Tabs';
+import DomainTab from '../components/page-editor/DomainTab';
+import WorkflowsTab from '../components/page-editor/WorkflowsTab';
+import FormsTab from '../components/page-editor/FormsTab';
+import AITab, { type AISubTab } from '../components/page-editor/AITab';
+
+// Auto-save delay in milliseconds
+const AUTO_SAVE_DELAY = 3000;
 
 // Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.dev.complens.ai';
 const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '');
 
-type Tab = 'content' | 'forms' | 'workflows' | 'chat' | 'knowledge-base' | 'domain' | 'profile';
+type Tab = 'content' | 'forms' | 'workflows' | 'ai' | 'domain';
 
 export default function PageEditor() {
   const { id: pageId } = useParams<{ id: string }>();
@@ -41,64 +37,12 @@ export default function PageEditor() {
   const { data: pageForms } = usePageForms(workspaceId, pageId);
   const { data: pageWorkflows } = usePageWorkflows(workspaceId, pageId);
   const updatePage = useUpdatePage(workspaceId || '', pageId || '');
-  const createForm = useCreatePageForm(workspaceId || '', pageId || '');
-  const deleteForm = useDeletePageForm(workspaceId || '', pageId || '');
-  const deleteWorkflow = useDeletePageWorkflow(workspaceId || '', pageId || '');
 
-  // AI Profile hooks - page-specific
-  const { data: profile, isLoading: profileLoading } = useBusinessProfile(workspaceId, pageId);
-  const updateProfile = useUpdateBusinessProfile(workspaceId || '', pageId);
-  const analyzeContent = useAnalyzeContent(workspaceId || '');
-  const synthesizePage = useSynthesizePage(workspaceId || '');
-
-  // Content analysis state
-  const [showContentInput, setShowContentInput] = useState(false);
-  const [pastedContent, setPastedContent] = useState('');
-
-  // Local profile state to avoid API calls on every keystroke
-  const [profileForm, setProfileForm] = useState({
-    business_name: '',
-    tagline: '',
-    description: '',
-    industry: '',
-    business_type: '',
-    brand_voice: '',
-    target_audience: '',
-    unique_value_proposition: '',
-    achievements: [] as string[],
-  });
-  const [profileInitialized, setProfileInitialized] = useState(false);
-
-  // Initialize profile form when profile data loads
-  useEffect(() => {
-    if (profile && !profileInitialized) {
-      setProfileForm({
-        business_name: profile.business_name || '',
-        tagline: profile.tagline || '',
-        description: profile.description || '',
-        industry: profile.industry || '',
-        business_type: profile.business_type || '',
-        brand_voice: profile.brand_voice || '',
-        target_audience: profile.target_audience || '',
-        unique_value_proposition: profile.unique_value_proposition || '',
-        achievements: profile.achievements || [],
-      });
-      setProfileInitialized(true);
-    }
-  }, [profile, profileInitialized]);
-
-  // Reset state when pageId changes (navigating to different page)
-  useEffect(() => {
-    setProfileInitialized(false);
-    initialLoadDone.current = false;
-  }, [pageId]);
-
-  // Save profile field on blur (only if value changed)
-  const handleProfileBlur = (field: string, value: string | string[]) => {
-    updateProfile.mutate({ [field]: value });
-  };
+  // AI Profile hook - only for profile score in ContentTabV2
+  const { data: profile } = useBusinessProfile(workspaceId, pageId);
 
   const [activeTab, setActiveTab] = useState<Tab>('content');
+  const [aiSubTab, setAISubTab] = useState<AISubTab>('profile');
   const [formData, setFormData] = useState<UpdatePageInput>({});
   const [hasChanges, setHasChanges] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -175,10 +119,14 @@ export default function PageEditor() {
   // Track if we've done initial load
   const initialLoadDone = useRef(false);
 
+  // Reset state when pageId changes (navigating to different page)
+  useEffect(() => {
+    initialLoadDone.current = false;
+  }, [pageId]);
+
   // Initialize form data when page loads
   useEffect(() => {
     if (page) {
-      // Always update form data (these are less likely to have unsaved edits)
       setFormData({
         name: page.name,
         slug: page.slug,
@@ -208,9 +156,6 @@ export default function PageEditor() {
       });
 
       // Only initialize blocks on first load
-      // After initial load, we NEVER overwrite local blocks from server data
-      // to prevent React Query background refetches from clobbering edits
-      // (especially layout changes like colSpan that may not round-trip properly)
       if (!initialLoadDone.current) {
         setBlocks((page.blocks || []) as PageBlock[]);
         initialLoadDone.current = true;
@@ -294,7 +239,6 @@ export default function PageEditor() {
 
     // Check if this was an update to the current page (update mode)
     if (result.createdPage?.updated) {
-      // Page was updated in place - data will refresh via React Query invalidation
       const features = [];
       if (result.blocks.length > 0) features.push(`${result.blocks.length} sections`);
       if (result.createdPage.form) features.push('lead capture form');
@@ -302,8 +246,6 @@ export default function PageEditor() {
       if (result.includeChat) features.push('chat widget');
 
       toast.success(`Page updated with AI! Features: ${features.join(', ')}.`);
-
-      // Reset form state to trigger re-sync with updated server data
       setHasChanges(false);
       return;
     }
@@ -317,17 +259,13 @@ export default function PageEditor() {
       if (result.includeChat) features.push('chat widget');
 
       toast.success(`Page "${result.createdPage.page.name}" created! Features: ${features.join(', ')}.`);
-
-      // Navigate to the newly created page
       navigate(`/pages/${result.createdPage.page.id}`);
       return;
     }
 
     // Fallback: update current page with generated blocks locally (legacy behavior)
-    // Replace all blocks with generated ones
     setBlocks(result.blocks.map((b, i) => ({ ...b, order: i })));
 
-    // Update form data with generated content
     const headline = result.content.content.headlines?.[0] || '';
     const subheadline = result.content.content.hero_subheadline || result.content.content.tagline || '';
 
@@ -335,7 +273,7 @@ export default function PageEditor() {
       ...prev,
       headline,
       subheadline,
-      body_content: '', // Clear legacy body_content since we're using blocks
+      body_content: '',
       primary_color: result.colors.primary,
       chat_config: result.includeChat ? {
         enabled: true,
@@ -347,7 +285,6 @@ export default function PageEditor() {
 
     setHasChanges(true);
 
-    // Show success message with details about what was created
     const features = [];
     if (result.blocks.length > 0) features.push(`${result.blocks.length} sections`);
     if (result.includeForm) features.push('lead capture form');
@@ -355,159 +292,6 @@ export default function PageEditor() {
     if (result.includeChat) features.push('chat widget');
 
     toast.success(`Page built with AI! Created: ${features.join(', ')}. Review and save your changes.`);
-  };
-
-  // Form builder state
-  const [editingForm, setEditingForm] = useState<Form | null>(null);
-  const [showFormBuilder, setShowFormBuilder] = useState(false);
-  const [aiFormDescription, setAiFormDescription] = useState('');
-  const [formBuilderData, setFormBuilderData] = useState<{
-    name: string;
-    fields: FormField[];
-    submitButtonText: string;
-    successMessage: string;
-  }>({
-    name: 'New Form',
-    fields: [],
-    submitButtonText: 'Submit',
-    successMessage: 'Thank you for your submission!',
-  });
-
-  const createFormFieldId = () => crypto.randomUUID().slice(0, 8);
-
-  const mapSynthesizedField = (field: Record<string, unknown>, index: number): FormField => {
-    const allowedTypes: FormField['type'][] = [
-      'text',
-      'email',
-      'phone',
-      'textarea',
-      'select',
-      'checkbox',
-      'radio',
-      'date',
-      'number',
-      'hidden',
-    ];
-
-    const rawType = typeof field.type === 'string' ? field.type : 'text';
-    const type = (allowedTypes.includes(rawType as FormField['type']) ? rawType : 'text') as FormField['type'];
-    const name = typeof field.name === 'string' && field.name.trim() ? field.name : `field_${index + 1}`;
-
-    return {
-      id: createFormFieldId(),
-      name,
-      label: typeof field.label === 'string' && field.label.trim() ? field.label : name,
-      type,
-      required: typeof field.required === 'boolean' ? field.required : false,
-      placeholder: typeof field.placeholder === 'string' ? field.placeholder : null,
-      options: Array.isArray(field.options) ? field.options.filter((o) => typeof o === 'string') : [],
-      validation_pattern: typeof field.validation_pattern === 'string' ? field.validation_pattern : null,
-      default_value: typeof field.default_value === 'string' ? field.default_value : null,
-      map_to_contact_field: typeof field.map_to_contact_field === 'string' ? field.map_to_contact_field : null,
-    };
-  };
-
-  const handleCreateForm = async () => {
-    try {
-      await createForm.mutateAsync({
-        name: formBuilderData.name,
-        fields: formBuilderData.fields,
-        submit_button_text: formBuilderData.submitButtonText,
-        success_message: formBuilderData.successMessage,
-        create_contact: true,
-        trigger_workflow: true,
-      });
-      setShowFormBuilder(false);
-      setFormBuilderData({
-        name: 'New Form',
-        fields: [],
-        submitButtonText: 'Submit',
-        successMessage: 'Thank you for your submission!',
-      });
-      setAiFormDescription('');
-      toast.success('Form created successfully');
-    } catch (err) {
-      console.error('Failed to create form:', err);
-      toast.error('Failed to create form');
-    }
-  };
-
-  const handleAIGenerateForm = async () => {
-    if (!aiFormDescription.trim()) {
-      toast.warning('Please describe the form you want to create.');
-      return;
-    }
-
-    try {
-      const result = await synthesizePage.mutateAsync({
-        description: aiFormDescription.trim(),
-        include_form: true,
-        include_chat: false,
-        block_types: ['form'],
-        page_id: pageId || undefined,
-      });
-
-      if (!result.form_config) {
-        toast.error('AI did not return a form configuration. Please try again.');
-        return;
-      }
-
-      const fallbackFields: FormField[] = [
-        {
-          id: createFormFieldId(),
-          name: 'email',
-          label: 'Email',
-          type: 'email',
-          required: true,
-          placeholder: 'your@email.com',
-          options: [],
-          validation_pattern: null,
-          default_value: null,
-          map_to_contact_field: 'email',
-        },
-      ];
-
-      const fields = result.form_config?.fields?.length
-        ? result.form_config.fields.map(mapSynthesizedField)
-        : fallbackFields;
-
-      const name = formBuilderData.name.trim() || result.form_config?.name || 'New Form';
-
-      setFormBuilderData((prev) => ({
-        ...prev,
-        name,
-        fields,
-        submitButtonText: result.form_config?.submit_button_text ?? 'Submit',
-        successMessage: result.form_config?.success_message ?? 'Thank you for your submission!',
-      }));
-
-      toast.success('AI form draft ready. Review and save.');
-    } catch (err) {
-      console.error('Failed to generate form with AI:', err);
-      toast.error('Failed to generate form with AI');
-    }
-  };
-
-  const handleDeleteForm = async (formId: string) => {
-    if (!confirm('Are you sure you want to delete this form?')) return;
-    try {
-      await deleteForm.mutateAsync(formId);
-      toast.success('Form deleted');
-    } catch (err) {
-      console.error('Failed to delete form:', err);
-      toast.error('Failed to delete form');
-    }
-  };
-
-  const handleDeleteWorkflow = async (workflowId: string) => {
-    if (!confirm('Are you sure you want to delete this workflow?')) return;
-    try {
-      await deleteWorkflow.mutateAsync(workflowId);
-      toast.success('Workflow deleted');
-    } catch (err) {
-      console.error('Failed to delete workflow:', err);
-      toast.error('Failed to delete workflow');
-    }
   };
 
   if (isLoading) {
@@ -532,11 +316,9 @@ export default function PageEditor() {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'content', label: 'Content' },
-    { id: 'profile', label: 'AI Profile' },
+    { id: 'ai', label: 'AI' },
     { id: 'forms', label: `Forms${pageForms?.length ? ` (${pageForms.length})` : ''}` },
     { id: 'workflows', label: `Workflows${pageWorkflows?.length ? ` (${pageWorkflows.length})` : ''}` },
-    { id: 'chat', label: 'Chat' },
-    { id: 'knowledge-base', label: 'Knowledge Base' },
     { id: 'domain', label: 'Domain' },
   ];
 
@@ -613,23 +395,7 @@ export default function PageEditor() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200">
-        <nav className="flex gap-8">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === tab.id
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-      </div>
+      <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
       {/* Tab Content */}
       <div className={activeTab === 'content' ? '' : 'bg-white rounded-lg shadow p-6'}>
@@ -643,7 +409,7 @@ export default function PageEditor() {
             workspaceId={workspaceId}
             pageId={pageId}
             profileScore={profile?.profile_score || 0}
-            onGoToProfile={() => setActiveTab('profile')}
+            onGoToProfile={() => { setActiveTab('ai'); setAISubTab('profile'); }}
             pageName={formData.name}
             pageSlug={formData.slug}
             pageUrl={page?.subdomain ? `https://${page.subdomain}.${SUBDOMAIN_SUFFIX}` : `/p/${page?.slug}?ws=${workspaceId}`}
@@ -655,14 +421,12 @@ export default function PageEditor() {
             onPrimaryColorChange={(color) => handleChange('primary_color', color)}
             onSecondaryColorChange={(color) => handleChange('secondary_color', color)}
             onAccentColorChange={(color) => handleChange('accent_color', color)}
-            // SEO fields
             metaTitle={formData.meta_title || ''}
             metaDescription={formData.meta_description || ''}
             ogImageUrl={formData.og_image_url || ''}
             onMetaTitleChange={(value) => handleChange('meta_title', value)}
             onMetaDescriptionChange={(value) => handleChange('meta_description', value)}
             onOgImageUrlChange={(value) => handleChange('og_image_url', value)}
-            // Scripts & Tracking
             gaTrackingId={formData.ga_tracking_id || ''}
             fbPixelId={formData.fb_pixel_id || ''}
             scriptsHead={formData.scripts_head || ''}
@@ -674,579 +438,29 @@ export default function PageEditor() {
           />
         )}
 
-        {activeTab === 'profile' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">AI Profile</h3>
-                <p className="text-sm text-gray-600">
-                  Tell AI about this page's context to generate better content
-                </p>
-              </div>
-              {profile && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-500">Profile Score:</span>
-                  <span className="text-lg font-bold text-indigo-600">{profile.profile_score}%</span>
-                </div>
-              )}
-            </div>
-
-            {/* Quick Import */}
-            <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl p-4 border border-purple-100">
-              <button
-                onClick={() => setShowContentInput(!showContentInput)}
-                className="flex items-center gap-3 w-full text-left"
-              >
-                <div className="p-2 bg-purple-100 rounded-lg">
-                  <Sparkles className="w-5 h-5 text-purple-600" />
-                </div>
-                <div className="flex-1">
-                  <p className="font-medium text-gray-900">Import from Content</p>
-                  <p className="text-sm text-gray-600">
-                    Paste your website, resume, or doc and AI will extract info
-                  </p>
-                </div>
-              </button>
-
-              {showContentInput && (
-                <div className="mt-4 space-y-3">
-                  <textarea
-                    value={pastedContent}
-                    onChange={(e) => setPastedContent(e.target.value)}
-                    placeholder="Paste your content here..."
-                    rows={6}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                  <div className="flex justify-end gap-3">
-                    <button
-                      onClick={() => {
-                        setShowContentInput(false);
-                        setPastedContent('');
-                      }}
-                      className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={async () => {
-                        if (!pastedContent.trim()) return;
-                        try {
-                          const result = await analyzeContent.mutateAsync({
-                            content: pastedContent,
-                            auto_update: true,
-                            page_id: pageId,
-                          });
-                          setPastedContent('');
-                          setShowContentInput(false);
-
-                          // Update local form with extracted values so user sees them immediately
-                          if (result.profile) {
-                            setProfileForm({
-                              business_name: result.profile.business_name || '',
-                              tagline: result.profile.tagline || '',
-                              description: result.profile.description || '',
-                              industry: result.profile.industry || '',
-                              business_type: result.profile.business_type || '',
-                              brand_voice: result.profile.brand_voice || '',
-                              target_audience: result.profile.target_audience || '',
-                              unique_value_proposition: result.profile.unique_value_proposition || '',
-                              achievements: result.profile.achievements || [],
-                            });
-                          }
-
-                          toast.success(`Extracted ${Object.keys(result.extracted).length} fields from your content!`);
-                        } catch (err) {
-                          toast.error('Failed to analyze content');
-                        }
-                      }}
-                      disabled={!pastedContent.trim() || analyzeContent.isPending}
-                      className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
-                    >
-                      {analyzeContent.isPending ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Analyzing...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4" />
-                          Extract Info
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Profile Form */}
-            {profileLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {/* Basic Info */}
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Business/Person Name
-                    </label>
-                    <input
-                      type="text"
-                      value={profileForm.business_name}
-                      onChange={(e) => setProfileForm({ ...profileForm, business_name: e.target.value })}
-                      onBlur={(e) => handleProfileBlur('business_name', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder="Your business or your name"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Tagline
-                    </label>
-                    <input
-                      type="text"
-                      value={profileForm.tagline}
-                      onChange={(e) => setProfileForm({ ...profileForm, tagline: e.target.value })}
-                      onBlur={(e) => handleProfileBlur('tagline', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder="A short memorable phrase"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Description
-                  </label>
-                  <textarea
-                    value={profileForm.description}
-                    onChange={(e) => setProfileForm({ ...profileForm, description: e.target.value })}
-                    onBlur={(e) => handleProfileBlur('description', e.target.value)}
-                    rows={3}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="What does this page represent? What are you offering?"
-                  />
-                </div>
-
-                <div className="grid md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Industry
-                    </label>
-                    <select
-                      value={profileForm.industry || 'other'}
-                      onChange={(e) => {
-                        setProfileForm({ ...profileForm, industry: e.target.value });
-                        updateProfile.mutate({ industry: e.target.value });
-                      }}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      {INDUSTRY_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Business Type
-                    </label>
-                    <select
-                      value={profileForm.business_type || 'other'}
-                      onChange={(e) => {
-                        setProfileForm({ ...profileForm, business_type: e.target.value });
-                        updateProfile.mutate({ business_type: e.target.value });
-                      }}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      {BUSINESS_TYPE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Brand Voice
-                    </label>
-                    <select
-                      value={profileForm.brand_voice || 'professional'}
-                      onChange={(e) => {
-                        setProfileForm({ ...profileForm, brand_voice: e.target.value });
-                        updateProfile.mutate({ brand_voice: e.target.value });
-                      }}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      {BRAND_VOICE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Target Audience
-                  </label>
-                  <textarea
-                    value={profileForm.target_audience}
-                    onChange={(e) => setProfileForm({ ...profileForm, target_audience: e.target.value })}
-                    onBlur={(e) => handleProfileBlur('target_audience', e.target.value)}
-                    rows={2}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="Who is this page for? Describe your ideal visitor."
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Unique Value Proposition
-                  </label>
-                  <textarea
-                    value={profileForm.unique_value_proposition}
-                    onChange={(e) => setProfileForm({ ...profileForm, unique_value_proposition: e.target.value })}
-                    onBlur={(e) => handleProfileBlur('unique_value_proposition', e.target.value)}
-                    rows={2}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="What makes you different? Why should visitors choose you?"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Achievements & Social Proof
-                  </label>
-                  <textarea
-                    value={profileForm.achievements.join('\n')}
-                    onChange={(e) => setProfileForm({
-                      ...profileForm,
-                      achievements: e.target.value.split('\n')
-                    })}
-                    onBlur={(e) => handleProfileBlur('achievements', e.target.value.split('\n').filter(a => a.trim()))}
-                    rows={3}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="One per line: awards, metrics, notable clients, years of experience..."
-                  />
-                </div>
-              </div>
-            )}
-          </div>
+        {activeTab === 'ai' && (
+          <AITab
+            workspaceId={workspaceId || ''}
+            pageId={pageId || ''}
+            chatConfig={formData.chat_config}
+            onChatConfigChange={handleChatConfigChange}
+            activeSubTab={aiSubTab}
+            onSubTabChange={setAISubTab}
+          />
         )}
 
         {activeTab === 'forms' && (
-          <div className="space-y-6">
-            {/* Form Builder Modal */}
-            {showFormBuilder ? (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-medium text-gray-900">
-                    {editingForm ? 'Edit Form' : 'Create New Form'}
-                  </h3>
-                  <button
-                    onClick={() => {
-                      setShowFormBuilder(false);
-                      setEditingForm(null);
-                      setAiFormDescription('');
-                    }}
-                    className="text-gray-500 hover:text-gray-700"
-                  >
-                    Cancel
-                  </button>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Form Name
-                  </label>
-                  <input
-                    type="text"
-                    value={formBuilderData.name}
-                    onChange={(e) => setFormBuilderData(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div className="border border-indigo-100 rounded-lg p-4 bg-indigo-50/40">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-indigo-900">Build with AI</p>
-                      <p className="text-xs text-indigo-700">Describe the form and we’ll draft the fields for you.</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleAIGenerateForm}
-                      disabled={synthesizePage.isPending}
-                      className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
-                    >
-                      {synthesizePage.isPending ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Generating...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4" />
-                          Build with AI
-                        </>
-                      )}
-                    </button>
-                  </div>
-                  <div className="mt-3">
-                    <label className="block text-xs font-medium text-indigo-900 mb-1">
-                      Form description
-                    </label>
-                    <textarea
-                      value={aiFormDescription}
-                      onChange={(e) => setAiFormDescription(e.target.value)}
-                      rows={3}
-                      placeholder="e.g., Intake form for a photography studio with name, email, event date, and budget."
-                      className="w-full px-3 py-2 border border-indigo-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-                    />
-                  </div>
-                </div>
-
-                <FormBuilder
-                  fields={formBuilderData.fields}
-                  onChange={(fields) => setFormBuilderData(prev => ({ ...prev, fields }))}
-                  submitButtonText={formBuilderData.submitButtonText}
-                  onSubmitButtonTextChange={(text) => setFormBuilderData(prev => ({ ...prev, submitButtonText: text }))}
-                  successMessage={formBuilderData.successMessage}
-                  onSuccessMessageChange={(msg) => setFormBuilderData(prev => ({ ...prev, successMessage: msg }))}
-                />
-
-                <div className="flex justify-end gap-3 pt-4 border-t">
-                  <button
-                    onClick={() => {
-                      setShowFormBuilder(false);
-                      setEditingForm(null);
-                      setAiFormDescription('');
-                    }}
-                    className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleCreateForm}
-                    disabled={createForm.isPending || synthesizePage.isPending || !formBuilderData.name.trim()}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-                  >
-                    {createForm.isPending ? 'Creating...' : 'Create Form'}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between">
-                  <p className="text-gray-600">
-                    Forms capture visitor information and can trigger workflows.
-                  </p>
-                  <button
-                    onClick={() => setShowFormBuilder(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add Form
-                  </button>
-                </div>
-
-                {pageForms && pageForms.length > 0 ? (
-                  <div className="space-y-3">
-                    {pageForms.map((form) => (
-                      <div
-                        key={form.id}
-                        className="flex items-center gap-4 p-4 border border-gray-200 rounded-lg hover:border-gray-300"
-                      >
-                        <div className="flex-1">
-                          <p className="font-medium text-gray-900">{form.name}</p>
-                          <p className="text-sm text-gray-500">
-                            {form.fields.length} fields • {form.submission_count} submissions
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleDeleteForm(form.id)}
-                            className="p-2 text-gray-400 hover:text-red-500"
-                            title="Delete form"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
-                    <p className="text-gray-500 mb-2">No forms on this page yet</p>
-                    <button
-                      onClick={() => setShowFormBuilder(true)}
-                      className="text-indigo-600 hover:text-indigo-700 font-medium"
-                    >
-                      Create your first form
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+          <FormsTab
+            workspaceId={workspaceId || ''}
+            pageId={pageId || ''}
+          />
         )}
 
         {activeTab === 'workflows' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <p className="text-gray-600">
-                Page-specific workflows that trigger from this page's forms or events.
-              </p>
-              <Link
-                to={`/workflows/new?pageId=${pageId}`}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-              >
-                <Plus className="w-4 h-4" />
-                Add Workflow
-              </Link>
-            </div>
-
-            {pageWorkflows && pageWorkflows.length > 0 ? (
-              <div className="space-y-3">
-                {pageWorkflows.map((workflow) => (
-                  <div
-                    key={workflow.id}
-                    className="flex items-center gap-4 p-4 border border-gray-200 rounded-lg hover:border-gray-300"
-                  >
-                    <div className="p-2 bg-purple-100 rounded-lg">
-                      <GitBranch className="w-5 h-5 text-purple-600" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium text-gray-900">{workflow.name}</p>
-                      <p className="text-sm text-gray-500">
-                        Status: {workflow.status} • {workflow.nodes?.length || 0} nodes
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Link
-                        to={`/workflows/${workflow.id}`}
-                        className="p-2 text-gray-400 hover:text-indigo-600"
-                        title="Edit workflow"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                      </Link>
-                      <button
-                        onClick={() => handleDeleteWorkflow(workflow.id)}
-                        className="p-2 text-gray-400 hover:text-red-500"
-                        title="Delete workflow"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
-                <p className="text-gray-500 mb-2">No workflows for this page yet</p>
-                <Link
-                  to={`/workflows/new?pageId=${pageId}`}
-                  className="text-indigo-600 hover:text-indigo-700 font-medium"
-                >
-                  Create your first workflow
-                </Link>
-              </div>
-            )}
-
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <p className="text-sm text-blue-800">
-                <strong>Tip:</strong> Workspace-level workflows (not attached to a page) can be managed from the{' '}
-                <Link to="/workflows" className="underline hover:text-blue-900">
-                  Workflows page
-                </Link>
-                .
-              </p>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'chat' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-medium text-gray-900">AI Chat Widget</h3>
-                <p className="text-sm text-gray-500">
-                  Enable visitors to chat with an AI assistant on this page.
-                </p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={formData.chat_config?.enabled ?? true}
-                  onChange={(e) => handleChatConfigChange('enabled', e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600" />
-              </label>
-            </div>
-
-            {formData.chat_config?.enabled !== false && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Widget Position
-                  </label>
-                  <select
-                    value={formData.chat_config?.position || 'bottom-right'}
-                    onChange={(e) => handleChatConfigChange('position', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="bottom-right">Bottom Right</option>
-                    <option value="bottom-left">Bottom Left</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Initial Message
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.chat_config?.initial_message || ''}
-                    onChange={(e) =>
-                      handleChatConfigChange('initial_message', e.target.value || null)
-                    }
-                    placeholder="Hi! How can I help you today?"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    AI Persona Instructions
-                  </label>
-                  <textarea
-                    value={formData.chat_config?.ai_persona || ''}
-                    onChange={(e) =>
-                      handleChatConfigChange('ai_persona', e.target.value || null)
-                    }
-                    placeholder="You are a helpful assistant for our company. Be friendly and professional..."
-                    rows={4}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'knowledge-base' && (
-          <div className="space-y-6">
-            <div>
-              <h3 className="font-medium text-gray-900 flex items-center gap-2">
-                <BookOpen className="w-5 h-5" />
-                Knowledge Base
-              </h3>
-              <p className="text-sm text-gray-500 mt-1">
-                Upload documents to give this page's AI chat widget relevant context about your business.
-              </p>
-            </div>
-            <KnowledgeBaseSettings workspaceId={workspaceId || ''} />
-          </div>
+          <WorkflowsTab
+            workspaceId={workspaceId || ''}
+            pageId={pageId || ''}
+          />
         )}
 
         {activeTab === 'domain' && (
@@ -1279,451 +493,6 @@ export default function PageEditor() {
           useSynthesisEngine={true}
         />
       )}
-    </div>
-  );
-}
-
-// Domain Tab Component
-interface DomainTabProps {
-  workspaceId: string;
-  pageId: string;
-  pageSlug: string;
-  subdomain: string;
-  onSaveSubdomain: (subdomain: string) => void;
-  isSaving: boolean;
-}
-
-function DomainTab({
-  workspaceId,
-  pageId,
-  pageSlug,
-  subdomain,
-  onSaveSubdomain,
-  isSaving,
-}: DomainTabProps) {
-  const [newDomain, setNewDomain] = useState('');
-  const [showSetup, setShowSetup] = useState(false);
-  const [subdomainInput, setSubdomainInput] = useState(subdomain);
-  const [subdomainStatus, setSubdomainStatus] = useState<{
-    checking: boolean;
-    available?: boolean;
-    message?: string;
-    url?: string;
-  }>({ checking: false });
-  const toast = useToast();
-
-  const { data: domainsData, isLoading } = useDomains(workspaceId);
-  const createDomain = useCreateDomain(workspaceId);
-  const deleteDomain = useDeleteDomain(workspaceId);
-
-  // Sync local state with prop when page data changes (e.g., after save)
-  useEffect(() => {
-    setSubdomainInput(subdomain);
-  }, [subdomain]);
-
-  // Check subdomain availability with debounce
-  useEffect(() => {
-    if (!subdomainInput || subdomainInput === subdomain) {
-      setSubdomainStatus({ checking: false });
-      return;
-    }
-
-    const timeoutId = setTimeout(async () => {
-      setSubdomainStatus({ checking: true });
-      try {
-        const result = await checkSubdomainAvailability(workspaceId, subdomainInput, pageId);
-        setSubdomainStatus({
-          checking: false,
-          available: result.available,
-          message: result.message,
-          url: result.url,
-        });
-      } catch (err) {
-        setSubdomainStatus({ checking: false, message: 'Failed to check availability' });
-      }
-    }, 500);
-
-    return () => clearTimeout(timeoutId);
-  }, [subdomainInput, subdomain, workspaceId, pageId]);
-
-  const handleSubdomainSave = () => {
-    // Block only if we've explicitly checked and it's unavailable
-    if (subdomainStatus.available === false && subdomainInput !== subdomain) {
-      return;
-    }
-    // Call the save callback with the new subdomain value
-    onSaveSubdomain(subdomainInput);
-  };
-
-  const allDomains = domainsData?.items || [];
-  const limit = domainsData?.limit || 1;
-  const used = domainsData?.used || 0;
-
-  // Filter to only domains for THIS page
-  const domainsForThisPage = allDomains.filter(d => d.page_id === pageId);
-  // This page already has a domain?
-  const thisPageHasDomain = domainsForThisPage.length > 0;
-  // Can add if: this page doesn't have one yet AND workspace has room
-  const canAddDomain = !thisPageHasDomain && used < limit;
-  // At workspace limit but this page has no domain?
-  const atLimitNeedUpgrade = !thisPageHasDomain && used >= limit;
-
-  const handleSetupDomain = async () => {
-    if (!newDomain.trim()) return;
-
-    try {
-      await createDomain.mutateAsync({
-        domain: newDomain.toLowerCase().trim(),
-        page_id: pageId,
-      });
-      setNewDomain('');
-      setShowSetup(false);
-      toast.success('Domain setup started. Check back for DNS instructions.');
-    } catch (err) {
-      console.error('Failed to setup domain:', err);
-      toast.error('Failed to setup domain. Please check the format and try again.');
-    }
-  };
-
-  const handleDeleteDomain = async (domain: string) => {
-    if (!confirm(`Are you sure you want to remove ${domain}? This will delete the SSL certificate and CDN distribution.`)) {
-      return;
-    }
-    try {
-      await deleteDomain.mutateAsync(domain);
-      toast.success('Domain removed successfully');
-    } catch (err) {
-      console.error('Failed to delete domain:', err);
-      toast.error('Failed to remove domain. Please try again.');
-    }
-  };
-
-  if (isLoading) {
-    return <div className="animate-pulse h-32 bg-gray-100 rounded-lg" />;
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Subdomain Section - Free and Easy */}
-      <div className="border border-gray-200 rounded-lg p-5">
-        <div className="flex items-start gap-3 mb-4">
-          <div className="p-2 bg-green-100 rounded-lg">
-            <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </div>
-          <div>
-            <h4 className="font-medium text-gray-900">Free Subdomain</h4>
-            <p className="text-sm text-gray-600 mt-1">
-              Get a short, memorable URL instantly. No DNS setup required.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex gap-3">
-          <div className="flex-1 flex items-center">
-            <input
-              type="text"
-              value={subdomainInput}
-              onChange={(e) => setSubdomainInput(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-              placeholder="mypage"
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-            />
-            <span className="px-4 py-2 bg-gray-100 border border-l-0 border-gray-300 rounded-r-lg text-gray-500 text-sm">
-              {`.${SUBDOMAIN_SUFFIX}`}
-            </span>
-          </div>
-          <button
-            onClick={handleSubdomainSave}
-            disabled={
-              isSaving ||
-              subdomainStatus.checking ||
-              // Only disable if we've explicitly checked and it's not available
-              Boolean(subdomainInput && subdomainStatus.available === false && subdomainInput !== subdomain)
-            }
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
-          >
-            {isSaving ? 'Saving...' : 'Save'}
-          </button>
-        </div>
-
-        {/* Status messages */}
-        {subdomainStatus.checking && (
-          <p className="text-sm text-gray-500 mt-2 flex items-center gap-2">
-            <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            Checking availability...
-          </p>
-        )}
-        {!subdomainStatus.checking && subdomainStatus.available === true && subdomainInput && (
-          <p className="text-sm text-green-600 mt-2 flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-            Available! Your page will be at: <span className="font-medium">{subdomainStatus.url}</span>
-          </p>
-        )}
-        {!subdomainStatus.checking && subdomainStatus.available === false && (
-          <p className="text-sm text-red-600 mt-2 flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-            {subdomainStatus.message}
-          </p>
-        )}
-        {subdomain && !subdomainInput && (
-          <p className="text-sm text-gray-500 mt-2">
-            Current subdomain will be removed when you save.
-          </p>
-        )}
-        {subdomain && subdomainInput === subdomain && (
-          <p className="text-sm text-gray-500 mt-2">
-            Your page is live at:{' '}
-            <a
-              href={`https://${subdomain}.${SUBDOMAIN_SUFFIX}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-indigo-600 hover:underline"
-            >
-              {`https://${subdomain}.${SUBDOMAIN_SUFFIX}`}
-            </a>
-          </p>
-        )}
-      </div>
-
-      {/* Divider */}
-      <div className="relative">
-        <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-gray-200" />
-        </div>
-        <div className="relative flex justify-center text-sm">
-          <span className="px-3 bg-white text-gray-500">or use your own domain</span>
-        </div>
-      </div>
-
-      {/* Custom Domain Section */}
-      <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 rounded-lg p-4">
-        <div className="flex items-start gap-3">
-          <svg className="w-5 h-5 text-indigo-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-          </svg>
-          <div>
-            <h4 className="font-medium text-gray-900">Custom Domain</h4>
-            <p className="text-sm text-gray-600 mt-1">
-              Connect your own domain to this landing page. We'll automatically provision an SSL certificate and CDN.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Show upgrade message if at workspace limit */}
-      {atLimitNeedUpgrade && (
-        <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <svg className="w-5 h-5 text-purple-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-            </svg>
-            <div>
-              <p className="text-sm font-medium text-gray-900">
-                Custom domain limit reached
-              </p>
-              <p className="text-sm text-gray-600 mt-1">
-                Your workspace has {used} of {limit} custom domain{limit !== 1 ? 's' : ''} in use.
-                Upgrade your plan to connect more custom domains.
-              </p>
-              <button className="mt-2 text-sm font-medium text-purple-600 hover:text-purple-700">
-                View upgrade options →
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Existing Domains for THIS page */}
-      {domainsForThisPage.length > 0 && (
-        <div className="space-y-3">
-          {domainsForThisPage.map((domain) => {
-            const statusInfo = getDomainStatusInfo(domain.status);
-            return (
-              <div key={domain.domain} className="border border-gray-200 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <span className="font-medium text-gray-900">{domain.domain}</span>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusInfo.bgColor} ${statusInfo.color}`}>
-                      {statusInfo.label}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => handleDeleteDomain(domain.domain)}
-                    disabled={deleteDomain.isPending}
-                    className="text-red-600 hover:text-red-700 text-sm"
-                  >
-                    Remove
-                  </button>
-                </div>
-
-                {domain.status_message && (
-                  <p className="text-sm text-gray-600 mb-3">{domain.status_message}</p>
-                )}
-
-                {/* DNS Validation Records */}
-                {domain.status === 'pending_validation' && domain.validation_record_name && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mt-3">
-                    <h5 className="font-medium text-amber-800 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      Add this DNS record to verify ownership:
-                    </h5>
-                    <div className="bg-white rounded p-3 font-mono text-xs overflow-x-auto">
-                      <table className="w-full text-left">
-                        <thead>
-                          <tr className="text-gray-500">
-                            <th className="pb-1">Type</th>
-                            <th className="pb-1">Name</th>
-                            <th className="pb-1">Value</th>
-                          </tr>
-                        </thead>
-                        <tbody className="text-gray-900">
-                          <tr>
-                            <td className="py-1 pr-4">CNAME</td>
-                            <td className="py-1 pr-4 break-all">{domain.validation_record_name}</td>
-                            <td className="py-1 break-all">{domain.validation_record_value}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                    <p className="text-xs text-amber-700 mt-2">
-                      After adding this record, validation usually completes within 5-30 minutes.
-                    </p>
-                  </div>
-                )}
-
-                {/* Active Domain - CNAME Target */}
-                {domain.status === 'active' && domain.cname_target && (
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4 mt-3">
-                    <h5 className="font-medium text-green-800 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Domain is active!
-                    </h5>
-                    <p className="text-sm text-green-700 mb-2">
-                      Point your domain to our CDN:
-                    </p>
-                    <div className="bg-white rounded p-2 font-mono text-sm">
-                      <span className="text-gray-500">CNAME</span> {domain.domain} → <span className="text-green-600">{domain.cname_target}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Provisioning Progress */}
-                {(domain.status === 'validating' || domain.status === 'provisioning') && (
-                  <div className="flex items-center gap-2 text-sm text-indigo-600 mt-2">
-                    <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    <span>Setting up your domain... This may take 10-15 minutes.</span>
-                  </div>
-                )}
-
-                {/* Failed Status */}
-                {domain.status === 'failed' && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 mt-3">
-                    <p className="text-sm text-red-700">
-                      Setup failed. You can remove this domain and try again.
-                    </p>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Add Domain Button/Form */}
-      {canAddDomain && !showSetup && domainsForThisPage.length === 0 && (
-        <button
-          onClick={() => setShowSetup(true)}
-          className="w-full py-8 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-indigo-400 hover:text-indigo-600 transition-colors"
-        >
-          <svg className="w-8 h-8 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          <span className="font-medium">Connect Custom Domain</span>
-        </button>
-      )}
-
-      {showSetup && (
-        <div className="border border-indigo-200 rounded-lg p-5 bg-indigo-50/50">
-          <h4 className="font-medium text-gray-900 mb-3">Connect Your Domain</h4>
-          <div className="flex gap-3">
-            <input
-              type="text"
-              value={newDomain}
-              onChange={(e) => setNewDomain(e.target.value.toLowerCase().replace(/[^a-z0-9.-]/g, ''))}
-              placeholder="landing.yourdomain.com"
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-            <button
-              onClick={handleSetupDomain}
-              disabled={!newDomain.trim() || createDomain.isPending}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
-            >
-              {createDomain.isPending ? (
-                <>
-                  <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Setting up...
-                </>
-              ) : (
-                'Connect'
-              )}
-            </button>
-            <button
-              onClick={() => { setShowSetup(false); setNewDomain(''); }}
-              className="px-4 py-2 text-gray-600 hover:text-gray-800"
-            >
-              Cancel
-            </button>
-          </div>
-          {createDomain.isError && (
-            <p className="text-sm text-red-600 mt-2">
-              Failed to setup domain. Please check the domain format and try again.
-            </p>
-          )}
-          <p className="text-xs text-gray-500 mt-2">
-            Enter your domain without http:// or www (e.g., landing.example.com)
-          </p>
-        </div>
-      )}
-
-      {thisPageHasDomain && used >= limit && limit > 1 && (
-        <p className="text-sm text-gray-500">
-          Using {used} of {limit} custom domains. Remove a domain or upgrade for more.
-        </p>
-      )}
-
-      {/* Default URL */}
-      <div className="border-t border-gray-200 pt-6">
-        <h4 className="font-medium text-gray-900 mb-2">Default URL</h4>
-        <p className="text-sm text-gray-600">
-          Your page is always accessible at:
-        </p>
-        <a
-          href={`/p/${pageSlug}?ws=${workspaceId}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-indigo-600 hover:underline text-sm font-mono"
-        >
-          {window.location.origin}/p/{pageSlug}?ws={workspaceId}
-        </a>
-      </div>
     </div>
   );
 }

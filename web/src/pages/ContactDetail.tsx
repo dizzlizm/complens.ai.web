@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Loader2, AlertTriangle, Trash2 } from 'lucide-react';
+import Tabs from '../components/ui/Tabs';
 import {
   useContact, useUpdateContact, useDeleteContact,
   useContactActivity, useContactNotes,
@@ -158,22 +159,8 @@ export default function ContactDetail() {
         {/* Main content area */}
         <div className="flex-1 min-w-0">
           {/* Tabs */}
-          <div className="border-b border-gray-200 mb-6">
-            <nav className="flex gap-6">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
-                    activeTab === tab.id
-                      ? 'border-primary-600 text-primary-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
+          <div className="mb-6">
+            <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} size="md" />
           </div>
 
           {/* Tab content */}

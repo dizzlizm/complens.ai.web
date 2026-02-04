@@ -4,6 +4,7 @@ import { useForm, useUpdateForm, type FormField, type UpdateFormInput } from '..
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import { useToast } from '../components/Toast';
 import FormSubmissions from '../components/FormSubmissions';
+import Tabs from '../components/ui/Tabs';
 
 type EditorTab = 'fields' | 'submissions';
 
@@ -166,33 +167,15 @@ export default function FormEditor() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex space-x-8">
-          <button
-            onClick={() => setActiveTab('fields')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'fields'
-                ? 'border-indigo-500 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            Fields
-          </button>
-          <button
-            onClick={() => setActiveTab('submissions')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
-              activeTab === 'submissions'
-                ? 'border-indigo-500 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            Submissions
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-              {form.submission_count}
-            </span>
-          </button>
-        </nav>
-      </div>
+      <Tabs
+        tabs={[
+          { id: 'fields' as EditorTab, label: 'Fields' },
+          { id: 'submissions' as EditorTab, label: `Submissions (${form.submission_count})` },
+        ]}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+        size="sm"
+      />
 
       {/* Tab Content */}
       {activeTab === 'submissions' ? (

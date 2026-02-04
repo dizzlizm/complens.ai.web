@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Search, Sparkles, AlertCircle, CheckCircle, Image as ImageIcon } from 'lucide-react';
+import { Search, Sparkles, AlertCircle, CheckCircle, Image as ImageIcon, Loader2 } from 'lucide-react';
 import CollapsibleSection from './CollapsibleSection';
 
 interface SeoSectionProps {
@@ -12,6 +12,9 @@ interface SeoSectionProps {
   onOgImageUrlChange: (value: string) => void;
   onRegenerateSeo?: () => void;
   isRegenerating?: boolean;
+  onGenerateOgImage?: () => void;
+  isGeneratingOgImage?: boolean;
+  defaultOpen?: boolean;
 }
 
 // SEO character limits
@@ -30,6 +33,9 @@ export default function SeoSection({
   onOgImageUrlChange,
   onRegenerateSeo,
   isRegenerating = false,
+  onGenerateOgImage,
+  isGeneratingOgImage = false,
+  defaultOpen = false,
 }: SeoSectionProps) {
   const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('edit');
 
@@ -92,6 +98,7 @@ export default function SeoSection({
       title="SEO & Social"
       icon={<Search className="w-4 h-4" />}
       badge={`${seoScore.score}%`}
+      defaultOpen={defaultOpen}
     >
       <div className="pt-4 space-y-4">
         {/* Tab navigation */}
@@ -214,6 +221,25 @@ export default function SeoSection({
                   placeholder="https://..."
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
                 />
+                {onGenerateOgImage && (
+                  <button
+                    onClick={onGenerateOgImage}
+                    disabled={isGeneratingOgImage}
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {isGeneratingOgImage ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        Generate with AI
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
               {ogImageUrl && (
                 <div className="mt-2 relative w-full aspect-[1.91/1] max-w-xs bg-gray-100 rounded-lg overflow-hidden">

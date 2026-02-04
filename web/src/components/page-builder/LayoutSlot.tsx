@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   ChevronDown,
   Check,
@@ -104,6 +104,21 @@ export default function LayoutSlot({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const widthDropdownRef = useRef<HTMLDivElement>(null);
 
+  // Close dropdowns on outside click
+  useEffect(() => {
+    if (!showTypeDropdown && !showWidthDropdown) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (showTypeDropdown && dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowTypeDropdown(false);
+      }
+      if (showWidthDropdown && widthDropdownRef.current && !widthDropdownRef.current.contains(e.target as Node)) {
+        setShowWidthDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showTypeDropdown, showWidthDropdown]);
+
   const isPlaceholder = slot.type === 'placeholder';
   const blockTypeInfo = !isPlaceholder
     ? BLOCK_TYPES.find((b) => b.type === slot.type)
@@ -140,7 +155,7 @@ export default function LayoutSlot({
   return (
     <div
       className={`
-        relative group rounded-xl border-2 transition-all duration-200 overflow-hidden min-h-[140px] flex flex-col
+        relative group rounded-xl border-2 transition-all duration-200 min-h-[140px] flex flex-col
         ${isSelected
           ? 'border-purple-500 ring-2 ring-purple-200 shadow-lg'
           : isPlaceholder
@@ -343,7 +358,7 @@ export default function LayoutSlot({
       {/* Content Area */}
       <div
         className={`
-          flex-1
+          flex-1 overflow-hidden
           ${isPlaceholder ? 'p-4 flex flex-col items-center justify-center' : ''}
         `}
         onClick={(e) => {

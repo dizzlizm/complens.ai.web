@@ -6,8 +6,9 @@ import SynthesisPopup, { type ApplyOptions } from './SynthesisPopup';
 import ProfilePromptBanner from './ProfilePromptBanner';
 import SeoSection from './SeoSection';
 import ScriptsSection from './ScriptsSection';
-import { SynthesisResult, useCreateCompletePage } from '../../lib/hooks/useAI';
+import { SynthesisResult, useCreateCompletePage, useGenerateImage, useBusinessProfile } from '../../lib/hooks/useAI';
 import { useToast } from '../Toast';
+import PillTabs from '../ui/PillTabs';
 
 // Form data for the form block selector
 interface FormInfo {
@@ -110,6 +111,9 @@ export default function ContentTabV2({
   const toast = useToast();
   const queryClient = useQueryClient();
 
+  // Content subtab state
+  const [contentSubTab, setContentSubTab] = useState<'blocks' | 'seo' | 'scripts'>('blocks');
+
   // Synthesis popup state
   const [showSynthesisPopup, setShowSynthesisPopup] = useState(false);
   const [selectedBlockTypesForSynthesis, setSelectedBlockTypesForSynthesis] = useState<BlockType[]>([]);
@@ -117,6 +121,60 @@ export default function ContentTabV2({
 
   // Create complete page hook (for form/workflow creation)
   const createCompletePage = useCreateCompletePage(workspaceId || '');
+
+  // OG image generation
+  const generateImage = useGenerateImage(workspaceId || '');
+  const { data: businessProfile } = useBusinessProfile(workspaceId, pageId);
+
+  const handleGenerateOgImage = useCallback(async () => {
+    if (!workspaceId) return;
+
+    // Build a rich context string from SEO fields + business profile
+    const parts: string[] = [];
+    if (businessProfile?.business_name) parts.push(businessProfile.business_name);
+    if (businessProfile?.tagline) parts.push(businessProfile.tagline);
+    if (businessProfile?.industry) parts.push(`${businessProfile.industry} industry`);
+    if (businessProfile?.description) parts.push(businessProfile.description);
+
+    const context = parts.join(' — ') || pageName || 'business';
+
+    // Build a descriptive prompt using all available signals
+    const promptParts = [
+      'Professional social sharing banner image',
+      `for ${businessProfile?.business_name || pageName || 'a business'}`,
+    ];
+    if (metaTitle) promptParts.push(`about "${metaTitle}"`);
+    if (metaDescription) promptParts.push(`— ${metaDescription}`);
+    if (businessProfile?.brand_voice) promptParts.push(`${businessProfile.brand_voice} tone`);
+    if (businessProfile?.target_audience) promptParts.push(`targeting ${businessProfile.target_audience}`);
+    promptParts.push('modern clean design, no text overlay, high quality, suitable for social media preview card');
+
+    // Titan image prompt limit is 512 chars
+    const prompt = promptParts.join(', ').slice(0, 512);
+
+    try {
+      const result = await generateImage.mutateAsync({
+        context,
+        prompt,
+        style: businessProfile?.brand_voice === 'playful' ? 'vibrant' : 'professional',
+        width: 1200,
+        height: 630,
+        colors: primaryColor ? {
+          primary: primaryColor,
+          secondary: secondaryColor || undefined,
+          accent: accentColor || undefined,
+        } : undefined,
+      });
+
+      if (result?.url) {
+        onOgImageUrlChange?.(result.url);
+        toast.success('Social sharing image generated!');
+      }
+    } catch (err) {
+      console.error('Failed to generate OG image:', err);
+      toast.error('Failed to generate image. Please try again.');
+    }
+  }, [workspaceId, businessProfile, pageName, metaTitle, metaDescription, primaryColor, secondaryColor, accentColor, generateImage, onOgImageUrlChange, toast]);
 
   // Handle opening synthesis popup with selected blocks from layout canvas
   const handleSynthesizeBlocks = useCallback((blockTypes: BlockType[], slotIds: string[]) => {
@@ -474,37 +532,61 @@ export default function ContentTabV2({
         </div>
       </div>
 
-      {/* Visual Layout Canvas - replaces BlockSelectionGrid and PageBuilderCanvas */}
-      <LayoutCanvas
-        blocks={blocks}
-        onChange={onChange}
-        onSynthesizeBlocks={handleSynthesizeBlocks}
-        forms={forms}
-        workspaceId={workspaceId}
+      {/* Content Subtab Navigation */}
+      <PillTabs
+        tabs={[
+          { id: 'blocks' as const, label: 'Blocks' },
+          { id: 'seo' as const, label: 'SEO & Social' },
+          { id: 'scripts' as const, label: 'Scripts & Tracking' },
+        ]}
+        activeTab={contentSubTab}
+        onChange={setContentSubTab}
       />
 
-      {/* SEO & Social Section */}
-      <SeoSection
-        metaTitle={metaTitle}
-        metaDescription={metaDescription}
-        ogImageUrl={ogImageUrl}
-        pageUrl={pageUrl}
-        onMetaTitleChange={(value) => onMetaTitleChange?.(value)}
-        onMetaDescriptionChange={(value) => onMetaDescriptionChange?.(value)}
-        onOgImageUrlChange={(value) => onOgImageUrlChange?.(value)}
-      />
+      {/* Blocks Subtab */}
+      {contentSubTab === 'blocks' && (
+        <>
+          {/* Visual Layout Canvas */}
+          <LayoutCanvas
+            blocks={blocks}
+            onChange={onChange}
+            onSynthesizeBlocks={handleSynthesizeBlocks}
+            forms={forms}
+            workspaceId={workspaceId}
+          />
+        </>
+      )}
 
-      {/* Scripts & Tracking Section */}
-      <ScriptsSection
-        gaTrackingId={gaTrackingId}
-        fbPixelId={fbPixelId}
-        scriptsHead={scriptsHead}
-        scriptsBody={scriptsBody}
-        onGaTrackingIdChange={(value) => onGaTrackingIdChange?.(value)}
-        onFbPixelIdChange={(value) => onFbPixelIdChange?.(value)}
-        onScriptsHeadChange={(value) => onScriptsHeadChange?.(value)}
-        onScriptsBodyChange={(value) => onScriptsBodyChange?.(value)}
-      />
+      {/* SEO Subtab */}
+      {contentSubTab === 'seo' && (
+        <SeoSection
+          metaTitle={metaTitle}
+          metaDescription={metaDescription}
+          ogImageUrl={ogImageUrl}
+          pageUrl={pageUrl}
+          onMetaTitleChange={(value) => onMetaTitleChange?.(value)}
+          onMetaDescriptionChange={(value) => onMetaDescriptionChange?.(value)}
+          onOgImageUrlChange={(value) => onOgImageUrlChange?.(value)}
+          onGenerateOgImage={workspaceId ? handleGenerateOgImage : undefined}
+          isGeneratingOgImage={generateImage.isPending}
+          defaultOpen
+        />
+      )}
+
+      {/* Scripts Subtab */}
+      {contentSubTab === 'scripts' && (
+        <ScriptsSection
+          gaTrackingId={gaTrackingId}
+          fbPixelId={fbPixelId}
+          scriptsHead={scriptsHead}
+          scriptsBody={scriptsBody}
+          onGaTrackingIdChange={(value) => onGaTrackingIdChange?.(value)}
+          onFbPixelIdChange={(value) => onFbPixelIdChange?.(value)}
+          onScriptsHeadChange={(value) => onScriptsHeadChange?.(value)}
+          onScriptsBodyChange={(value) => onScriptsBodyChange?.(value)}
+          defaultOpen
+        />
+      )}
 
       {/* Synthesis Popup */}
       {showSynthesisPopup && (

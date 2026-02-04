@@ -11,6 +11,7 @@ interface ScriptsSectionProps {
   onFbPixelIdChange: (value: string) => void;
   onScriptsHeadChange: (value: string) => void;
   onScriptsBodyChange: (value: string) => void;
+  defaultOpen?: boolean;
 }
 
 export default function ScriptsSection({
@@ -22,6 +23,7 @@ export default function ScriptsSection({
   onFbPixelIdChange,
   onScriptsHeadChange,
   onScriptsBodyChange,
+  defaultOpen = false,
 }: ScriptsSectionProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -32,6 +34,7 @@ export default function ScriptsSection({
       title="Scripts & Tracking"
       icon={<Code className="w-4 h-4" />}
       badge={hasScripts ? 'Active' : undefined}
+      defaultOpen={defaultOpen}
     >
       <div className="pt-4 space-y-4">
         {/* Quick Setup - Common Tracking */}
