@@ -5,6 +5,8 @@ import { useCurrentWorkspace } from '../lib/hooks';
 import { useAnalytics } from '../lib/hooks/useAnalytics';
 import StatCard from '../components/dashboard/StatCard';
 import AnalyticsChart from '../components/dashboard/AnalyticsChart';
+import PageAnalytics from '../components/dashboard/PageAnalytics';
+import FormAnalytics from '../components/dashboard/FormAnalytics';
 
 const PERIODS = [
   { value: '7d', label: '7 days' },
@@ -111,6 +113,18 @@ export default function Dashboard() {
               stacked
             />
           </div>
+        </div>
+      )}
+
+      {/* Page & Form Analytics */}
+      {!isLoading && analytics && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {analytics.page_analytics && (
+            <PageAnalytics data={analytics.page_analytics} />
+          )}
+          {analytics.form_analytics && (
+            <FormAnalytics data={analytics.form_analytics} />
+          )}
         </div>
       )}
 

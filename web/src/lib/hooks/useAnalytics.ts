@@ -28,12 +28,44 @@ export interface WorkflowPerformance {
   success_rate: number;
 }
 
+export interface PagePerformance {
+  id: string;
+  name: string;
+  slug: string;
+  views: number;
+  submissions: number;
+  chats: number;
+  conversion_rate: number;
+}
+
+export interface PageAnalyticsData {
+  total_page_views: number;
+  total_form_submissions: number;
+  total_chat_sessions: number;
+  overall_conversion_rate: number;
+  top_pages: PagePerformance[];
+}
+
+export interface FormPerformance {
+  id: string;
+  name: string;
+  page_name: string;
+  submissions: number;
+}
+
+export interface FormAnalyticsData {
+  total_submissions: number;
+  top_forms: FormPerformance[];
+}
+
 export interface AnalyticsData {
   period: string;
   summary: AnalyticsSummary;
   contact_growth: TimeSeriesPoint[];
   workflow_runs: TimeSeriesPoint[];
   top_workflows: WorkflowPerformance[];
+  page_analytics?: PageAnalyticsData;
+  form_analytics?: FormAnalyticsData;
 }
 
 export function useAnalytics(workspaceId: string | undefined, period: string = '30d') {
@@ -41,11 +73,11 @@ export function useAnalytics(workspaceId: string | undefined, period: string = '
     queryKey: ['analytics', workspaceId, period],
     queryFn: async () => {
       const { data } = await api.get<AnalyticsData>(
-        `/workspaces/${workspaceId}/analytics?period=${period}`
+        `/workspaces/${workspaceId}/analytics?period=${period}&include=pages,forms`
       );
       return data;
     },
     enabled: !!workspaceId,
-    refetchInterval: 60000, // Refresh every minute
+    refetchInterval: 60000,
   });
 }

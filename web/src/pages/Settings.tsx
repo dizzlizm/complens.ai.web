@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle, ExternalLink } from 'lucide-react';
+import { Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle, ExternalLink, BookOpen } from 'lucide-react';
 import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe } from '../lib/hooks';
+import { useBillingStatus, useCreateCheckout, useCreatePortal } from '../lib/hooks/useBilling';
 import TwilioConfigCard from '../components/settings/TwilioConfigCard';
 import SegmentConfigCard from '../components/settings/SegmentConfigCard';
 import TeamManagement from '../components/settings/TeamManagement';
+import PricingTable from '../components/settings/PricingTable';
+import KnowledgeBaseSettings from '../components/settings/KnowledgeBaseSettings';
 
 const settingsSections = [
   {
@@ -41,6 +44,12 @@ const settingsSections = [
     name: 'Security',
     icon: Shield,
     description: 'Configure security settings and access',
+  },
+  {
+    id: 'knowledge-base',
+    name: 'Knowledge Base',
+    icon: BookOpen,
+    description: 'Manage documents for AI context',
   },
   {
     id: 'domains',
@@ -92,6 +101,7 @@ export default function Settings() {
           {activeSection === 'notifications' && <NotificationSettings />}
           {activeSection === 'integrations' && <IntegrationSettings />}
           {activeSection === 'billing' && <BillingSettings />}
+          {activeSection === 'knowledge-base' && <KnowledgeBaseSettingsPage />}
           {activeSection === 'security' && <SecuritySettings />}
           {activeSection === 'domains' && <DomainSettings />}
         </div>
@@ -509,31 +519,123 @@ function StripeIntegrationCard({ workspaceId }: { workspaceId: string }) {
 }
 
 function BillingSettings() {
+  const { workspaceId } = useCurrentWorkspace();
+  const { data: billing, isLoading } = useBillingStatus(workspaceId || undefined);
+  const createCheckout = useCreateCheckout(workspaceId || '');
+  const createPortal = useCreatePortal(workspaceId || '');
+  const [loadingPlan, setLoadingPlan] = useState('');
+
+  const currentPlan = billing?.plan || 'free';
+
+  const handleSelectPlan = async (priceId: string) => {
+    setLoadingPlan(priceId);
+    try {
+      const result = await createCheckout.mutateAsync({ price_id: priceId });
+      window.location.href = result.url;
+    } catch (err) {
+      console.error('Failed to create checkout:', err);
+      setLoadingPlan('');
+    }
+  };
+
+  const handleManageBilling = async () => {
+    try {
+      const result = await createPortal.mutateAsync();
+      window.location.href = result.url;
+    } catch (err) {
+      console.error('Failed to open portal:', err);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="card flex items-center justify-center py-12">
+        <Loader2 className="w-6 h-6 text-primary-600 animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
+      {/* Current plan status */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Current Plan</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Current Plan</h2>
+          {billing?.has_stripe_customer && (
+            <button
+              onClick={handleManageBilling}
+              disabled={createPortal.isPending}
+              className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+            >
+              {createPortal.isPending ? 'Opening...' : 'Manage Billing'}
+            </button>
+          )}
+        </div>
         <div className="flex items-center justify-between p-4 bg-primary-50 rounded-lg">
           <div>
-            <p className="font-semibold text-primary-900">Free Trial</p>
-            <p className="text-sm text-primary-700">14 days remaining</p>
+            <p className="font-semibold text-primary-900 capitalize">{currentPlan} Plan</p>
+            <p className="text-sm text-primary-700">
+              {billing?.subscription_status === 'active'
+                ? 'Active subscription'
+                : billing?.subscription_status === 'past_due'
+                ? 'Payment past due'
+                : 'Free tier'}
+            </p>
           </div>
-          <button className="btn btn-primary">Upgrade Plan</button>
+          {currentPlan === 'free' && (
+            <span className="text-xs bg-primary-100 text-primary-700 px-2 py-1 rounded">
+              Upgrade to unlock more
+            </span>
+          )}
         </div>
       </div>
 
-      <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Payment Method</h2>
-        <p className="text-gray-500">No payment method on file</p>
-        <button className="btn btn-secondary mt-4">Add Payment Method</button>
-      </div>
+      {/* Usage summary */}
+      {billing?.usage && (
+        <div className="card">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Usage</h2>
+          <div className="space-y-3">
+            {Object.entries(billing.usage).map(([key, value]) => {
+              if ('enabled' in value) return null;
+              const usage = value as { current: number; limit: number | string; percentage: number };
+              return (
+                <div key={key} className="flex items-center gap-4">
+                  <span className="text-sm text-gray-600 w-28 capitalize">{key.replace('_', ' ')}</span>
+                  <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${
+                        usage.percentage > 80 ? 'bg-red-500' : usage.percentage > 50 ? 'bg-yellow-500' : 'bg-green-500'
+                      }`}
+                      style={{ width: `${Math.min(usage.percentage, 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-gray-500 w-24 text-right">
+                    {usage.current} / {usage.limit === 'unlimited' ? '\u221e' : usage.limit}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
+      {/* Pricing table */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Billing History</h2>
-        <p className="text-gray-500">No invoices yet</p>
+        <h2 className="text-lg font-semibold text-gray-900 mb-6">Plans</h2>
+        <PricingTable
+          currentPlan={currentPlan}
+          onSelectPlan={handleSelectPlan}
+          isLoading={!!loadingPlan}
+          loadingPlan={loadingPlan}
+        />
       </div>
     </div>
   );
+}
+
+function KnowledgeBaseSettingsPage() {
+  const { workspaceId } = useCurrentWorkspace();
+  return <KnowledgeBaseSettings workspaceId={workspaceId || ''} />;
 }
 
 function SecuritySettings() {

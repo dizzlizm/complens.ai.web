@@ -1,12 +1,13 @@
 """Analytics API handler."""
 
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import structlog
 
 from complens.repositories.contact import ContactRepository
+from complens.repositories.form import FormRepository
+from complens.repositories.page import PageRepository
 from complens.repositories.workflow import WorkflowRepository, WorkflowRunRepository
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import NotFoundError, ValidationError
@@ -26,7 +27,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
     """Handle analytics API requests.
 
     Routes:
-        GET /workspaces/{workspace_id}/analytics?period=7d|30d|90d
+        GET /workspaces/{workspace_id}/analytics?period=7d|30d|90d&include=pages,forms
     """
     try:
         http_method = event.get("httpMethod", "").upper()
@@ -55,9 +56,12 @@ def get_analytics(workspace_id: str, event: dict) -> dict:
     """Get analytics data for a workspace."""
     query_params = event.get("queryStringParameters", {}) or {}
     period = query_params.get("period", "30d")
+    include = query_params.get("include", "")
 
     if period not in PERIODS:
         return error(f"Invalid period: {period}. Use 7d, 30d, or 90d", 400)
+
+    include_sections = [s.strip() for s in include.split(",") if s.strip()]
 
     days = PERIODS[period]
     now = datetime.now(timezone.utc)
@@ -153,7 +157,7 @@ def get_analytics(workspace_id: str, event: dict) -> dict:
     )
     contact_trend = _calc_trend(contacts_first_half, contacts_second_half)
 
-    return success({
+    result = {
         "period": period,
         "summary": {
             "total_contacts": total_contacts,
@@ -169,7 +173,122 @@ def get_analytics(workspace_id: str, event: dict) -> dict:
         "contact_growth": contact_growth,
         "workflow_runs": workflow_runs_by_day,
         "top_workflows": top_workflows,
-    })
+    }
+
+    # Page analytics
+    if "pages" in include_sections:
+        result["page_analytics"] = _get_page_analytics(workspace_id)
+
+    # Form analytics
+    if "forms" in include_sections:
+        result["form_analytics"] = _get_form_analytics(workspace_id)
+
+    return success(result)
+
+
+def _get_page_analytics(workspace_id: str) -> dict:
+    """Get page performance analytics.
+
+    Args:
+        workspace_id: Workspace ID.
+
+    Returns:
+        Page analytics data.
+    """
+    page_repo = PageRepository()
+
+    try:
+        pages, _ = page_repo.list_by_workspace(workspace_id, limit=100)
+    except Exception:
+        pages = []
+
+    total_views = 0
+    total_submissions = 0
+    total_chats = 0
+    top_pages = []
+
+    for page in pages:
+        views = getattr(page, "view_count", 0) or 0
+        submissions = getattr(page, "form_submission_count", 0) or 0
+        chats = getattr(page, "chat_session_count", 0) or 0
+
+        total_views += views
+        total_submissions += submissions
+        total_chats += chats
+
+        if views > 0 or submissions > 0 or chats > 0:
+            conversion = round(submissions / views * 100, 1) if views > 0 else 0.0
+            top_pages.append({
+                "id": page.id,
+                "name": page.name,
+                "slug": page.slug,
+                "views": views,
+                "submissions": submissions,
+                "chats": chats,
+                "conversion_rate": conversion,
+            })
+
+    # Sort by views descending
+    top_pages.sort(key=lambda x: x["views"], reverse=True)
+    top_pages = top_pages[:10]
+
+    overall_conversion = round(total_submissions / total_views * 100, 1) if total_views > 0 else 0.0
+
+    return {
+        "total_page_views": total_views,
+        "total_form_submissions": total_submissions,
+        "total_chat_sessions": total_chats,
+        "overall_conversion_rate": overall_conversion,
+        "top_pages": top_pages,
+    }
+
+
+def _get_form_analytics(workspace_id: str) -> dict:
+    """Get form performance analytics.
+
+    Args:
+        workspace_id: Workspace ID.
+
+    Returns:
+        Form analytics data.
+    """
+    page_repo = PageRepository()
+    form_repo = FormRepository()
+
+    try:
+        pages, _ = page_repo.list_by_workspace(workspace_id, limit=100)
+    except Exception:
+        pages = []
+
+    page_name_map = {p.id: p.name for p in pages}
+    total_submissions = 0
+    top_forms = []
+
+    for page in pages:
+        try:
+            forms, _ = form_repo.list_by_page(page.id, limit=50)
+            for form in forms:
+                submissions = getattr(form, "submission_count", 0) or 0
+                total_submissions += submissions
+
+                if submissions > 0:
+                    top_forms.append({
+                        "id": form.id,
+                        "name": form.name,
+                        "page_name": page_name_map.get(page.id, "Unknown"),
+                        "submissions": submissions,
+                    })
+        except Exception:
+            pass
+
+    # Sort by submissions descending
+    top_forms.sort(key=lambda x: x["submissions"], reverse=True)
+    top_forms = top_forms[:10]
+
+    return {
+        "total_submissions": total_submissions,
+        "top_forms": top_forms,
+    }
 
 
 def _get_status(entity) -> str:

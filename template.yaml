@@ -91,6 +91,40 @@ Parameters:
     Default: "0.02"
     Description: Platform fee percentage (0.02 = 2%)
 
+  # Platform Billing Parameters
+  StripeBillingSecretKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Stripe secret key for platform billing (separate from Connect)
+
+  StripeBillingWebhookSecret:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Stripe webhook secret for billing events
+
+  StripeProPriceId:
+    Type: String
+    Default: ""
+    Description: Stripe Price ID for Pro plan
+
+  StripeBusinessPriceId:
+    Type: String
+    Default: ""
+    Description: Stripe Price ID for Business plan
+
+  # Knowledge Base Parameters
+  KnowledgeBaseId:
+    Type: String
+    Default: ""
+    Description: Bedrock Knowledge Base ID
+
+  KBDataSourceId:
+    Type: String
+    Default: ""
+    Description: Bedrock Knowledge Base Data Source ID
+
 Globals:
   Function:
     Runtime: python3.12
@@ -2168,6 +2202,182 @@ Resources:
             Method: POST
             Auth:
               Authorizer: NONE
+
+  # ============================================
+  # Workflow Templates
+  # ============================================
+  WorkflowTemplatesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-workflow-templates"
+      Handler: workflow_templates.handler
+      CodeUri: src/handlers/api/
+      Description: Workflow templates CRUD
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Events:
+        List:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflow-templates
+            Method: GET
+        Create:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflow-templates
+            Method: POST
+        Delete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/workflow-templates/{template_id}
+            Method: DELETE
+
+  # ============================================
+  # Platform Billing
+  # ============================================
+  BillingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-billing"
+      Handler: billing.handler
+      CodeUri: src/handlers/api/
+      Description: Platform billing and subscription management
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Environment:
+        Variables:
+          STRIPE_BILLING_SECRET_KEY: !Ref StripeBillingSecretKey
+          STRIPE_PRO_PRICE_ID: !Ref StripeProPriceId
+          STRIPE_BUSINESS_PRICE_ID: !Ref StripeBusinessPriceId
+      Events:
+        GetBilling:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/billing
+            Method: GET
+        Checkout:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/billing/checkout
+            Method: POST
+        Portal:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/billing/portal
+            Method: POST
+
+  BillingWebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-billing-webhook"
+      Handler: billing_webhook.handler
+      CodeUri: src/handlers/webhooks/
+      Description: Handles Stripe billing subscription webhooks
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Environment:
+        Variables:
+          STRIPE_BILLING_SECRET_KEY: !Ref StripeBillingSecretKey
+          STRIPE_BILLING_WEBHOOK_SECRET: !Ref StripeBillingWebhookSecret
+          STRIPE_PRO_PRICE_ID: !Ref StripeProPriceId
+          STRIPE_BUSINESS_PRICE_ID: !Ref StripeBusinessPriceId
+      Events:
+        BillingWebhook:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /webhooks/stripe-billing
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+  # ============================================
+  # Knowledge Base
+  # ============================================
+  KnowledgeBaseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-knowledge-base"
+      Handler: knowledge_base.handler
+      CodeUri: src/handlers/api/
+      Description: Knowledge base document management
+      Timeout: 60
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - S3CrudPolicy:
+            BucketName: !Ref KBDocumentsBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:Retrieve
+                - bedrock:InvokeModel
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - bedrock:StartIngestionJob
+              Resource: "*"
+      Environment:
+        Variables:
+          KB_DOCUMENTS_BUCKET: !Ref KBDocumentsBucket
+          KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
+          KB_DATA_SOURCE_ID: !Ref KBDataSourceId
+      Events:
+        ListDocuments:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/knowledge-base/documents
+            Method: GET
+        CreateDocument:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/knowledge-base/documents
+            Method: POST
+        DeleteDocument:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/knowledge-base/documents/{document_id}
+            Method: DELETE
+        Sync:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/knowledge-base/sync
+            Method: POST
+        Status:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/knowledge-base/status
+            Method: GET
+
+  # S3 Bucket for Knowledge Base documents
+  KBDocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "complens-${Stage}-kb-documents"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [PUT]
+            AllowedOrigins:
+              - !If [IsProd, "https://complens.ai", !Sub "https://${DomainName}"]
+            MaxAge: 3600
 
   # ============================================
   # Step Functions - Workflow Executor
