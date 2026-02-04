@@ -34,7 +34,7 @@ export default class ErrorBoundary extends Component<Props, State> {
             <p className="mt-2 text-gray-500">
               An unexpected error occurred. Try refreshing the page.
             </p>
-            {this.state.error && (
+            {this.state.error && import.meta.env.DEV && (
               <p className="mt-3 text-xs text-gray-400 font-mono bg-gray-100 rounded p-2 break-all">
                 {this.state.error.message}
               </p>

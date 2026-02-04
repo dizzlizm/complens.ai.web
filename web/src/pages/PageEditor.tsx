@@ -22,8 +22,8 @@ import AITab, { type AISubTab } from '../components/page-editor/AITab';
 const AUTO_SAVE_DELAY = 3000;
 
 // Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.dev.complens.ai';
-const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '');
+const API_URL = import.meta.env.VITE_API_URL || '';
+const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '') || 'complens.ai';
 
 type Tab = 'content' | 'forms' | 'workflows' | 'ai' | 'domain';
 

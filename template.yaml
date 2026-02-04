@@ -66,13 +66,13 @@ Parameters:
   # Stripe Connect parameters
   StripeSecretKey:
     Type: String
-    Default: "sk_test_51SwvSd8Z757t07Q3pHsSgYrzgPzHlRDRvR4kAymD5mgMaofBcT1S5Z90Ke2MQQQJZFbpmbGzogVuGgKmDqyJj3js00c4RNMtw8"
+    Default: ""
     NoEcho: true
     Description: Stripe secret API key
 
   StripePublishableKey:
     Type: String
-    Default: "pk_test_51SwvSd8Z757t07Q3oi2NKmFPBljQNklaFbdckWY7UYfdpY9uVKY7AAwSMcny88zbJGf3xWVRRe8zRx5IEirgxw9B00t4cSWLTI"
+    Default: ""
     Description: Stripe publishable API key
 
   StripeWebhookSecret:
@@ -94,7 +94,7 @@ Parameters:
   # Platform Billing Parameters
   StripeBillingSecretKey:
     Type: String
-    Default: "sk_test_51SwvSd8Z757t07Q3pHsSgYrzgPzHlRDRvR4kAymD5mgMaofBcT1S5Z90Ke2MQQQJZFbpmbGzogVuGgKmDqyJj3js00c4RNMtw8"
+    Default: ""
     NoEcho: true
     Description: Stripe secret key for platform billing (same account as Connect)
 

@@ -212,13 +212,21 @@ export default function Contacts() {
   // Bulk delete
   const handleBulkDelete = async () => {
     if (!confirm(`Delete ${selectedIds.size} contacts?`)) return;
+    let succeeded = 0;
     for (const id of selectedIds) {
       try {
         await deleteContact.mutateAsync(id);
+        succeeded++;
       } catch { /* continue */ }
     }
     setSelectedIds(new Set());
-    toast.success(`Deleted ${selectedIds.size} contacts`);
+    if (succeeded === selectedIds.size) {
+      toast.success(`Deleted ${succeeded} contacts`);
+    } else if (succeeded > 0) {
+      toast.error(`Deleted ${succeeded} of ${selectedIds.size} contacts — some failed`);
+    } else {
+      toast.error('Failed to delete contacts');
+    }
   };
 
   // Bulk tag - we need per-contact update
@@ -226,17 +234,26 @@ export default function Contacts() {
     const tag = bulkTagInput.trim().toLowerCase();
     if (!tag) return;
 
+    let succeeded = 0;
+    const total = selectedIds.size;
     for (const id of selectedIds) {
       const contact = contacts.find(c => c.id === id);
       if (contact && !contact.tags.includes(tag)) {
         try {
           await updateContactDirect(workspaceId || '', id, { tags: [...contact.tags, tag] });
+          succeeded++;
         } catch { /* continue */ }
+      } else {
+        succeeded++; // already tagged
       }
     }
     setBulkTagInput('');
     setShowBulkTagInput(false);
-    toast.success(`Tagged ${selectedIds.size} contacts with "${tag}"`);
+    if (succeeded === total) {
+      toast.success(`Tagged ${total} contacts with "${tag}"`);
+    } else {
+      toast.error(`Tagged ${succeeded} of ${total} contacts — some failed`);
+    }
     refetch();
   };
 

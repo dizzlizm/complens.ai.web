@@ -19,6 +19,10 @@ import {
 } from '../../lib/hooks/useAI';
 import { useCurrentWorkspace } from '../../lib/hooks/useWorkspaces';
 
+// Derive subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
+const API_URL = import.meta.env.VITE_API_URL || '';
+const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '') || 'complens.ai';
+
 interface AgenticPageBuilderProps {
   onComplete: (result: {
     blocks: PageBlock[];
@@ -438,7 +442,7 @@ export default function AgenticPageBuilder({
     setPhase('naming');
 
     await addAssistantMessage(
-      '📝 Almost there! Give your page a name and optional subdomain. The subdomain will let people access your page at **yourname.dev.complens.ai**.',
+      `📝 Almost there! Give your page a name and optional subdomain. The subdomain will let people access your page at **yourname.${SUBDOMAIN_SUFFIX}**.`,
       undefined,
       undefined,
       600
@@ -584,7 +588,7 @@ export default function AgenticPageBuilder({
       setPhase('review');
 
       const pageUrl = pageSubdomain.trim()
-        ? `https://${pageSubdomain}.dev.complens.ai`
+        ? `https://${pageSubdomain}.${SUBDOMAIN_SUFFIX}`
         : 'Your page is ready';
 
       const strengthsText = result.assessment.strengths.length > 0
@@ -769,7 +773,7 @@ export default function AgenticPageBuilder({
       setPhase('review');
 
       const pageUrl = pageSubdomain.trim()
-        ? `https://${pageSubdomain}.dev.complens.ai`
+        ? `https://${pageSubdomain}.${SUBDOMAIN_SUFFIX}`
         : `Your page is ready`;
 
       // Different message for update vs create
@@ -884,7 +888,7 @@ export default function AgenticPageBuilder({
       setPhase('review');
 
       const pageUrl = pageSubdomain.trim()
-        ? `https://${pageSubdomain}.dev.complens.ai`
+        ? `https://${pageSubdomain}.${SUBDOMAIN_SUFFIX}`
         : `Your page is ready`;
 
       await addAssistantMessage(
@@ -1144,7 +1148,7 @@ export default function AgenticPageBuilder({
                       className="flex-1 px-4 py-2 border border-gray-200 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
                     />
                     <span className="px-3 py-2 bg-gray-100 border border-l-0 border-gray-200 rounded-r-lg text-gray-500 text-sm">
-                      .dev.complens.ai
+                      .{SUBDOMAIN_SUFFIX}
                     </span>
                   </div>
                   <p className="text-xs text-gray-500 mt-1">

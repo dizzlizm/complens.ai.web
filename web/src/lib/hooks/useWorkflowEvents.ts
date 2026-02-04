@@ -194,7 +194,10 @@ export function useWorkflowEvents(
       // Close existing connection
       ws.current?.close();
 
-      // Connect with token
+      // SECURITY NOTE: Token is passed via query param because API Gateway
+      // WebSocket APIs don't forward custom headers to the $connect integration.
+      // Risk is mitigated by wss:// (encrypted in transit) and short token expiry.
+      // TODO: Replace with a short-lived connect token from a dedicated endpoint.
       const wsUrl = `${WS_URL}?token=${encodeURIComponent(token)}`;
       ws.current = new WebSocket(wsUrl);
 
@@ -284,42 +287,6 @@ export function useWorkflowEvents(
     clearEvents,
     reconnect,
   };
-}
-
-/**
- * Hook for workflow event notifications with toast support.
- *
- * @example
- * ```tsx
- * // In your layout or workflow pages
- * useWorkflowNotifications({ workspaceId });
- * ```
- */
-export function useWorkflowNotifications(options: {
-  workspaceId: string;
-  showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
-}) {
-  const { workspaceId, showToast } = options;
-
-  return useWorkflowEvents({
-    workspaceId,
-    onWorkflowStarted: (event) => {
-      showToast?.(
-        `Workflow started${event.metadata?.trigger_type ? ` (${event.metadata.trigger_type})` : ''}`,
-        'info'
-      );
-    },
-    onWorkflowCompleted: (_event) => {
-      showToast?.(`Workflow completed successfully`, 'success');
-    },
-    onWorkflowFailed: (event) => {
-      showToast?.(
-        `Workflow failed${event.error ? `: ${event.error}` : ''}`,
-        'error'
-      );
-    },
-    autoInvalidate: true,
-  });
 }
 
 export default useWorkflowEvents;

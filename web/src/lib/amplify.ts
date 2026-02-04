@@ -8,13 +8,6 @@ const userPoolClientId = import.meta.env.VITE_COGNITO_CLIENT_ID || '';
 // Extract region from userPoolId (format: us-east-1_xxxxxxxx)
 const region = userPoolId.split('_')[0] || 'us-east-1';
 
-// Debug logging (remove in production)
-console.log('Amplify Config:', {
-  userPoolId: userPoolId ? `${userPoolId.substring(0, 15)}...` : 'NOT SET',
-  userPoolClientId: userPoolClientId ? `${userPoolClientId.substring(0, 10)}...` : 'NOT SET',
-  region,
-});
-
 // Warn if Cognito is not configured (helpful for debugging)
 if (!userPoolId || !userPoolClientId) {
   console.error(

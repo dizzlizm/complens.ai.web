@@ -66,15 +66,6 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         query_params = event.get("queryStringParameters", {}) or {}
         workspace_id = query_params.get("workspace_id")
 
-    # TODO: [SECURITY] - Webhook processing without workspace context
-    # Details: If workspace_id is not found in path, query params, or event metadata,
-    # webhook events are processed without workspace association. This could:
-    # 1. Apply subscription changes to wrong workspace if ID lookup fails
-    # 2. Create dangling webhook records without workspace reference
-    # 3. Enable privilege escalation if attacker can control webhook without workspace
-    # Should require workspace_id and reject webhook if missing.
-    # Severity: High - potential workspace data corruption and privilege escalation
-
     # SECURITY: Verify signature with raw bytes before processing
     try:
         stripe_event = verify_webhook_signature(raw_body, signature)
@@ -100,11 +91,15 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         workspace_id = event_data.get("metadata", {}).get("workspace_id")
 
     if not workspace_id:
-        logger.warning("No workspace_id found in webhook")
-        # Still return 200 to acknowledge receipt
+        logger.warning(
+            "SECURITY: Rejecting Stripe webhook - no workspace_id in path, "
+            "query params, or event metadata",
+            event_type=event_type,
+            event_id=stripe_event.get("id"),
+        )
         return {
-            "statusCode": 200,
-            "body": json.dumps({"received": True, "warning": "no_workspace"}),
+            "statusCode": 400,
+            "body": json.dumps({"error": "workspace_id required"}),
         }
 
     # Process based on event type

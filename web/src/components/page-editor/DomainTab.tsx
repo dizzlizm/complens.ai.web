@@ -4,8 +4,8 @@ import { useDomains, useCreateDomain, useDeleteDomain, getDomainStatusInfo } fro
 import { useToast } from '../Toast';
 
 // Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.dev.complens.ai';
-const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '');
+const API_URL = import.meta.env.VITE_API_URL || '';
+const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '') || 'complens.ai';
 
 export interface DomainTabProps {
   workspaceId: string;
