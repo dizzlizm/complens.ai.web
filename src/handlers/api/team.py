@@ -155,10 +155,7 @@ def invite_member(
         base_url = f"https://{stage}.complens.ai"
     accept_url = f"{base_url}/accept-invite?token={invitation.token}"
 
-    # Send invitation email via SES
-    # Platform emails use the complens.ai domain (verified in SES)
-    platform_from = os.environ.get("SES_FROM_EMAIL") or "noreply@complens.ai"
-
+    # Send invitation email via SES (email_service defaults to noreply@complens.ai)
     email_sent = False
     email_error_msg = None
     try:
@@ -169,7 +166,6 @@ def invite_member(
         email_service.send_email(
             to=request.email,
             subject=f"{inviter} invited you to join their workspace on Complens.ai",
-            from_email=platform_from,
             body_html=f"""
             <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 0;">
                 <h2 style="color: #111827; margin-bottom: 16px;">You've been invited!</h2>
