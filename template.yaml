@@ -1566,8 +1566,7 @@ Resources:
       Description: Public pages and form submissions (no auth)
       Environment:
         Variables:
-          API_URL: !If [CustomDomainEnabled, !Sub "https://api.${DomainName}", !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"]
-          WEBSOCKET_ENDPOINT: !If [CustomDomainEnabled, !Sub "wss://ws.${DomainName}", !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"]
+          DOMAIN_NAME: !Ref DomainName
           WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
       Policies:
         - DynamoDBCrudPolicy:

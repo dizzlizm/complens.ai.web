@@ -254,9 +254,10 @@ def get_page_by_subdomain(subdomain: str) -> dict:
                 if form:
                     forms.append(form.model_dump(mode="json"))
 
-    # Get API URLs from environment
-    ws_url = os.environ.get("WEBSOCKET_ENDPOINT", "wss://ws.dev.complens.ai")
-    api_url = os.environ.get("API_URL", "https://api.dev.complens.ai")
+    # Derive API/WS URLs from domain name to avoid circular CloudFormation dependencies
+    domain_name = os.environ.get("DOMAIN_NAME", "dev.complens.ai")
+    api_url = f"https://api.{domain_name}"
+    ws_url = f"wss://ws.{domain_name}"
 
     # Render full HTML page with forms
     page_data = page.model_dump(mode="json")
@@ -381,9 +382,10 @@ def get_page_by_domain(domain: str) -> dict:
                 if form:
                     forms.append(form.model_dump(mode="json"))
 
-    # Get API URLs from environment
-    ws_url = os.environ.get("WEBSOCKET_ENDPOINT", "wss://ws.dev.complens.ai")
-    api_url = os.environ.get("API_URL", "https://api.dev.complens.ai")
+    # Derive API/WS URLs from domain name to avoid circular CloudFormation dependencies
+    domain_name = os.environ.get("DOMAIN_NAME", "dev.complens.ai")
+    api_url = f"https://api.{domain_name}"
+    ws_url = f"wss://ws.{domain_name}"
 
     # Render full HTML page with forms
     page_data = page.model_dump(mode="json")
