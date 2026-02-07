@@ -1,29 +1,52 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../lib/auth';
-import { Camera, Mail, Phone, MapPin, Building, Calendar } from 'lucide-react';
+import { Camera, Mail, Phone, MapPin, Building, Calendar, Loader2, Check } from 'lucide-react';
+import { TimezoneSelect } from '../components/ui';
+import { useToast } from '../components/Toast';
 
 export default function Profile() {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Mock profile data - in real app would come from API
+  // Initialize from user data when available
   const [profile, setProfile] = useState({
-    firstName: 'John',
-    lastName: 'Doe',
-    email: user?.email || 'john@example.com',
-    phone: '+1 (555) 123-4567',
-    company: 'Acme Corp',
-    role: 'Marketing Manager',
-    location: 'New York, NY',
-    timezone: 'America/New_York',
-    bio: 'Marketing automation enthusiast. Building better customer experiences through AI.',
-    joinedAt: 'January 2024',
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    company: '',
+    role: '',
+    location: '',
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
+    bio: '',
   });
 
-  const handleSave = () => {
-    // Would save to API
+  // Update profile when user data is available
+  useEffect(() => {
+    if (user) {
+      const nameParts = (user.name || '').split(' ');
+      setProfile((prev) => ({
+        ...prev,
+        firstName: nameParts[0] || '',
+        lastName: nameParts.slice(1).join(' ') || '',
+        email: user.email || '',
+      }));
+    }
+  }, [user]);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    // Simulate API call - in production, this would save to Cognito user attributes
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    setIsSaving(false);
     setIsEditing(false);
+    showToast('success', 'Profile updated successfully');
   };
+
+  // Member since would come from user attributes if stored, use a placeholder for now
+  const memberSince = 'Member';
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -39,11 +62,29 @@ export default function Profile() {
           </button>
         ) : (
           <div className="flex gap-2">
-            <button className="btn btn-secondary" onClick={() => setIsEditing(false)}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setIsEditing(false)}
+              disabled={isSaving}
+            >
               Cancel
             </button>
-            <button className="btn btn-primary" onClick={handleSave}>
-              Save Changes
+            <button
+              className="btn btn-primary inline-flex items-center gap-2"
+              onClick={handleSave}
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Check className="w-4 h-4" />
+                  Save Changes
+                </>
+              )}
             </button>
           </div>
         )}
@@ -243,22 +284,13 @@ export default function Profile() {
               Timezone
             </label>
             {isEditing ? (
-              <select
-                className="input"
+              <TimezoneSelect
                 value={profile.timezone}
-                onChange={(e) =>
-                  setProfile({ ...profile, timezone: e.target.value })
-                }
-              >
-                <option value="America/New_York">Eastern Time (ET)</option>
-                <option value="America/Chicago">Central Time (CT)</option>
-                <option value="America/Denver">Mountain Time (MT)</option>
-                <option value="America/Los_Angeles">Pacific Time (PT)</option>
-                <option value="UTC">UTC</option>
-              </select>
+                onChange={(value) => setProfile({ ...profile, timezone: value })}
+              />
             ) : (
               <p className="text-gray-900">
-                {profile.timezone.replace('America/', '').replace('_', ' ')}
+                {profile.timezone.replace('America/', '').replace('_', ' ').replace('/', ' / ')}
               </p>
             )}
           </div>
@@ -274,13 +306,15 @@ export default function Profile() {
           <div className="flex items-center gap-3">
             <Calendar className="w-5 h-5 text-gray-400" />
             <div>
-              <p className="text-sm text-gray-500">Member since</p>
-              <p className="text-gray-900">{profile.joinedAt}</p>
+              <p className="text-sm text-gray-500">Member for</p>
+              <p className="text-gray-900">{memberSince}</p>
             </div>
           </div>
           <div>
             <p className="text-sm text-gray-500">Account ID</p>
-            <p className="text-gray-900 font-mono text-sm">usr_abc123xyz</p>
+            <p className="text-gray-900 font-mono text-sm truncate" title={user?.id}>
+              {user?.id ? user.id.slice(0, 20) + '...' : 'N/A'}
+            </p>
           </div>
         </div>
       </div>

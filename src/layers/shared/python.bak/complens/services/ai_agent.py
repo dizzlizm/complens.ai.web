@@ -119,7 +119,7 @@ class AIAgentService:
 
     def __init__(
         self,
-        model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0",
+        model_id: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
         max_tokens: int = 1000,
     ):
         """Initialize AI Agent service.
@@ -441,7 +441,7 @@ Available tools:
         query: str,
         category: str | None = None,
     ) -> dict:
-        """Search knowledge base.
+        """Search knowledge base using Bedrock Knowledge Base.
 
         Args:
             query: Search query.
@@ -450,11 +450,27 @@ Available tools:
         Returns:
             Search results.
         """
-        # TODO: Integrate with actual knowledge base (could use Bedrock KB or custom)
+        from complens.services.knowledge_base_service import get_knowledge_base_service
+
+        kb_service = get_knowledge_base_service()
+        results = kb_service.retrieve(
+            workspace_id=self.workspace_id,
+            query=query,
+            max_results=5,
+        )
+
+        if not results:
+            return {
+                "status": "no_results",
+                "query": query,
+                "message": "No relevant documents found in the knowledge base.",
+            }
+
         return {
-            "status": "no_results",
+            "status": "found",
             "query": query,
-            "message": "Knowledge base search not yet implemented",
+            "results": results,
+            "count": len(results),
         }
 
     async def _tool_escalate(

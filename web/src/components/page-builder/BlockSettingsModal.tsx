@@ -83,6 +83,7 @@ interface BlockSettingsModalProps {
   onConfigChange: (config: Record<string, unknown>) => void;
   forms?: Array<{ id: string; name: string }>;
   workspaceId?: string;
+  pageId?: string;
   pageContext?: {
     headline?: string;
     subheadline?: string;
@@ -98,6 +99,7 @@ export default function BlockSettingsModal({
   block,
   onConfigChange,
   forms = [],
+  pageId,
   pageContext,
 }: BlockSettingsModalProps) {
   const [activeTab, setActiveTab] = useState<TabType>('content');
@@ -292,6 +294,7 @@ export default function BlockSettingsModal({
                 pageContext={pageContext}
                 supportsImage={supportsImage}
                 imageField={imageField}
+                pageId={pageId}
               />
               <p className="text-xs text-gray-400 mt-2">
                 Use AI to improve content or generate images

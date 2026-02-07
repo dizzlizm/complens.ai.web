@@ -2,8 +2,10 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './lib/auth';
 import { ToastProvider } from './components/Toast';
 import ProtectedRoute from './components/ProtectedRoute';
+import AdminProtectedRoute from './components/AdminProtectedRoute';
 import AppLayout from './layouts/AppLayout';
 import AuthLayout from './layouts/AuthLayout';
+import AdminLayout from './layouts/AdminLayout';
 
 // Auth pages
 import Login from './pages/auth/Login';
@@ -24,6 +26,17 @@ import BusinessProfile from './pages/BusinessProfile';
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
+
+// Admin pages
+import {
+  AdminWorkspaces,
+  AdminWorkspaceDetail,
+  AdminUsers,
+  AdminUserDetail,
+  AdminBilling,
+  AdminCosts,
+  AdminSystem,
+} from './pages/admin';
 
 // Public pages (no auth)
 import PublicPage from './pages/public/PublicPage';
@@ -69,6 +82,24 @@ function App() {
 
           {/* Accept invitation (handles both auth states internally) */}
           <Route path="/accept-invite" element={<AcceptInvite />} />
+
+          {/* Admin routes (super admin only) */}
+          <Route
+            element={
+              <AdminProtectedRoute>
+                <AdminLayout />
+              </AdminProtectedRoute>
+            }
+          >
+            <Route path="/admin" element={<Navigate to="/admin/workspaces" replace />} />
+            <Route path="/admin/workspaces" element={<AdminWorkspaces />} />
+            <Route path="/admin/workspaces/:id" element={<AdminWorkspaceDetail />} />
+            <Route path="/admin/users" element={<AdminUsers />} />
+            <Route path="/admin/users/:id" element={<AdminUserDetail />} />
+            <Route path="/admin/billing" element={<AdminBilling />} />
+            <Route path="/admin/costs" element={<AdminCosts />} />
+            <Route path="/admin/system" element={<AdminSystem />} />
+          </Route>
 
           {/* Public pages (no auth required) */}
           <Route path="/p/:pageSlug" element={<PublicPage />} />

@@ -94,6 +94,7 @@ class AutomationConfig(PydanticBaseModel):
     owner_email: str | None = Field(None, description="Owner email for notifications")
     welcome_message: str | None = Field(None, description="Custom welcome email message")
     add_tags: list[str] = Field(default_factory=list, description="Tags to add to contact")
+    include_ai_respond: bool = Field(default=False, description="Add AI auto-respond node for chat workflows")
 
 
 class SynthesizedBlockInput(PydanticBaseModel):
@@ -126,6 +127,7 @@ class SynthesizedWorkflowConfig(PydanticBaseModel):
     owner_email: str | None = Field(default=None)
     welcome_message: str | None = Field(default=None)
     add_tags: list[str] = Field(default_factory=list)
+    include_ai_respond: bool = Field(default=False, description="Add AI auto-respond node for chat workflows")
 
 
 class CreateCompleteRequest(PydanticBaseModel):
@@ -486,6 +488,16 @@ def update_page(
         page.blocks = blocks
         logger.info("Saving blocks", page_id=page_id, block_count=len(blocks), blocks=[b.model_dump() for b in blocks])
 
+        # Auto-sync chat_config.enabled from block presence
+        has_chat_block = any(b.type == "chat" for b in blocks)
+        if page.chat_config.enabled != has_chat_block:
+            page.chat_config.enabled = has_chat_block
+            logger.info(
+                "Auto-synced chat_config.enabled from blocks",
+                page_id=page_id,
+                chat_enabled=has_chat_block,
+            )
+
     # Save
     page = repo.update_page(page)
 
@@ -698,16 +710,21 @@ def create_complete_page(
     # Build page blocks - use synthesized blocks if provided, otherwise legacy approach
     if request.synthesized_blocks:
         logger.info("Using synthesized blocks", block_count=len(request.synthesized_blocks))
-        blocks = [
-            PageBlock(
-                id=sb.id,
-                type=sb.type,
-                order=sb.order,
-                width=sb.width,
-                config=sb.config,
+        blocks = []
+        for sb in request.synthesized_blocks:
+            config = sb.config
+            # Cap testimonial items at 3 to avoid excessive image generation
+            if sb.type == "testimonials" and "items" in config:
+                config = {**config, "items": config["items"][:3]}
+            blocks.append(
+                PageBlock(
+                    id=sb.id,
+                    type=sb.type,
+                    order=sb.order,
+                    width=sb.width,
+                    config=config,
+                )
             )
-            for sb in request.synthesized_blocks
-        ]
     else:
         blocks = _build_blocks_from_content(content, business_info, request.style, colors)
 
@@ -1413,7 +1430,15 @@ def _build_automation_workflow(
     automation: AutomationConfig,
     trigger_type: str = "trigger_form_submitted",
 ) -> Workflow:
-    """Build an automation workflow for the specified trigger type."""
+    """Build an automation workflow for the specified trigger type.
+
+    Creates a complete workflow with:
+    - Trigger node (form, chat, or page visit)
+    - AI auto-respond (for chat-triggered workflows)
+    - Contact tagging
+    - Welcome email to the lead
+    - Owner notification email (using template variables for dynamic resolution)
+    """
     nodes = []
     edges = []
     node_y = 100
@@ -1444,6 +1469,35 @@ def _build_automation_workflow(
     ))
     last_node_id = trigger_id
     node_y += 150
+
+    # AI auto-respond for chat-triggered workflows
+    if getattr(automation, "include_ai_respond", False) and trigger_type == "trigger_chat_message":
+        ai_id = str(uuid.uuid4())[:8]
+        nodes.append(WorkflowNode(
+            id=ai_id,
+            node_type="action_ai_respond",
+            position={"x": 250, "y": node_y},
+            data={
+                "label": "AI Auto-Reply",
+                "config": {
+                    "prompt": (
+                        f"You are a helpful assistant for {business_name}. "
+                        "Answer the visitor's question based on the page content and business profile. "
+                        "Be friendly, concise, and helpful. If you don't know the answer, "
+                        "suggest they fill out the contact form or email us."
+                    ),
+                    "channel": "chat",
+                    "max_tokens": 500,
+                },
+            },
+        ))
+        edges.append(WorkflowEdge(
+            id=f"e{last_node_id}-{ai_id}",
+            source=last_node_id,
+            target=ai_id,
+        ))
+        last_node_id = ai_id
+        node_y += 150
 
     # Update contact with tags
     if automation.add_tags:
@@ -1494,7 +1548,8 @@ def _build_automation_workflow(
             target=email_id,
         ))
 
-    # Notify owner
+    # Notify owner — uses template variable {{owner.email}} which resolves
+    # to workspace.notification_email at workflow runtime
     if automation.notify_owner and automation.owner_email:
         notify_id = str(uuid.uuid4())[:8]
         nodes.append(WorkflowNode(

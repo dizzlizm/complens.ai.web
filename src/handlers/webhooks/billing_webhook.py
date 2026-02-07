@@ -67,7 +67,7 @@ def _handle_checkout_completed(event_data: dict) -> None:
     workspace.stripe_subscription_id = subscription_id
     workspace.subscription_status = "active"
 
-    ws_repo.update(workspace, check_version=False)
+    ws_repo.update_workspace(workspace, check_version=False)
 
     logger.info(
         "Workspace linked to Stripe customer",
@@ -114,7 +114,7 @@ def _handle_subscription_change(event_data: dict) -> None:
 
         workspace.plan_period_end = datetime.fromtimestamp(period_end, tz=timezone.utc)
 
-    ws_repo.update(workspace, check_version=False)
+    ws_repo.update_workspace(workspace, check_version=False)
 
     logger.info(
         "Subscription updated",
@@ -142,7 +142,7 @@ def _handle_subscription_deleted(event_data: dict) -> None:
     workspace.plan = "free"
     workspace.subscription_status = "canceled"
 
-    ws_repo.update(workspace, check_version=False)
+    ws_repo.update_workspace(workspace, check_version=False)
 
     logger.info("Subscription canceled, reverted to free", workspace_id=workspace_id)
 
@@ -165,7 +165,7 @@ def _handle_payment_failed(event_data: dict) -> None:
         workspace = ws_repo.get_by_id(workspace_id)
         if workspace:
             workspace.subscription_status = "past_due"
-            ws_repo.update(workspace, check_version=False)
+            ws_repo.update_workspace(workspace, check_version=False)
 
     logger.warning(
         "Billing payment failed",

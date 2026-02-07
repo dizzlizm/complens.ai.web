@@ -30,7 +30,7 @@ region = "us-east-1"
 confirm_changeset = false
 resolve_s3 = true
 capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
-parameter_overrides = "Stage=dev DomainName=dev.complens.ai HostedZoneId=Z02373573N3XBHSZBERY6 EnableCustomDomain=true"
+parameter_overrides = "Stage=dev DomainName=dev.complens.ai HostedZoneId=Z02373573N3XBHSZBERY6 EnableCustomDomain=true StripeBillingSecretKey=sk_test_51SwvSd8Z757t07Q3pHsSgYrzgPzHlRDRvR4kAymD5mgMaofBcT1S5Z90Ke2MQQQJZFbpmbGzogVuGgKmDqyJj3js00c4RNMtw8 StripeProPriceId=price_1Sww6Y8Z757t07Q3y7AseKJJ StripeBusinessPriceId=price_1Sww6Z8Z757t07Q3Nzw5zczq StripeEventSourceName=aws.partner/stripe.com/ed_test_61U6Jg6JnQnTwSdV416U6JPy9FSQCT3LQz2DBAY5YKsC"
 
 [dev.local_start_api.parameters]
 port = 3001

@@ -23,6 +23,7 @@ class AuthContext:
     agency_id: str | None = None
     workspace_ids: list[str] | None = None
     is_admin: bool = False
+    is_super_admin: bool = False
 
     def has_workspace_access(self, workspace_id: str) -> bool:
         """Check if user has access to a specific workspace.
@@ -98,13 +99,41 @@ def get_auth_context(event: dict[str, Any]) -> AuthContext:
     if isinstance(is_admin, str):
         is_admin = is_admin.lower() == "true"
 
+    is_super_admin = context.get("isSuperAdmin", False) or context.get("is_super_admin", False)
+    if isinstance(is_super_admin, str):
+        is_super_admin = is_super_admin.lower() == "true"
+
     return AuthContext(
         user_id=user_id,
         email=email,
         agency_id=agency_id,
         workspace_ids=workspace_ids,
         is_admin=is_admin,
+        is_super_admin=is_super_admin,
     )
+
+
+def require_super_admin(auth: AuthContext) -> None:
+    """Ensure user is a super admin.
+
+    Args:
+        auth: Authentication context.
+
+    Raises:
+        ForbiddenError: If user is not a super admin.
+    """
+    from complens.utils.exceptions import ForbiddenError
+
+    if not auth.is_super_admin:
+        logger.warning(
+            "Super admin access denied",
+            user_id=auth.user_id,
+        )
+        raise ForbiddenError(
+            message="Super admin access required",
+            resource_type="Admin",
+            action="access",
+        )
 
 
 def require_workspace_access(auth: AuthContext, workspace_id: str) -> None:

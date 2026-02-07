@@ -18,6 +18,7 @@ interface User {
   name?: string;
   agencyId?: string;
   workspaceIds?: string[];
+  isSuperAdmin?: boolean;
 }
 
 interface AuthContextType {
@@ -50,6 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         name: attributes.name,
         agencyId: attributes['custom:agency_id'],
         workspaceIds: attributes['custom:workspace_ids']?.split(','),
+        isSuperAdmin: attributes['custom:is_super_admin'] === 'true',
       });
     } catch (error: unknown) {
       // Distinguish between auth errors and transient errors

@@ -58,6 +58,16 @@ export interface FormAnalyticsData {
   top_forms: FormPerformance[];
 }
 
+export interface RecentActivityItem {
+  id: string;
+  type: 'workflow_run' | 'form_submission' | 'contact_created';
+  title: string;
+  description?: string;
+  status?: 'success' | 'failed' | 'running';
+  timestamp: string;
+  link?: string;
+}
+
 export interface AnalyticsData {
   period: string;
   summary: AnalyticsSummary;
@@ -66,6 +76,7 @@ export interface AnalyticsData {
   top_workflows: WorkflowPerformance[];
   page_analytics?: PageAnalyticsData;
   form_analytics?: FormAnalyticsData;
+  recent_activity?: RecentActivityItem[];
 }
 
 export function useAnalytics(workspaceId: string | undefined, period: string = '30d') {
@@ -73,7 +84,7 @@ export function useAnalytics(workspaceId: string | undefined, period: string = '
     queryKey: ['analytics', workspaceId, period],
     queryFn: async () => {
       const { data } = await api.get<AnalyticsData>(
-        `/workspaces/${workspaceId}/analytics?period=${period}&include=pages,forms`
+        `/workspaces/${workspaceId}/analytics?period=${period}&include=pages,forms,activity`
       );
       return data;
     },

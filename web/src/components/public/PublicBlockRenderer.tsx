@@ -10,11 +10,14 @@ import ChatWidget from './ChatWidget';
 import type { PageBlock, ColSpan, HeroConfig, FeaturesConfig, CtaConfig, FormConfig, TestimonialsConfig, FaqConfig, TextConfig, ImageConfig, StatsConfig, DividerConfig, PricingConfig, VideoConfig, ChatConfig as ChatBlockConfig } from '../page-builder/types';
 import { groupBlocksIntoRows, type LayoutRow } from '../page-builder/types';
 
+type PageLayout = 'full-bleed' | 'contained';
+
 interface PublicBlockRendererProps {
   blocks: PageBlock[];
   primaryColor: string;
   workspaceId: string;
   pageId: string;
+  layout?: PageLayout;
 }
 
 // Block types that render as full-bleed sections (ignore grid layout)
@@ -36,12 +39,13 @@ function getColSpanClass(colSpan: ColSpan | undefined): string {
   }
 }
 
-export default function PublicBlockRenderer({ blocks, primaryColor, workspaceId, pageId }: PublicBlockRendererProps) {
+export default function PublicBlockRenderer({ blocks, primaryColor, workspaceId, pageId, layout = 'full-bleed' }: PublicBlockRendererProps) {
   // Group blocks into rows for layout
   const rows = groupBlocksIntoRows(blocks);
+  const isContained = layout === 'contained';
 
   return (
-    <div className="public-blocks">
+    <div className={`public-blocks ${isContained ? 'max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8' : ''}`}>
       {rows.map((row) => (
         <PublicRow
           key={row.rowIndex}
@@ -49,6 +53,7 @@ export default function PublicBlockRenderer({ blocks, primaryColor, workspaceId,
           primaryColor={primaryColor}
           workspaceId={workspaceId}
           pageId={pageId}
+          contained={isContained}
         />
       ))}
     </div>
@@ -60,15 +65,17 @@ interface PublicRowProps {
   primaryColor: string;
   workspaceId: string;
   pageId: string;
+  contained?: boolean;
 }
 
-function PublicRow({ row, primaryColor, workspaceId, pageId }: PublicRowProps) {
+function PublicRow({ row, primaryColor, workspaceId, pageId, contained = false }: PublicRowProps) {
   // Check if this row has a single full-bleed block
-  const isSingleFullBleed = row.slots.length === 1 &&
+  const isSingleFullBleed = !contained &&
+    row.slots.length === 1 &&
     FULL_BLEED_TYPES.includes(row.slots[0].type as string) &&
     (row.slots[0].colSpan === 12 || !row.slots[0].colSpan);
 
-  // Single full-bleed block renders without grid wrapper
+  // Single full-bleed block renders without grid wrapper (only in full-bleed layout)
   if (isSingleFullBleed) {
     const block = row.slots[0];
     return (
@@ -82,9 +89,14 @@ function PublicRow({ row, primaryColor, workspaceId, pageId }: PublicRowProps) {
     );
   }
 
-  // Multiple blocks or non-full-bleed: render in grid
+  // Contained layout or multi-block rows: render in grid
+  // In contained mode, skip the max-w wrapper since the parent already constrains
+  const gridClass = contained
+    ? 'grid grid-cols-12 gap-4 sm:gap-6 py-4'
+    : 'grid grid-cols-12 gap-4 sm:gap-6 max-w-7xl mx-auto px-4 py-8';
+
   return (
-    <div className="grid grid-cols-12 gap-4 sm:gap-6 max-w-7xl mx-auto px-4 py-8">
+    <div className={gridClass}>
       {row.slots.map((block) => (
         <div
           key={block.id}
@@ -384,7 +396,25 @@ function CtaBlockPublic({ config, isFullBleed = true }: { config: CtaConfig; isF
 // Form Block
 function FormBlockPublic({ config, workspaceId, pageId, primaryColor, isFullBleed = true }: { config: FormConfig; workspaceId: string; pageId: string; primaryColor: string; isFullBleed?: boolean }) {
   if (!config.formId) {
-    return null;
+    // Show placeholder with title/description when form hasn't been created yet
+    if (isFullBleed) {
+      return (
+        <section className="py-16 px-4 bg-gray-50">
+          <div className="max-w-xl mx-auto text-center">
+            {config.title && <h2 className="text-2xl font-bold text-gray-900 mb-2">{config.title}</h2>}
+            {config.description && <p className="text-gray-600 mb-4">{config.description}</p>}
+            <p className="text-sm text-gray-400">Contact form coming soon</p>
+          </div>
+        </section>
+      );
+    }
+    return (
+      <div className="py-6 bg-gray-50 rounded-lg text-center">
+        {config.title && <h3 className="text-lg font-bold text-gray-900 mb-1">{config.title}</h3>}
+        {config.description && <p className="text-sm text-gray-600 mb-2">{config.description}</p>}
+        <p className="text-xs text-gray-400">Contact form coming soon</p>
+      </div>
+    );
   }
 
   // Full-bleed version

@@ -45,7 +45,7 @@ class WorkflowRun(BaseModel):
 
     workflow_id: str = Field(..., description="Parent workflow ID")
     workspace_id: str = Field(..., description="Workspace ID for denormalization")
-    contact_id: str = Field(..., description="Contact this run is for")
+    contact_id: str | None = Field(None, description="Contact this run is for (may be None for form triggers without contacts)")
 
     # Run state
     status: RunStatus = Field(default=RunStatus.PENDING, description="Current run status")

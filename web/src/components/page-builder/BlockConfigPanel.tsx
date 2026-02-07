@@ -1,5 +1,7 @@
-import React from 'react';
-import { X, Plus, Trash2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Plus, Trash2, RefreshCw, Loader2 } from 'lucide-react';
+import { useGenerateImage } from '../../lib/hooks/useAI';
+import { useCurrentWorkspace } from '../../lib/hooks/useWorkspaces';
 import {
   PageBlock,
   getBlockTypeInfo,
@@ -621,6 +623,9 @@ export function TestimonialsConfigFields({
   config: TestimonialsConfig;
   onChange: (updates: Record<string, unknown>) => void;
 }) {
+  const { workspaceId } = useCurrentWorkspace();
+  const generateImage = useGenerateImage(workspaceId || '');
+  const [generatingIndex, setGeneratingIndex] = useState<number | null>(null);
   const items = config.items || [];
 
   const addItem = () => {
@@ -637,6 +642,28 @@ export function TestimonialsConfigFields({
 
   const removeItem = (index: number) => {
     onChange({ items: items.filter((_, i) => i !== index) });
+  };
+
+  const handleGenerateAvatar = async (index: number) => {
+    if (!workspaceId) return;
+    const item = items[index];
+    const prompt = `Abstract geometric avatar icon, single centered shape, soft gradient, ${item.author || 'person'}, ${item.company || 'professional'}, minimal flat design, solid pastel background, no text, no face, no person`;
+
+    setGeneratingIndex(index);
+    try {
+      const result = await generateImage.mutateAsync({
+        context: `Avatar for ${item.author || 'testimonial'}`,
+        prompt: prompt.slice(0, 512),
+        style: 'minimal',
+      });
+      if (result?.url) {
+        updateItem(index, { avatar: result.url });
+      }
+    } catch {
+      // Silently fail — user can retry
+    } finally {
+      setGeneratingIndex(null);
+    }
   };
 
   return (
@@ -685,11 +712,27 @@ export function TestimonialsConfigFields({
                   onChange={(v) => updateItem(index, { company: v })}
                   placeholder="Company..."
                 />
-                <TextInput
-                  value={item.avatar}
-                  onChange={(v) => updateItem(index, { avatar: v })}
-                  placeholder="Avatar URL (optional)..."
-                />
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <TextInput
+                      value={item.avatar}
+                      onChange={(v) => updateItem(index, { avatar: v })}
+                      placeholder="Avatar URL (optional)..."
+                    />
+                  </div>
+                  <button
+                    onClick={() => handleGenerateAvatar(index)}
+                    disabled={generatingIndex !== null}
+                    className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors disabled:opacity-50 shrink-0"
+                    title="Generate avatar"
+                  >
+                    {generatingIndex === index ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-purple-600" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           ))}

@@ -51,6 +51,7 @@ interface LayoutCanvasProps {
   onSynthesizeBlocks: (blockTypes: BlockType[], slotIds: string[]) => void;
   forms?: FormInfo[];
   workspaceId?: string;
+  pageId?: string;
 }
 
 export default function LayoutCanvas({
@@ -59,6 +60,7 @@ export default function LayoutCanvas({
   onSynthesizeBlocks,
   forms = [],
   workspaceId,
+  pageId,
 }: LayoutCanvasProps) {
   const [selectedSlotIds, setSelectedSlotIds] = useState<Set<string>>(new Set());
   const [activeSlotId, setActiveSlotId] = useState<string | null>(null);
@@ -557,6 +559,7 @@ export default function LayoutCanvas({
                 activeSlotId={activeSlotId}
                 forms={forms}
                 workspaceId={workspaceId}
+                pageId={pageId}
               />
             ))}
           </div>

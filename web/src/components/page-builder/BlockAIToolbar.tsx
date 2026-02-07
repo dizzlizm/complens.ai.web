@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Sparkles, Wand2, RefreshCw, ImagePlus, Loader2 } from 'lucide-react';
 import { useCurrentWorkspace } from '../../lib/hooks/useWorkspaces';
-import { useImproveBlock, useGenerateImage } from '../../lib/hooks/useAI';
+import { useImproveBlock, useGenerateImage, useBusinessProfile } from '../../lib/hooks/useAI';
 
 interface BlockAIToolbarProps {
   blockType: string;
@@ -20,6 +20,7 @@ interface BlockAIToolbarProps {
     secondaryColor?: string;
     accentColor?: string;
   };
+  pageId?: string;
 }
 
 // Functional editing options only - tone/voice comes from the business profile
@@ -40,6 +41,7 @@ export default function BlockAIToolbar({
   supportsImage = false,
   imageField = 'url',
   pageDesign,
+  pageId,
 }: BlockAIToolbarProps) {
   const { workspaceId } = useCurrentWorkspace();
   const [showOptions, setShowOptions] = useState(false);
@@ -48,6 +50,10 @@ export default function BlockAIToolbar({
 
   const improveBlock = useImproveBlock(workspaceId || '');
   const generateImage = useGenerateImage(workspaceId || '');
+  const { data: businessProfile } = useBusinessProfile(workspaceId, pageId);
+
+  // Whether this is a hero block that should auto-generate from context
+  const isHeroImage = blockType === 'hero' && imageField === 'backgroundImage';
 
   const handleImprove = async (instruction: string) => {
     if (!workspaceId) return;
@@ -67,12 +73,13 @@ export default function BlockAIToolbar({
     }
   };
 
-  const handleGenerateImage = async () => {
-    if (!workspaceId || !imagePrompt.trim()) return;
+  const handleGenerateImage = async (autoPrompt?: string) => {
+    const promptText = autoPrompt || imagePrompt.trim();
+    if (!workspaceId || !promptText) return;
 
     try {
       const result = await generateImage.mutateAsync({
-        context: imagePrompt,
+        context: promptText,
         style: pageDesign?.style || 'professional',
         colors: pageDesign?.primaryColor ? {
           primary: pageDesign.primaryColor,
@@ -97,6 +104,35 @@ export default function BlockAIToolbar({
     } catch (err) {
       console.error('Failed to generate image:', err);
     }
+  };
+
+  const handleHeroImageGenerate = () => {
+    // Build context from the hero's own content + business profile
+    const parts: string[] = [];
+    const headline = config.headline as string;
+    const subheadline = config.subheadline as string;
+
+    if (businessProfile?.business_name) parts.push(businessProfile.business_name);
+    if (headline) parts.push(headline);
+    if (subheadline) parts.push(subheadline);
+    if (businessProfile?.industry) parts.push(`${businessProfile.industry} industry`);
+    if (businessProfile?.description) parts.push(businessProfile.description);
+
+    const context = parts.join(' — ') || 'professional business';
+
+    // Style mapping for safe, abstract prompts
+    const styleDesc: Record<string, string> = {
+      professional: 'clean corporate abstract art, muted blue and gray tones',
+      bold: 'high contrast abstract art, dark background with bright accents',
+      minimal: 'minimalist abstract art, soft neutral tones, white space',
+      playful: 'vibrant abstract art, warm colorful palette',
+    };
+    const designStyle = pageDesign?.style || 'professional';
+    const artStyle = styleDesc[designStyle] || styleDesc.professional;
+
+    const prompt = `Abstract background art for: ${context}. Style: ${artStyle}, subtle geometric patterns, smooth gradients, no text, no people, high quality digital art`;
+
+    handleGenerateImage(prompt);
   };
 
   const isLoading = improveBlock.isPending || generateImage.isPending;
@@ -142,16 +178,17 @@ export default function BlockAIToolbar({
         {/* Generate Image (if supported) */}
         {supportsImage && (
           <button
-            onClick={() => setShowImagePrompt(true)}
+            onClick={isHeroImage ? () => handleHeroImageGenerate() : () => setShowImagePrompt(true)}
             disabled={isLoading}
-            className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors disabled:opacity-50"
-            title="Generate image"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors disabled:opacity-50"
+            title={isHeroImage ? 'Generate background from headline & profile' : 'Generate image'}
           >
             {generateImage.isPending ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <ImagePlus className="w-4 h-4" />
             )}
+            {isHeroImage && <span>{generateImage.isPending ? 'Generating...' : 'Background'}</span>}
           </button>
         )}
       </div>
@@ -223,7 +260,7 @@ export default function BlockAIToolbar({
                 Cancel
               </button>
               <button
-                onClick={handleGenerateImage}
+                onClick={() => handleGenerateImage()}
                 disabled={!imagePrompt.trim() || generateImage.isPending}
                 className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
               >

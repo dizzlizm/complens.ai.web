@@ -14,6 +14,7 @@ import {
   ChevronsUpDown,
   Check,
   Building2,
+  Shield,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -182,6 +183,19 @@ export default function AppLayout() {
               );
             })}
           </nav>
+
+          {/* Admin link (super admin only) */}
+          {user?.isSuperAdmin && (
+            <div className="px-4 py-2 border-t border-gray-200">
+              <Link
+                to="/admin"
+                className="flex items-center gap-2 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              >
+                <Shield className="w-5 h-5" />
+                <span className="font-medium">Admin Panel</span>
+              </Link>
+            </div>
+          )}
 
           {/* User section */}
           <div className="p-4 border-t border-gray-200">
