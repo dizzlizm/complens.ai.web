@@ -280,7 +280,16 @@ def _generate_chat_response(system_prompt: str, user_message: str) -> str:
     Returns:
         AI response text.
     """
-    bedrock = boto3.client("bedrock-runtime")
+    from botocore.config import Config
+
+    bedrock = boto3.client(
+        "bedrock-runtime",
+        config=Config(
+            read_timeout=30,
+            connect_timeout=10,
+            retries={"max_attempts": 1, "mode": "standard"},
+        ),
+    )
 
     body = {
         "anthropic_version": "bedrock-2023-05-31",

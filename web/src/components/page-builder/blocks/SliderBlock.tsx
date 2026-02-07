@@ -1,16 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Play, ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
 import { SliderConfig, SliderSlide } from '../types';
-
-// TODO: Add image upload/generation options - see GalleryBlock.tsx for details
+import ImageUploadButton from './ImageUploadButton';
 
 interface SliderBlockProps {
   config: SliderConfig;
   isEditing?: boolean;
   onConfigChange?: (config: SliderConfig) => void;
+  workspaceId?: string;
 }
 
-export default function SliderBlock({ config, isEditing, onConfigChange }: SliderBlockProps) {
+export default function SliderBlock({ config, isEditing, onConfigChange, workspaceId }: SliderBlockProps) {
   const {
     slides = [],
     autoplay = true,
@@ -185,15 +185,23 @@ export default function SliderBlock({ config, isEditing, onConfigChange }: Slide
             </div>
           )}
 
-          {/* Image URL input for editing */}
+          {/* Image URL input + upload for editing */}
           {isEditing && (
-            <div className="mt-6 w-full max-w-lg">
+            <div className="mt-6 w-full max-w-lg flex items-center gap-2">
+              {workspaceId && (
+                <ImageUploadButton
+                  workspaceId={workspaceId}
+                  onUploaded={(url) => handleSlideChange(currentSlide, 'imageUrl', url)}
+                  label="Upload"
+                  className="text-white border-white/30 hover:bg-white/20"
+                />
+              )}
               <input
                 type="text"
                 value={slide?.imageUrl || ''}
                 onChange={(e) => handleSlideChange(currentSlide, 'imageUrl', e.target.value)}
-                className="w-full px-4 py-2 bg-white/20 text-white border border-white/30 rounded-lg"
-                placeholder="Background image URL..."
+                className="flex-1 px-4 py-2 bg-white/20 text-white border border-white/30 rounded-lg"
+                placeholder="or paste background image URL..."
               />
             </div>
           )}

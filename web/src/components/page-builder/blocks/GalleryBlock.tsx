@@ -1,20 +1,16 @@
 import { useState } from 'react';
 import { Images, X, Plus } from 'lucide-react';
 import { GalleryConfig, GalleryImage } from '../types';
-
-// TODO: Add image upload/generation options when adding images:
-// 1. Upload from device (needs presigned S3 URL endpoint)
-// 2. Paste URL (current approach)
-// 3. Generate with AI (use existing generate-image endpoint, warn about quality)
-// See also: SliderBlock.tsx, LogoCloudBlock.tsx
+import ImageUploadButton from './ImageUploadButton';
 
 interface GalleryBlockProps {
   config: GalleryConfig;
   isEditing?: boolean;
   onConfigChange?: (config: GalleryConfig) => void;
+  workspaceId?: string;
 }
 
-export default function GalleryBlock({ config, isEditing, onConfigChange }: GalleryBlockProps) {
+export default function GalleryBlock({ config, isEditing, onConfigChange, workspaceId }: GalleryBlockProps) {
   const {
     title = 'Gallery',
     images = [],
@@ -49,6 +45,20 @@ export default function GalleryBlock({ config, isEditing, onConfigChange }: Gall
     if (onConfigChange) {
       const newImages = [...images, { url: '', alt: '', caption: '' }];
       onConfigChange({ ...config, images: newImages });
+    }
+  };
+
+  const handleImageUploaded = (index: number, url: string) => {
+    if (onConfigChange) {
+      const newImages = [...images];
+      newImages[index] = { ...newImages[index], url };
+      onConfigChange({ ...config, images: newImages });
+    }
+  };
+
+  const handleAddUploadedImage = (url: string) => {
+    if (onConfigChange) {
+      onConfigChange({ ...config, images: [...images, { url, alt: '', caption: '' }] });
     }
   };
 
@@ -124,15 +134,24 @@ export default function GalleryBlock({ config, isEditing, onConfigChange }: Gall
                       className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
                     />
                   ) : (
-                    <div className="w-full h-full bg-gray-100 flex items-center justify-center">
+                    <div className="w-full h-full bg-gray-100 flex flex-col items-center justify-center gap-2 p-4">
                       {isEditing ? (
-                        <input
-                          type="text"
-                          value={image.url}
-                          onChange={(e) => handleImageChange(index, 'url', e.target.value)}
-                          className="w-3/4 px-3 py-2 text-sm border border-gray-300 rounded"
-                          placeholder="Image URL..."
-                        />
+                        <>
+                          {workspaceId && (
+                            <ImageUploadButton
+                              workspaceId={workspaceId}
+                              onUploaded={(url) => handleImageUploaded(index, url)}
+                              label="Upload"
+                            />
+                          )}
+                          <input
+                            type="text"
+                            value={image.url}
+                            onChange={(e) => handleImageChange(index, 'url', e.target.value)}
+                            className="w-3/4 px-3 py-2 text-sm border border-gray-300 rounded"
+                            placeholder="or paste URL..."
+                          />
+                        </>
                       ) : (
                         <Images className="w-8 h-8 text-gray-400" />
                       )}
@@ -163,26 +182,42 @@ export default function GalleryBlock({ config, isEditing, onConfigChange }: Gall
             <Images className="w-16 h-16 text-gray-400 mb-4" />
             <p className="text-gray-500 mb-4">No images yet</p>
             {isEditing && (
-              <button
-                onClick={handleAddImage}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-              >
-                <Plus className="w-4 h-4" />
-                Add Image
-              </button>
+              <div className="flex items-center gap-3">
+                {workspaceId && (
+                  <ImageUploadButton
+                    workspaceId={workspaceId}
+                    onUploaded={handleAddUploadedImage}
+                    label="Upload Image"
+                  />
+                )}
+                <button
+                  onClick={handleAddImage}
+                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add by URL
+                </button>
+              </div>
             )}
           </div>
         )}
 
         {/* Add image button in editing mode */}
         {isEditing && images.length > 0 && (
-          <div className="mt-4 text-center">
+          <div className="mt-4 flex justify-center gap-3">
+            {workspaceId && (
+              <ImageUploadButton
+                workspaceId={workspaceId}
+                onUploaded={handleAddUploadedImage}
+                label="Upload Image"
+              />
+            )}
             <button
               onClick={handleAddImage}
               className="inline-flex items-center gap-2 px-4 py-2 text-indigo-600 hover:bg-indigo-50 rounded-lg"
             >
               <Plus className="w-4 h-4" />
-              Add Image
+              Add by URL
             </button>
           </div>
         )}

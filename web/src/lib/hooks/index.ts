@@ -14,3 +14,4 @@ export * from './useAnalytics';
 export * from './useWorkflowTemplates';
 export * from './useBilling';
 export * from './useKnowledgeBase';
+export * from './useImageUpload';

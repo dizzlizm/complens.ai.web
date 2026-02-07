@@ -44,6 +44,7 @@ interface BlockRendererProps {
   onConfigChange?: (config: Record<string, unknown>) => void;
   forms?: FormInfo[];
   compact?: boolean; // For rendering in smaller spaces (like layout slots)
+  workspaceId?: string;
 }
 
 export default function BlockRenderer({
@@ -52,12 +53,14 @@ export default function BlockRenderer({
   onConfigChange,
   forms = [],
   compact = false,
+  workspaceId,
 }: BlockRendererProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const props: any = {
     config: block.config,
     isEditing,
     onConfigChange,
+    workspaceId,
   };
 
   // Wrapper for compact mode - scales down content
