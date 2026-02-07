@@ -66,13 +66,13 @@ Parameters:
   # Stripe Connect parameters
   StripeSecretKey:
     Type: String
-    Default: "sk_test_51SwvSd8Z757t07Q3pHsSgYrzgPzHlRDRvR4kAymD5mgMaofBcT1S5Z90Ke2MQQQJZFbpmbGzogVuGgKmDqyJj3js00c4RNMtw8"
+    Default: ""
     NoEcho: true
     Description: Stripe secret API key
 
   StripePublishableKey:
     Type: String
-    Default: "pk_test_51SwvSd8Z757t07Q3oi2NKmFPBljQNklaFbdckWY7UYfdpY9uVKY7AAwSMcny88zbJGf3xWVRRe8zRx5IEirgxw9B00t4cSWLTI"
+    Default: ""
     Description: Stripe publishable API key
 
   StripeWebhookSecret:
@@ -94,7 +94,7 @@ Parameters:
   # Platform Billing Parameters
   StripeBillingSecretKey:
     Type: String
-    Default: "sk_test_51SwvSd8Z757t07Q3pHsSgYrzgPzHlRDRvR4kAymD5mgMaofBcT1S5Z90Ke2MQQQJZFbpmbGzogVuGgKmDqyJj3js00c4RNMtw8"
+    Default: ""
     NoEcho: true
     Description: Stripe secret key for platform billing (same account as Connect)
 
@@ -172,9 +172,6 @@ Globals:
         STRIPE_PLATFORM_FEE_PERCENT: !Ref StripePlatformFeePercent
     Layers:
       - !Ref SharedLayer
-    VpcConfig:
-      SecurityGroupIds: []
-      SubnetIds: []
 
 Resources:
   # ============================================
@@ -3054,7 +3051,7 @@ Resources:
           OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf  # CORS-S3Origin
           FunctionAssociations:
             - EventType: viewer-request
-              FunctionARN: !GetAtt SubdomainRouterFunction.FunctionARN
+              FunctionARN: !GetAtt SubdomainRouterFunction.FunctionMetadata.FunctionARN
         PriceClass: PriceClass_100
         HttpVersion: http2and3
       Tags:
