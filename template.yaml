@@ -140,7 +140,7 @@ Globals:
         COGNITO_USER_POOL_ID: !Ref UserPool
         AI_QUEUE_URL: !Ref AIProcessingQueue
         WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
-        EVENT_BUS_NAME: !Sub "complens-${Stage}-workflow-events"
+        EVENT_BUS_NAME: !Ref WorkflowEventBus
         # Sharded queue configuration
         SHARD_QUEUE_URL_0: !Ref WorkflowQueueShard0
         SHARD_QUEUE_URL_1: !Ref WorkflowQueueShard1
@@ -344,7 +344,6 @@ Resources:
   AIProcessingQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-ai-queue"
       VisibilityTimeout: 120
       MessageRetentionPeriod: 1209600
       RedrivePolicy:
@@ -359,7 +358,6 @@ Resources:
   AIDeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-ai-dlq"
       MessageRetentionPeriod: 1209600
       Tags:
         - Key: Service
@@ -371,7 +369,6 @@ Resources:
   WorkflowQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-workflow-queue.fifo"
       FifoQueue: true
       ContentBasedDeduplication: true
       DeduplicationScope: messageGroup
@@ -390,7 +387,6 @@ Resources:
   WorkflowDeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-workflow-dlq.fifo"
       FifoQueue: true
       ContentBasedDeduplication: false
       MessageRetentionPeriod: 1209600
@@ -411,7 +407,6 @@ Resources:
   ShardedWorkflowDLQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-workflow-sharded-dlq"
       MessageRetentionPeriod: 1209600
       VisibilityTimeout: 300
       Tags:
@@ -424,7 +419,6 @@ Resources:
   WorkflowQueueShard0:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-workflow-shard-0"
       VisibilityTimeout: 300
       MessageRetentionPeriod: 1209600
       RedrivePolicy:
@@ -442,7 +436,6 @@ Resources:
   WorkflowQueueShard1:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-workflow-shard-1"
       VisibilityTimeout: 300
       MessageRetentionPeriod: 1209600
       RedrivePolicy:
@@ -460,7 +453,6 @@ Resources:
   WorkflowQueueShard2:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-workflow-shard-2"
       VisibilityTimeout: 300
       MessageRetentionPeriod: 1209600
       RedrivePolicy:
@@ -478,7 +470,6 @@ Resources:
   WorkflowQueueShard3:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-workflow-shard-3"
       VisibilityTimeout: 300
       MessageRetentionPeriod: 1209600
       RedrivePolicy:
@@ -496,7 +487,6 @@ Resources:
   WorkflowPriorityQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "complens-${Stage}-workflow-priority"
       VisibilityTimeout: 120
       MessageRetentionPeriod: 1209600
       RedrivePolicy:
@@ -514,7 +504,6 @@ Resources:
   DLQAlertTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: !Sub "complens-${Stage}-dlq-alerts"
       DisplayName: "Complens DLQ Alerts"
       Tags:
         - Key: Service
@@ -528,7 +517,7 @@ Resources:
   WorkflowEventBus:
     Type: AWS::Events::EventBus
     Properties:
-      Name: !Sub "complens-${Stage}-workflow-events"
+      Name: !Sub "${AWS::StackName}-workflow-events"
       Tags:
         - Key: Service
           Value: complens
@@ -539,7 +528,6 @@ Resources:
   TagTriggerRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub "complens-${Stage}-tag-trigger"
       EventBusName: !Ref WorkflowEventBus
       EventPattern:
         source:
@@ -558,7 +546,6 @@ Resources:
   FormSubmitRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub "complens-${Stage}-form-submit-trigger"
       EventBusName: !Ref WorkflowEventBus
       EventPattern:
         source:
@@ -576,7 +563,6 @@ Resources:
   InboundMessageRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub "complens-${Stage}-inbound-message-trigger"
       EventBusName: !Ref WorkflowEventBus
       EventPattern:
         source:
@@ -618,7 +604,6 @@ Resources:
   SharedLayer:
     Type: AWS::Serverless::LayerVersion
     Properties:
-      LayerName: !Sub "complens-${Stage}-shared"
       Description: Shared code for Complens Lambda functions
       ContentUri: src/layers/shared/
       CompatibleRuntimes:
@@ -633,7 +618,6 @@ Resources:
   RestApi:
     Type: AWS::Serverless::Api
     Properties:
-      Name: !Sub "complens-${Stage}-api"
       StageName: !Ref Stage
       TracingEnabled: true
       Cors:
@@ -716,7 +700,6 @@ Resources:
   WebSocketApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
-      Name: !Sub "complens-${Stage}-websocket"
       ProtocolType: WEBSOCKET
       RouteSelectionExpression: "$request.body.action"
       Tags:
@@ -794,7 +777,6 @@ Resources:
   JwtAuthorizerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-jwt-authorizer"
       Handler: jwt_authorizer.handler
       CodeUri: src/handlers/authorizer/
       Description: JWT token validation for API Gateway
@@ -824,7 +806,6 @@ Resources:
   WorkspacesFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-workspaces"
       Handler: workspaces.handler
       CodeUri: src/handlers/api/
       Description: Workspaces CRUD operations
@@ -902,7 +883,6 @@ Resources:
   TeamFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-team"
       Handler: team.handler
       CodeUri: src/handlers/api/
       Description: Team management and invitations
@@ -965,7 +945,6 @@ Resources:
   ContactsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-contacts"
       Handler: contacts.handler
       CodeUri: src/handlers/api/
       Description: Contacts CRUD operations
@@ -1049,7 +1028,6 @@ Resources:
   ConversationsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-conversations"
       Handler: conversations.handler
       CodeUri: src/handlers/api/
       Description: Conversations CRUD operations
@@ -1085,7 +1063,6 @@ Resources:
   MessagesFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-messages"
       Handler: messages.handler
       CodeUri: src/handlers/api/
       Description: Messages CRUD operations
@@ -1111,7 +1088,6 @@ Resources:
   WorkflowsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-workflows"
       Handler: workflows.handler
       CodeUri: src/handlers/api/
       Description: Workflows CRUD and execution
@@ -1176,7 +1152,6 @@ Resources:
   PagesFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-pages"
       Handler: pages.handler
       CodeUri: src/handlers/api/
       Description: Pages CRUD operations with AI generation
@@ -1325,7 +1300,6 @@ Resources:
   FormsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-forms"
       Handler: forms.handler
       CodeUri: src/handlers/api/
       Description: Forms CRUD operations
@@ -1376,7 +1350,6 @@ Resources:
   AIFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-ai"
       Handler: ai.handler
       CodeUri: src/handlers/api/
       Description: AI-powered content generation and business profile management
@@ -1481,7 +1454,6 @@ Resources:
   DomainsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-domains"
       Handler: domains.handler
       CodeUri: src/handlers/api/
       Description: Custom domain management
@@ -1543,7 +1515,6 @@ Resources:
     Type: AWS::Serverless::Function
     Condition: CustomDomainEnabled
     Properties:
-      FunctionName: !Sub "complens-${Stage}-domain-provisioner"
       Handler: domain_provisioner.handler
       CodeUri: src/handlers/workers/
       Description: Domain provisioning worker for Step Functions
@@ -1590,7 +1561,6 @@ Resources:
   PublicPagesFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-public-pages"
       Handler: public_pages.handler
       CodeUri: src/handlers/api/
       Description: Public pages and form submissions (no auth)
@@ -1684,7 +1654,6 @@ Resources:
   WebSocketConnectFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-ws-connect"
       Handler: connect.handler
       CodeUri: src/handlers/websocket/
       Description: WebSocket connection handler
@@ -1703,7 +1672,6 @@ Resources:
   WebSocketDisconnectFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-ws-disconnect"
       Handler: disconnect.handler
       CodeUri: src/handlers/websocket/
       Description: WebSocket disconnection handler
@@ -1722,7 +1690,6 @@ Resources:
   WebSocketMessageFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-ws-message"
       Handler: message.handler
       CodeUri: src/handlers/websocket/
       Description: WebSocket message handler
@@ -1772,7 +1739,6 @@ Resources:
   AIProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-ai-processor"
       Handler: ai_processor.handler
       CodeUri: src/handlers/workers/
       Description: Processes AI requests from queue
@@ -1808,7 +1774,6 @@ Resources:
   WorkflowTriggerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-workflow-trigger"
       Handler: workflow_trigger.handler
       CodeUri: src/handlers/workers/
       Description: Handles workflow trigger events from DynamoDB streams and publishes to EventBridge
@@ -1839,7 +1804,6 @@ Resources:
   WorkflowQueueProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-workflow-queue-processor"
       Handler: workflow_queue_processor.handler
       CodeUri: src/handlers/workers/
       Description: Processes workflow trigger events from FIFO queue with fair multi-tenant ordering
@@ -1869,7 +1833,6 @@ Resources:
   WorkflowExecutorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-workflow-executor"
       Handler: workflow_executor.handler
       CodeUri: src/handlers/workers/
       Description: Executes individual workflow steps
@@ -1930,7 +1893,6 @@ Resources:
   ShardedQueueProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-sharded-queue-processor"
       Handler: sharded_queue_processor.handler
       CodeUri: src/handlers/workers/
       Description: Processes workflow triggers from sharded queues with fair scheduling
@@ -1989,7 +1951,6 @@ Resources:
   WorkflowDLQHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-workflow-dlq-handler"
       Handler: dlq_handler.handler
       CodeUri: src/handlers/workers/
       Description: Processes DLQ messages with automatic error remediation
@@ -1998,7 +1959,10 @@ Resources:
         Variables:
           DLQ_ALERT_TOPIC_ARN: !Ref DLQAlertTopic
           WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
-          SHARD_QUEUE_URL_PREFIX: !Sub "https://sqs.${AWS::Region}.amazonaws.com/${AWS::AccountId}/complens-${Stage}-workflow-shard-"
+          SHARD_QUEUE_URL_0: !Ref WorkflowQueueShard0
+          SHARD_QUEUE_URL_1: !Ref WorkflowQueueShard1
+          SHARD_QUEUE_URL_2: !Ref WorkflowQueueShard2
+          SHARD_QUEUE_URL_3: !Ref WorkflowQueueShard3
           SHARD_COUNT: "4"
       Policies:
         - DynamoDBCrudPolicy:
@@ -2041,7 +2005,6 @@ Resources:
   SchedulerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "complens-${Stage}-scheduler-role"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -2072,7 +2035,6 @@ Resources:
   TwilioInboundFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-twilio-inbound"
       Handler: twilio_inbound.handler
       CodeUri: src/handlers/webhooks/
       Description: Handles inbound Twilio SMS/Voice
@@ -2102,7 +2064,6 @@ Resources:
   SegmentInboundFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-segment-inbound"
       Handler: segment_inbound.handler
       CodeUri: src/handlers/webhooks/
       Description: Handles inbound Segment events (identify, track, etc.)
@@ -2127,7 +2088,6 @@ Resources:
   AnalyticsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-analytics"
       Handler: analytics.handler
       CodeUri: src/handlers/api/
       Description: Analytics and reporting
@@ -2146,7 +2106,6 @@ Resources:
   StripeFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-stripe"
       Handler: stripe.handler
       CodeUri: src/handlers/api/
       Description: Stripe Connect OAuth and account management
@@ -2186,7 +2145,6 @@ Resources:
   StripeWebhookFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-stripe-webhook"
       Handler: stripe_webhook.handler
       CodeUri: src/handlers/webhooks/
       Description: Handles Stripe payment webhooks
@@ -2225,7 +2183,6 @@ Resources:
   WorkflowTemplatesFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-workflow-templates"
       Handler: workflow_templates.handler
       CodeUri: src/handlers/api/
       Description: Workflow templates CRUD
@@ -2259,7 +2216,6 @@ Resources:
   BillingFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-billing"
       Handler: billing.handler
       CodeUri: src/handlers/api/
       Description: Platform billing and subscription management
@@ -2295,7 +2251,6 @@ Resources:
   BillingWebhookFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-billing-webhook"
       Handler: billing_webhook.handler
       CodeUri: src/handlers/webhooks/
       Description: Handles Stripe billing events via EventBridge
@@ -2350,7 +2305,6 @@ Resources:
   KnowledgeBaseFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "complens-${Stage}-knowledge-base"
       Handler: knowledge_base.handler
       CodeUri: src/handlers/api/
       Description: Knowledge base document management
@@ -2485,7 +2439,7 @@ Resources:
   ExpressStateMachineLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/aws/vendedlogs/states/complens-${Stage}-workflow-executor-express"
+      LogGroupName: !Sub "/aws/vendedlogs/states/${AWS::StackName}-workflow-executor-express"
       RetentionInDays: !If [IsProd, 30, 7]
 
   # CloudWatch Log Groups for Lambda functions are auto-created by Lambda.
@@ -2701,7 +2655,6 @@ Resources:
     Condition: CustomDomainEnabled
     Properties:
       OriginAccessControlConfig:
-        Name: !Sub "complens-${Stage}-frontend-oac"
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
@@ -2802,7 +2755,7 @@ Resources:
     Type: AWS::CloudFront::Function
     Condition: CustomDomainEnabled
     Properties:
-      Name: !Sub "complens-${Stage}-pages-router"
+      Name: !Sub "${AWS::StackName}-pages-router"
       AutoPublish: true
       FunctionCode: |
         function handler(event) {
@@ -2908,7 +2861,7 @@ Resources:
     Type: AWS::CloudFront::Function
     Condition: CustomDomainEnabled
     Properties:
-      Name: !Sub "complens-${Stage}-subdomain-router"
+      Name: !Sub "${AWS::StackName}-subdomain-router"
       AutoPublish: true
       FunctionCode: |
         function handler(event) {
