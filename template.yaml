@@ -2488,98 +2488,11 @@ Resources:
       LogGroupName: !Sub "/aws/vendedlogs/states/complens-${Stage}-workflow-executor-express"
       RetentionInDays: !If [IsProd, 30, 7]
 
-  # ============================================
-  # CloudWatch Log Groups
-  # ============================================
-  JwtAuthorizerLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-jwt-authorizer"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  WorkspacesLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workspaces"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  ContactsLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-contacts"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  ConversationsLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-conversations"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  MessagesLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-messages"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  WorkflowsLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflows"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  AIProcessorLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-ai-processor"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  WorkflowExecutorLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflow-executor"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  WorkflowQueueProcessorLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflow-queue-processor"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  WorkflowTriggerLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflow-trigger"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  ShardedQueueProcessorLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-sharded-queue-processor"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  WorkflowDLQHandlerLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-workflow-dlq-handler"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  PagesLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-pages"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  FormsLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-forms"
-      RetentionInDays: !If [IsProd, 90, 14]
-
-  PublicPagesLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/complens-${Stage}-public-pages"
-      RetentionInDays: !If [IsProd, 90, 14]
+  # CloudWatch Log Groups for Lambda functions are auto-created by Lambda.
+  # Explicit definitions were removed to avoid ResourceExistenceCheck failures
+  # when log groups already exist from previous deployments.
+  # To set retention policies, use AWS CLI:
+  #   aws logs put-retention-policy --log-group-name /aws/lambda/complens-dev-<fn> --retention-in-days 14
 
   # ============================================
   # ACM Certificate for Custom Domain
