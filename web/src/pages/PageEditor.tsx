@@ -82,25 +82,25 @@ export default function PageEditor() {
     }
   }, [workspaceId, pageId, updatePage]);
 
-  // Auto-save effect - triggers after changes with debounce
+  // Auto-save effect - triggers after changes with debounce.
+  // Uses formData/blocks as deps so the timer resets on each edit (proper debounce).
+  // Does NOT depend on `page` — that changes after every save and would restart the timer.
   useEffect(() => {
-    if (hasChanges && page) {
-      // Clear existing timer
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-      }
-      // Set new timer for auto-save
-      autoSaveTimerRef.current = setTimeout(() => {
-        performAutoSave();
-      }, AUTO_SAVE_DELAY);
+    if (!hasChanges) return;
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
     }
+    autoSaveTimerRef.current = setTimeout(() => {
+      performAutoSave();
+    }, AUTO_SAVE_DELAY);
 
     return () => {
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
       }
     };
-  }, [hasChanges, page, formData, blocks, performAutoSave]);
+  }, [hasChanges, formData, blocks, performAutoSave]);
 
   // Warn user before leaving with unsaved changes
   useEffect(() => {
@@ -124,9 +124,11 @@ export default function PageEditor() {
     initialLoadDone.current = false;
   }, [pageId]);
 
-  // Initialize form data when page loads
+  // Initialize form data and blocks when page first loads (or when navigating to a different page).
+  // This must NOT re-run on every `page` refetch (e.g. after auto-save),
+  // otherwise it overwrites the user's local edits and causes focus loss.
   useEffect(() => {
-    if (page) {
+    if (page && !initialLoadDone.current) {
       setFormData({
         name: page.name,
         slug: page.slug,
@@ -156,12 +158,8 @@ export default function PageEditor() {
         // Theme
         theme: page.theme || {},
       });
-
-      // Only initialize blocks on first load
-      if (!initialLoadDone.current) {
-        setBlocks((page.blocks || []) as PageBlock[]);
-        initialLoadDone.current = true;
-      }
+      setBlocks((page.blocks || []) as PageBlock[]);
+      initialLoadDone.current = true;
     }
   }, [page]);
 
@@ -214,6 +212,7 @@ export default function PageEditor() {
         blocks: blocks as any,
         status: 'published' as const,
       });
+      setFormData((prev) => ({ ...prev, status: 'published' }));
       setHasChanges(false);
       toast.success('Page published successfully');
     } catch (err: any) {
