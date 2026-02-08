@@ -11,7 +11,7 @@ import { useToast } from '../Toast';
 import { type ChatConfig } from '../../lib/hooks/usePages';
 import PillTabs from '../ui/PillTabs';
 import KnowledgeBaseSettings from '../settings/KnowledgeBaseSettings';
-import { Sparkles, Loader2, BookOpen } from 'lucide-react';
+import { Sparkles, Loader2, BookOpen, Code2, Check, Copy } from 'lucide-react';
 
 export type AISubTab = 'profile' | 'chat' | 'knowledge-base';
 
@@ -22,6 +22,7 @@ export interface AITabProps {
   onChatConfigChange: <K extends keyof ChatConfig>(key: K, value: ChatConfig[K]) => void;
   activeSubTab: AISubTab;
   onSubTabChange: (tab: AISubTab) => void;
+  pageStatus?: string;
 }
 
 const AI_SUB_TABS: { id: AISubTab; label: string }[] = [
@@ -37,8 +38,10 @@ export default function AITab({
   onChatConfigChange,
   activeSubTab,
   onSubTabChange,
+  pageStatus,
 }: AITabProps) {
   const toast = useToast();
+  const [embedCopied, setEmbedCopied] = useState(false);
 
   // AI Profile hooks - page-specific
   const { data: profile, isLoading: profileLoading } = useBusinessProfile(workspaceId, pageId);
@@ -409,6 +412,56 @@ export default function AITab({
               rows={4}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
+          </div>
+
+          {/* Embed on External Site */}
+          <div className="border-t pt-6">
+            <div className="flex items-center gap-2 mb-1">
+              <Code2 className="w-4 h-4 text-gray-700" />
+              <h4 className="font-medium text-gray-900">Embed on Your Site</h4>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              Add the AI chat widget to any external website by pasting this snippet before the closing <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">&lt;/body&gt;</code> tag.
+            </p>
+
+            {pageStatus !== 'published' ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
+                Publish this page first to enable the embed widget.
+              </div>
+            ) : !chatConfig?.enabled ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
+                Add a Chat block to your page and enable it to get the embed code.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="relative">
+                  <pre className="bg-gray-900 text-gray-100 rounded-lg p-4 text-xs overflow-x-auto whitespace-pre-wrap leading-relaxed">
+{`<script>
+  window.ComplensChat = {
+    pageId: "${pageId}",
+    workspaceId: "${workspaceId}"
+  };
+</script>
+<script src="${window.location.origin}/embed/chat-loader.js" async></script>`}
+                  </pre>
+                  <button
+                    onClick={() => {
+                      const snippet = `<script>\n  window.ComplensChat = {\n    pageId: "${pageId}",\n    workspaceId: "${workspaceId}"\n  };\n</script>\n<script src="${window.location.origin}/embed/chat-loader.js" async></script>`;
+                      navigator.clipboard.writeText(snippet);
+                      setEmbedCopied(true);
+                      setTimeout(() => setEmbedCopied(false), 2000);
+                    }}
+                    className="absolute top-2 right-2 p-2 bg-gray-700 hover:bg-gray-600 rounded-md text-gray-300 transition-colors"
+                    title="Copy to clipboard"
+                  >
+                    {embedCopied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400">
+                  The widget appears as a floating chat bubble in the corner of the page.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}

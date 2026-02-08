@@ -450,6 +450,7 @@ export default function PageEditor() {
             onChatConfigChange={handleChatConfigChange}
             activeSubTab={aiSubTab}
             onSubTabChange={setAISubTab}
+            pageStatus={page.status}
           />
         )}
 
