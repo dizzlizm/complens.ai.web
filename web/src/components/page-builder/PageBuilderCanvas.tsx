@@ -396,6 +396,7 @@ export default function PageBuilderCanvas({
         );
         onChange(newBlocks);
       },
+      workspaceId,
     };
 
     switch (block.type) {

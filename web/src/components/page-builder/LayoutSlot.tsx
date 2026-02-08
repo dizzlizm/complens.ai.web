@@ -390,6 +390,7 @@ export default function LayoutSlot({
               isEditing={isEditing}
               onConfigChange={handleConfigChange}
               forms={forms}
+              workspaceId={workspaceId}
             />
             {/* Selection overlay when selected but not editing */}
             {isSelected && !isEditing && (

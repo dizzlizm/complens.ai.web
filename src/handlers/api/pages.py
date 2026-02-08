@@ -250,6 +250,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return create_complete_page(repo, workspace_id, event)
         elif http_method == "GET" and "/pages/check-subdomain" in path:
             return check_subdomain_availability(repo, event)
+        elif http_method == "POST" and "/pages/upload-url" in path:
+            return create_upload_url(workspace_id, event)
         elif http_method == "GET" and page_id:
             return get_page(repo, workspace_id, page_id)
         elif http_method == "GET":
@@ -605,6 +607,63 @@ def check_subdomain_availability(repo: PageRepository, event: dict) -> dict:
         "subdomain": subdomain,
         "available": True,
         "url": url,
+    })
+
+
+def create_upload_url(workspace_id: str, event: dict) -> dict:
+    """Generate a presigned S3 URL for image upload.
+
+    Request body:
+        filename: Original filename (used for extension)
+        content_type: MIME type (must be image/*)
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    filename = body.get("filename", "upload.png")
+    content_type = body.get("content_type", "image/png")
+
+    # Validate content type
+    allowed_types = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/svg+xml"}
+    if content_type not in allowed_types:
+        return error(f"Content type must be one of: {', '.join(sorted(allowed_types))}", 400)
+
+    # Determine file extension from content type
+    ext_map = {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/webp": "webp",
+        "image/gif": "gif",
+        "image/svg+xml": "svg",
+    }
+    ext = ext_map.get(content_type, "png")
+
+    # Generate unique key
+    image_key = f"uploads/{workspace_id}/{uuid.uuid4().hex}.{ext}"
+    bucket_name = os.environ.get("ASSETS_BUCKET", f"complens-{STAGE}-assets")
+
+    # Generate presigned URL
+    s3 = boto3.client("s3")
+    upload_url = s3.generate_presigned_url(
+        "put_object",
+        Params={
+            "Bucket": bucket_name,
+            "Key": image_key,
+            "ContentType": content_type,
+        },
+        ExpiresIn=300,  # 5 minutes
+    )
+
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    public_url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{image_key}"
+
+    return success({
+        "upload_url": upload_url,
+        "public_url": public_url,
+        "key": image_key,
     })
 
 

@@ -1,16 +1,15 @@
 import { Building2, Plus, X } from 'lucide-react';
 import { LogoCloudConfig, LogoItem } from '../types';
-
-// TODO: Add logo upload option (no AI generation - users need real client logos)
-// See GalleryBlock.tsx for upload flow details
+import ImageUploadButton from './ImageUploadButton';
 
 interface LogoCloudBlockProps {
   config: LogoCloudConfig;
   isEditing?: boolean;
   onConfigChange?: (config: LogoCloudConfig) => void;
+  workspaceId?: string;
 }
 
-export default function LogoCloudBlock({ config, isEditing, onConfigChange }: LogoCloudBlockProps) {
+export default function LogoCloudBlock({ config, isEditing, onConfigChange, workspaceId }: LogoCloudBlockProps) {
   const {
     title = 'Trusted By',
     subtitle = '',
@@ -36,6 +35,20 @@ export default function LogoCloudBlock({ config, isEditing, onConfigChange }: Lo
     if (onConfigChange) {
       const newLogos = [...logos, { name: '', url: '', link: '' }];
       onConfigChange({ ...config, logos: newLogos });
+    }
+  };
+
+  const handleLogoUploaded = (index: number, url: string) => {
+    if (onConfigChange) {
+      const newLogos = [...logos];
+      newLogos[index] = { ...newLogos[index], url };
+      onConfigChange({ ...config, logos: newLogos });
+    }
+  };
+
+  const handleAddUploadedLogo = (url: string) => {
+    if (onConfigChange) {
+      onConfigChange({ ...config, logos: [...logos, { name: '', url, link: '' }] });
     }
   };
 
@@ -148,12 +161,19 @@ export default function LogoCloudBlock({ config, isEditing, onConfigChange }: Lo
                     <div className="w-24 h-12 bg-gray-200 rounded flex items-center justify-center">
                       <Building2 className="w-6 h-6 text-gray-400" />
                     </div>
+                    {workspaceId && (
+                      <ImageUploadButton
+                        workspaceId={workspaceId}
+                        onUploaded={(url) => handleLogoUploaded(index, url)}
+                        label="Upload"
+                      />
+                    )}
                     <input
                       type="text"
                       value={logo.url}
                       onChange={(e) => handleLogoChange(index, 'url', e.target.value)}
                       className="w-32 px-2 py-1 text-xs text-center border border-gray-200 rounded"
-                      placeholder="Logo URL..."
+                      placeholder="or paste URL..."
                     />
                   </div>
                 ) : (
@@ -169,26 +189,42 @@ export default function LogoCloudBlock({ config, isEditing, onConfigChange }: Lo
             <Building2 className="w-12 h-12 text-gray-400 mb-4" />
             <p className="text-gray-500 mb-4">No logos yet</p>
             {isEditing && (
-              <button
-                onClick={handleAddLogo}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-              >
-                <Plus className="w-4 h-4" />
-                Add Logo
-              </button>
+              <div className="flex items-center gap-3">
+                {workspaceId && (
+                  <ImageUploadButton
+                    workspaceId={workspaceId}
+                    onUploaded={handleAddUploadedLogo}
+                    label="Upload Logo"
+                  />
+                )}
+                <button
+                  onClick={handleAddLogo}
+                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add by URL
+                </button>
+              </div>
             )}
           </div>
         )}
 
         {/* Add logo button in editing mode */}
         {isEditing && logos.length > 0 && (
-          <div className="mt-6 text-center">
+          <div className="mt-6 flex justify-center gap-3">
+            {workspaceId && (
+              <ImageUploadButton
+                workspaceId={workspaceId}
+                onUploaded={handleAddUploadedLogo}
+                label="Upload Logo"
+              />
+            )}
             <button
               onClick={handleAddLogo}
               className="inline-flex items-center gap-2 px-4 py-2 text-indigo-600 hover:bg-indigo-50 rounded-lg"
             >
               <Plus className="w-4 h-4" />
-              Add Logo
+              Add by URL
             </button>
           </div>
         )}

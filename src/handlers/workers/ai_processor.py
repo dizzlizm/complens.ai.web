@@ -294,10 +294,51 @@ def _send_response(contact, content: str, channel: str) -> None:
         content: Response content.
         channel: Channel type.
     """
-    # TODO: Implement actual sending via Twilio/SES
-    logger.info(
-        "Would send response",
-        channel=channel,
-        contact_id=contact.id,
-        content_length=len(content),
-    )
+    if channel == "sms":
+        if not contact.phone:
+            logger.warning("No phone number for SMS response", contact_id=contact.id)
+            return
+        try:
+            from complens.services.twilio_service import TwilioError, TwilioService
+
+            twilio = TwilioService()
+            if not twilio.is_configured:
+                logger.warning("Twilio not configured, skipping SMS response")
+                return
+            result = twilio.send_sms(to=contact.phone, body=content)
+            logger.info(
+                "AI SMS response sent",
+                contact_id=contact.id,
+                twilio_sid=result.get("message_sid"),
+            )
+        except TwilioError as e:
+            logger.error("AI SMS response failed", contact_id=contact.id, error=str(e))
+
+    elif channel == "email":
+        if not contact.email:
+            logger.warning("No email for email response", contact_id=contact.id)
+            return
+        try:
+            from complens.services.email_service import EmailError, EmailService
+
+            email_service = EmailService()
+            result = email_service.send_email(
+                to=contact.email,
+                subject="Re: Your message",
+                body_text=content,
+            )
+            logger.info(
+                "AI email response sent",
+                contact_id=contact.id,
+                ses_message_id=result.get("message_id"),
+            )
+        except EmailError as e:
+            logger.error("AI email response failed", contact_id=contact.id, error=str(e))
+
+    else:
+        logger.info(
+            "Channel delivery not yet supported",
+            channel=channel,
+            contact_id=contact.id,
+            content_length=len(content),
+        )

@@ -429,7 +429,29 @@ Available tools:
                 contact.custom_fields[key] = value
                 updates.append(f"custom.{key}")
 
-        # TODO: Save contact to database
+        # Persist contact changes to database
+        if updates:
+            try:
+                from complens.repositories.contact import ContactRepository
+
+                contact_repo = ContactRepository()
+                contact_repo.update_contact(contact)
+                self.logger.info(
+                    "Contact updated via AI tool",
+                    contact_id=contact.id,
+                    fields_updated=updates,
+                )
+            except Exception as e:
+                self.logger.error(
+                    "Failed to persist contact update",
+                    contact_id=contact.id,
+                    error=str(e),
+                )
+                return {
+                    "status": "partial",
+                    "fields_updated": updates,
+                    "error": "Changes applied in memory but failed to save to database",
+                }
 
         return {
             "status": "updated",
@@ -489,10 +511,54 @@ Available tools:
         Returns:
             Escalation result.
         """
-        # Mark conversation for human handoff
+        # Mark conversation for human handoff and persist
         conversation.ai_handoff_requested = True
+        try:
+            from complens.repositories.conversation import ConversationRepository
 
-        # TODO: Create escalation task/notification
+            conv_repo = ConversationRepository()
+            conv_repo.update_conversation(conversation)
+        except Exception as e:
+            self.logger.error(
+                "Failed to persist handoff flag",
+                conversation_id=conversation.id,
+                error=str(e),
+            )
+
+        # Fire escalation event for notifications / task creation
+        try:
+            import json as _json
+            from datetime import datetime, timezone
+
+            import boto3 as _boto3
+
+            events = _boto3.client("events")
+            events.put_events(
+                Entries=[
+                    {
+                        "Source": "complens.ai_agent",
+                        "DetailType": "escalation_requested",
+                        "Detail": _json.dumps({
+                            "workspace_id": conversation.workspace_id,
+                            "conversation_id": conversation.id,
+                            "contact_id": contact.id,
+                            "contact_name": contact.full_name,
+                            "contact_email": contact.email,
+                            "reason": input_data.get("reason"),
+                            "priority": input_data.get("priority", "medium"),
+                            "summary": input_data.get("summary", ""),
+                            "requested_at": datetime.now(timezone.utc).isoformat(),
+                        }),
+                    }
+                ]
+            )
+            self.logger.info(
+                "Escalation event fired",
+                conversation_id=conversation.id,
+                priority=input_data.get("priority", "medium"),
+            )
+        except Exception as e:
+            self.logger.warning("Failed to fire escalation event", error=str(e))
 
         return {
             "status": "escalated",

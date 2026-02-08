@@ -1,7 +1,13 @@
 """Page repository for DynamoDB operations."""
 
+import boto3
+import structlog
+from botocore.exceptions import ClientError
+
 from complens.models.page import Page, PageStatus
 from complens.repositories.base import BaseRepository
+
+logger = structlog.get_logger()
 
 
 class PageRepository(BaseRepository[Page]):
@@ -147,14 +153,25 @@ class PageRepository(BaseRepository[Page]):
         return pages
 
     def create_page(self, page: Page) -> Page:
-        """Create a new page.
+        """Create a new page with slug uniqueness enforced.
+
+        Uses a DynamoDB TransactWriteItems to atomically create both the page
+        and a slug reservation item, preventing duplicate slugs from race
+        conditions.
 
         Args:
             page: The page to create.
 
         Returns:
             The created page.
+
+        Raises:
+            ConflictError: If the slug is already taken.
         """
+        from complens.utils.exceptions import ConflictError
+
+        page.update_timestamp()
+
         gsi_keys = page.get_gsi1_keys()
         gsi2_keys = page.get_gsi2_keys()
         if gsi2_keys:
@@ -162,7 +179,60 @@ class PageRepository(BaseRepository[Page]):
         gsi3_keys = page.get_gsi3_keys()
         if gsi3_keys:
             gsi_keys.update(gsi3_keys)
-        return self.create(page, gsi_keys=gsi_keys)
+
+        # Build the page item
+        db_item = page.to_dynamodb()
+        db_item.update(page.get_keys())
+        if gsi_keys:
+            db_item.update(gsi_keys)
+
+        # Build the slug reservation item (prevents race conditions)
+        slug_key = {
+            "PK": f"SLUG#{page.workspace_id}",
+            "SK": f"SLUG#{page.slug}",
+            "page_id": page.id,
+        }
+
+        try:
+            client = boto3.client("dynamodb")
+            # Serialize items for the low-level client
+            from boto3.dynamodb.types import TypeSerializer
+
+            serializer = TypeSerializer()
+
+            page_item_serialized = {k: serializer.serialize(v) for k, v in db_item.items()}
+            slug_item_serialized = {k: serializer.serialize(v) for k, v in slug_key.items()}
+
+            client.transact_write_items(
+                TransactItems=[
+                    {
+                        "Put": {
+                            "TableName": self.table_name,
+                            "Item": page_item_serialized,
+                            "ConditionExpression": "attribute_not_exists(PK)",
+                        }
+                    },
+                    {
+                        "Put": {
+                            "TableName": self.table_name,
+                            "Item": slug_item_serialized,
+                            "ConditionExpression": "attribute_not_exists(PK)",
+                        }
+                    },
+                ]
+            )
+
+            logger.debug("Page created with slug reservation", page_id=page.id, slug=page.slug)
+            return page
+
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "TransactionCanceledException":
+                reasons = e.response.get("CancellationReasons", [])
+                # If second item (slug) failed, it's a duplicate slug
+                if len(reasons) > 1 and reasons[1].get("Code") == "ConditionalCheckFailed":
+                    raise ConflictError(f"Slug '{page.slug}' is already in use")
+                raise ConflictError("Page already exists or slug conflict")
+            raise
 
     def update_page(self, page: Page) -> Page:
         """Update an existing page.
@@ -183,7 +253,7 @@ class PageRepository(BaseRepository[Page]):
         return self.update(page, gsi_keys=gsi_keys)
 
     def delete_page(self, workspace_id: str, page_id: str) -> bool:
-        """Delete a page.
+        """Delete a page and its slug reservation.
 
         Args:
             workspace_id: The workspace ID.
@@ -192,6 +262,20 @@ class PageRepository(BaseRepository[Page]):
         Returns:
             True if deleted, False if not found.
         """
+        # Look up the page first to get its slug for cleanup
+        page = self.get_by_id(workspace_id, page_id)
+        if page and page.slug:
+            try:
+                self.table.delete_item(
+                    Key={"PK": f"SLUG#{workspace_id}", "SK": f"SLUG#{page.slug}"}
+                )
+            except ClientError:
+                logger.warning(
+                    "Failed to delete slug reservation",
+                    workspace_id=workspace_id,
+                    slug=page.slug,
+                )
+
         return self.delete(pk=f"WS#{workspace_id}", sk=f"PAGE#{page_id}")
 
     def increment_view_count(self, workspace_id: str, page_id: str) -> None:
