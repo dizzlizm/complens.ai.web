@@ -86,6 +86,31 @@ export interface DomainAuthStatus {
   error?: string;
 }
 
+export interface DomainHealthResult {
+  domain: string;
+  score: number;
+  status: 'good' | 'warning' | 'critical';
+  spf_valid: boolean;
+  spf_record: string | null;
+  dkim_enabled: boolean;
+  dmarc_valid: boolean;
+  dmarc_record: string | null;
+  dmarc_policy: string | null;
+  mx_valid: boolean;
+  mx_hosts: string[];
+  blacklisted: boolean;
+  blacklist_listings: string[];
+  bounce_rate: number;
+  complaint_rate: number;
+  open_rate: number;
+  click_rate: number;
+  reply_rate: number;
+  score_breakdown: Record<string, number>;
+  checked_at: string | null;
+  cached: boolean;
+  errors: string[];
+}
+
 // List all warm-up domains for a workspace
 export function useWarmups(workspaceId: string | undefined) {
   return useQuery({
@@ -219,6 +244,44 @@ export function useCheckDomainAuth(workspaceId: string | undefined, domain: stri
     enabled: !!workspaceId && !!domain && domain.includes('.'),
     staleTime: 30000, // Cache for 30s
   });
+}
+
+// Get domain health check
+export function useDomainHealth(
+  workspaceId: string | undefined,
+  domain: string | undefined,
+  enabled: boolean = false,
+) {
+  return useQuery({
+    queryKey: ['domain-health', workspaceId, domain],
+    queryFn: async () => {
+      const { data } = await api.get<DomainHealthResult>(
+        `/workspaces/${workspaceId}/email-warmup/${domain}/domain-health`
+      );
+      return data;
+    },
+    enabled: !!workspaceId && !!domain && enabled,
+    staleTime: 5 * 60 * 1000, // 5 min (matches server cache TTL)
+    refetchOnWindowFocus: false,
+  });
+}
+
+// Helper to get health status display info
+export function getHealthStatusInfo(status: 'good' | 'warning' | 'critical'): {
+  label: string;
+  color: string;
+  bgColor: string;
+} {
+  switch (status) {
+    case 'good':
+      return { label: 'Good', color: 'text-green-700', bgColor: 'bg-green-100' };
+    case 'warning':
+      return { label: 'Warning', color: 'text-amber-700', bgColor: 'bg-amber-100' };
+    case 'critical':
+      return { label: 'Critical', color: 'text-red-700', bgColor: 'bg-red-100' };
+    default:
+      return { label: 'Unknown', color: 'text-gray-700', bgColor: 'bg-gray-100' };
+  }
 }
 
 // Helper to get status display info

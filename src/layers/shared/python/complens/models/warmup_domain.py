@@ -1,5 +1,6 @@
 """Warmup domain model for email domain warm-up tracking."""
 
+from datetime import datetime
 from enum import Enum
 from typing import ClassVar
 
@@ -96,6 +97,10 @@ class WarmupDomain(BaseModel):
     # Thresholds for auto-pause
     max_bounce_rate: float = Field(default=5.0, description="Max bounce rate before auto-pause (%)")
     max_complaint_rate: float = Field(default=0.1, description="Max complaint rate before auto-pause (%)")
+
+    # Cached domain health check
+    health_check_result: dict | None = Field(None, description="Cached domain health check JSON")
+    health_check_at: datetime | str | None = Field(None, description="ISO timestamp of last health check")
 
     @property
     def daily_limit(self) -> int:
@@ -232,3 +237,40 @@ class WarmupStatusResponse(PydanticBaseModel):
             auto_warmup_enabled=wd.auto_warmup_enabled,
             from_name=wd.from_name,
         )
+
+
+class DomainHealthResponse(PydanticBaseModel):
+    """Response model for domain health check."""
+
+    domain: str
+    score: int = Field(..., ge=0, le=100, description="Health score 0-100")
+    status: str = Field(..., description="good, warning, or critical")
+
+    # Authentication
+    spf_valid: bool = False
+    spf_record: str | None = None
+    dkim_enabled: bool = False
+    dmarc_valid: bool = False
+    dmarc_record: str | None = None
+    dmarc_policy: str | None = None
+
+    # Infrastructure
+    mx_valid: bool = False
+    mx_hosts: list[str] = Field(default_factory=list)
+
+    # Blacklist
+    blacklisted: bool = False
+    blacklist_listings: list[str] = Field(default_factory=list)
+
+    # Engagement
+    bounce_rate: float = 0.0
+    complaint_rate: float = 0.0
+    open_rate: float = 0.0
+    click_rate: float = 0.0
+    reply_rate: float = 0.0
+
+    # Metadata
+    score_breakdown: dict[str, int] = Field(default_factory=dict)
+    checked_at: datetime | str | None = None
+    cached: bool = False
+    errors: list[str] = Field(default_factory=list)

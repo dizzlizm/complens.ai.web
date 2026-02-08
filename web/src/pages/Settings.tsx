@@ -5,8 +5,8 @@ import {
   MessageSquare, Database, BarChart3, Calendar, ShoppingCart, FileText, Megaphone,
   Pause, Play, Trash2, AlertTriangle, TrendingUp, X, Eye, Reply
 } from 'lucide-react';
-import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup, useCancelWarmup, useCheckDomainAuth, getWarmupStatusInfo, useUpdateSeedList, useWarmupLog } from '../lib/hooks';
-import type { WarmupDomain } from '../lib/hooks/useEmailWarmup';
+import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup, useCancelWarmup, useCheckDomainAuth, getWarmupStatusInfo, useUpdateSeedList, useWarmupLog, useDomainHealth, getHealthStatusInfo } from '../lib/hooks';
+import type { WarmupDomain, DomainHealthResult } from '../lib/hooks/useEmailWarmup';
 import { useBillingStatus, useCreateCheckout, useCreatePortal } from '../lib/hooks/useBilling';
 import TwilioConfigCard from '../components/settings/TwilioConfigCard';
 import SegmentConfigCard from '../components/settings/SegmentConfigCard';
@@ -1367,12 +1367,18 @@ function WarmupDomainCard({
 
   const [showSeedList, setShowSeedList] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [showHealth, setShowHealth] = useState(false);
   const [seedInput, setSeedInput] = useState('');
   const [editSeedList, setEditSeedList] = useState<string[]>(warmup.seed_list || []);
   const [editAutoWarmup, setEditAutoWarmup] = useState(warmup.auto_warmup_enabled);
   const [editFromName, setEditFromName] = useState(warmup.from_name || '');
 
   const updateSeedList = useUpdateSeedList(workspaceId);
+  const { data: healthData, isLoading: healthLoading, refetch: refetchHealth } = useDomainHealth(
+    workspaceId,
+    warmup.domain,
+    showHealth,
+  );
   const { data: logData, isLoading: logLoading } = useWarmupLog(
     showLog ? workspaceId : undefined,
     showLog ? warmup.domain : undefined,
@@ -1568,7 +1574,16 @@ function WarmupDomainCard({
       {(warmup.status === 'active' || warmup.status === 'paused') && (
         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
           <button
-            onClick={() => { setShowSeedList(!showSeedList); setShowLog(false); }}
+            onClick={() => { setShowHealth(!showHealth); setShowSeedList(false); setShowLog(false); }}
+            className={`text-xs px-3 py-1.5 rounded-md transition-colors inline-flex items-center gap-1 ${
+              showHealth ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            <Shield className="w-3 h-3" />
+            Health
+          </button>
+          <button
+            onClick={() => { setShowSeedList(!showSeedList); setShowHealth(false); setShowLog(false); }}
             className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
               showSeedList ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
@@ -1576,7 +1591,7 @@ function WarmupDomainCard({
             Seed List ({warmup.seed_list?.length || 0})
           </button>
           <button
-            onClick={() => { setShowLog(!showLog); setShowSeedList(false); }}
+            onClick={() => { setShowLog(!showLog); setShowHealth(false); setShowSeedList(false); }}
             className={`text-xs px-3 py-1.5 rounded-md transition-colors inline-flex items-center gap-1 ${
               showLog ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
@@ -1584,6 +1599,131 @@ function WarmupDomainCard({
             <Eye className="w-3 h-3" />
             View Log
           </button>
+        </div>
+      )}
+
+      {/* Health Panel */}
+      {showHealth && (
+        <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+          {healthLoading ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+              <span className="text-sm text-gray-500 ml-2">Running health checks...</span>
+            </div>
+          ) : healthData ? (
+            <div className="space-y-4">
+              {/* Score header */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`text-lg font-bold px-3 py-1 rounded-lg ${getHealthStatusInfo(healthData.status).bgColor} ${getHealthStatusInfo(healthData.status).color}`}>
+                    {healthData.score}/100
+                  </div>
+                  <span className={`text-sm font-medium ${getHealthStatusInfo(healthData.status).color}`}>
+                    {getHealthStatusInfo(healthData.status).label}
+                  </span>
+                </div>
+                <button
+                  onClick={() => refetchHealth()}
+                  className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+                >
+                  <Loader2 className="w-3 h-3" />
+                  Refresh
+                </button>
+              </div>
+
+              {/* Authentication */}
+              <div>
+                <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Authentication</h5>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      {healthData.spf_valid ? <Check className="w-3.5 h-3.5 text-green-600" /> : <X className="w-3.5 h-3.5 text-red-500" />}
+                      <span className="text-gray-700">SPF</span>
+                    </div>
+                    <span className="text-xs text-gray-500">+{healthData.score_breakdown?.spf || 0}/15</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      {healthData.dkim_enabled ? <Check className="w-3.5 h-3.5 text-green-600" /> : <X className="w-3.5 h-3.5 text-red-500" />}
+                      <span className="text-gray-700">DKIM</span>
+                    </div>
+                    <span className="text-xs text-gray-500">+{healthData.score_breakdown?.dkim || 0}/15</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      {healthData.dmarc_valid ? <Check className="w-3.5 h-3.5 text-green-600" /> : <X className="w-3.5 h-3.5 text-red-500" />}
+                      <span className="text-gray-700">DMARC{healthData.dmarc_policy ? ` (${healthData.dmarc_policy})` : ''}</span>
+                    </div>
+                    <span className="text-xs text-gray-500">+{(healthData.score_breakdown?.dmarc || 0) + (healthData.score_breakdown?.dmarc_enforce || 0)}/15</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Blacklist */}
+              <div>
+                <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Blacklist</h5>
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    {!healthData.blacklisted ? <Check className="w-3.5 h-3.5 text-green-600" /> : <X className="w-3.5 h-3.5 text-red-500" />}
+                    <span className="text-gray-700">
+                      {healthData.blacklisted
+                        ? `Listed on ${healthData.blacklist_listings.length} blacklist(s)`
+                        : 'Not blacklisted'}
+                    </span>
+                  </div>
+                  <span className="text-xs text-gray-500">+{healthData.score_breakdown?.blacklist || 0}/20</span>
+                </div>
+                {healthData.blacklisted && healthData.blacklist_listings.length > 0 && (
+                  <div className="mt-1 ml-5.5 text-xs text-red-600">
+                    {healthData.blacklist_listings.join(', ')}
+                  </div>
+                )}
+              </div>
+
+              {/* Reputation */}
+              <div>
+                <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Reputation</h5>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700">Bounce rate: {healthData.bounce_rate.toFixed(2)}%</span>
+                    <span className="text-xs text-gray-500">+{healthData.score_breakdown?.bounce || 0}/15</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700">Complaint rate: {healthData.complaint_rate.toFixed(3)}%</span>
+                    <span className="text-xs text-gray-500">+{healthData.score_breakdown?.complaint || 0}/10</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Engagement */}
+              <div>
+                <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Engagement</h5>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-700">Open rate: {healthData.open_rate.toFixed(1)}%</span>
+                  <span className="text-xs text-gray-500">+{healthData.score_breakdown?.open_rate || 0}/10</span>
+                </div>
+              </div>
+
+              {/* Errors */}
+              {healthData.errors.length > 0 && (
+                <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+                  <p className="font-medium mb-1">Partial results (some checks failed):</p>
+                  {healthData.errors.map((err, i) => (
+                    <p key={i}>{err}</p>
+                  ))}
+                </div>
+              )}
+
+              {/* Footer */}
+              <div className="flex items-center justify-between text-xs text-gray-400 pt-2 border-t border-gray-200">
+                <span>
+                  {healthData.cached ? 'Cached' : 'Fresh'} &middot; {healthData.checked_at ? new Date(healthData.checked_at).toLocaleString() : 'N/A'}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-500 py-2">Failed to load health data</p>
+          )}
         </div>
       )}
 

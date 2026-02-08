@@ -7,7 +7,7 @@ from typing import Any
 import structlog
 from pydantic import ValidationError as PydanticValidationError
 
-from complens.models.warmup_domain import StartWarmupRequest, UpdateSeedListRequest, WarmupStatusResponse
+from complens.models.warmup_domain import DomainHealthResponse, StartWarmupRequest, UpdateSeedListRequest, WarmupStatusResponse
 from complens.repositories.warmup_domain import WarmupDomainRepository
 from complens.services.email_service import EmailService
 from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
@@ -47,6 +47,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
         if path.endswith("/check-domain") and http_method == "GET":
             return check_domain_auth(event)
+        elif path.endswith("/domain-health") and http_method == "GET" and domain:
+            return get_domain_health(service, workspace_id, domain)
         elif path.endswith("/seed-list") and http_method == "PUT" and domain:
             return update_seed_list(service, workspace_id, domain, event)
         elif path.endswith("/warmup-log") and http_method == "GET" and domain:
@@ -313,3 +315,101 @@ def check_domain_auth(event: dict) -> dict:
     auth_status = email_service.check_domain_auth(domain)
 
     return success(auth_status)
+
+
+def get_domain_health(service: WarmupService, workspace_id: str, domain: str) -> dict:
+    """Get domain health score with DNS auth, blacklist, and engagement data.
+
+    Uses a 5-minute server-side cache on the WarmupDomain record to avoid
+    repeated slow DNS lookups.
+
+    Args:
+        service: WarmupService.
+        workspace_id: Workspace ID.
+        domain: Email sending domain.
+
+    Returns:
+        API response with DomainHealthResponse.
+    """
+    warmup = service.get_status(domain)
+    if not warmup or warmup.workspace_id != workspace_id:
+        return not_found("warmup_domain", domain)
+
+    # Check cache (5-minute TTL)
+    cache_ttl_seconds = 300
+    now = datetime.now(timezone.utc)
+    if warmup.health_check_result and warmup.health_check_at:
+        try:
+            hca = warmup.health_check_at
+            checked_at = hca if isinstance(hca, datetime) else datetime.fromisoformat(hca)
+            if (now - checked_at).total_seconds() < cache_ttl_seconds:
+                cached_response = DomainHealthResponse.model_validate(
+                    warmup.health_check_result
+                )
+                cached_response.cached = True
+                return success(cached_response.model_dump(mode="json"))
+        except Exception:
+            pass  # Invalid cache, proceed with fresh check
+
+    # Fresh check
+    from complens.services.domain_health_service import DomainHealthService
+
+    health_service = DomainHealthService()
+    dns_result = health_service.check_dns(domain)
+
+    # Get SES DKIM status
+    email_service = EmailService()
+    auth_status = email_service.check_domain_auth(domain)
+    dkim_enabled = auth_status.get("dkim_enabled", False)
+
+    # Compute score
+    score, breakdown = DomainHealthService.compute_health_score(
+        spf_valid=dns_result["spf_valid"],
+        dkim_enabled=dkim_enabled,
+        dmarc_valid=dns_result["dmarc_valid"],
+        dmarc_policy=dns_result["dmarc_policy"],
+        blacklist_count=len(dns_result["blacklist_listings"]),
+        bounce_rate=warmup.bounce_rate,
+        complaint_rate=warmup.complaint_rate,
+        open_rate=warmup.open_rate,
+    )
+
+    checked_at_str = now.isoformat()
+    health_response = DomainHealthResponse(
+        domain=domain,
+        score=score,
+        status=DomainHealthService.score_to_status(score),
+        spf_valid=dns_result["spf_valid"],
+        spf_record=dns_result["spf_record"],
+        dkim_enabled=dkim_enabled,
+        dmarc_valid=dns_result["dmarc_valid"],
+        dmarc_record=dns_result["dmarc_record"],
+        dmarc_policy=dns_result["dmarc_policy"],
+        mx_valid=dns_result["mx_valid"],
+        mx_hosts=dns_result["mx_hosts"],
+        blacklisted=dns_result["blacklisted"],
+        blacklist_listings=dns_result["blacklist_listings"],
+        bounce_rate=warmup.bounce_rate,
+        complaint_rate=warmup.complaint_rate,
+        open_rate=warmup.open_rate,
+        click_rate=warmup.click_rate,
+        reply_rate=warmup.reply_rate,
+        score_breakdown=breakdown,
+        checked_at=checked_at_str,
+        cached=False,
+        errors=dns_result["errors"],
+    )
+
+    # Cache on warmup record
+    warmup.health_check_result = health_response.model_dump(mode="json")
+    warmup.health_check_at = checked_at_str
+    service.repo.update_warmup(warmup)
+
+    logger.info(
+        "Domain health check completed",
+        domain=domain,
+        score=score,
+        status=health_response.status,
+    )
+
+    return success(health_response.model_dump(mode="json"))

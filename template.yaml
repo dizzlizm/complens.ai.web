@@ -2707,6 +2707,12 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/email-warmup/{domain}/warmup-log
             Method: GET
+        DomainHealth:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/domain-health
+            Method: GET
 
   WarmupDailyProcessorFunction:
     Type: AWS::Serverless::Function

@@ -724,7 +724,7 @@ def _get_col_span_class(block: dict) -> str:
         return f"col-span-12 md:col-span-{col_span}"
 
     # Fall back to legacy width (1-4 scale -> 12-column)
-    width = block.get("width", 4)
+    width = block.get("width") or 4
     col_map = {1: 3, 2: 6, 3: 9, 4: 12}
     span = col_map.get(width, 12)
     return f"col-span-12 md:col-span-{span}"
@@ -807,7 +807,7 @@ def render_blocks_html(
 
         # Check if any block in this row needs grid layout (has colSpan < 12 or width < 4)
         needs_grid = any(
-            block.get("colSpan", 12) < 12 or block.get("width", 4) < 4
+            (block.get("colSpan") or 12) < 12 or (block.get("width") or 4) < 4
             for block in row_blocks
         )
 

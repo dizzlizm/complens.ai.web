@@ -492,3 +492,157 @@ class TestGetWarmupLog:
         response = handler(event, None)
 
         assert response["statusCode"] == 404
+
+
+class TestDomainHealth:
+    """Tests for GET /workspaces/{ws}/email-warmup/{domain}/domain-health."""
+
+    @patch("api.email_warmup.EmailService")
+    @patch("complens.services.domain_health_service.DomainHealthService")
+    def test_fresh_health_check(self, mock_health_cls, mock_email_cls, dynamodb_table, api_gateway_event):
+        """Test fresh domain health check with mocked DNS."""
+        from api.email_warmup import handler
+
+        # Mock DomainHealthService
+        mock_health = MagicMock()
+        mock_health.check_dns.return_value = {
+            "spf_valid": True,
+            "spf_record": "v=spf1 ~all",
+            "dmarc_valid": True,
+            "dmarc_record": "v=DMARC1; p=reject;",
+            "dmarc_policy": "reject",
+            "mx_valid": True,
+            "mx_hosts": ["mail.example.com"],
+            "blacklisted": False,
+            "blacklist_listings": [],
+            "errors": [],
+        }
+        mock_health_cls.return_value = mock_health
+        mock_health_cls.compute_health_score.return_value = (
+            95,
+            {"spf": 15, "dkim": 15, "dmarc": 10, "dmarc_enforce": 5,
+             "blacklist": 20, "bounce": 15, "complaint": 10, "open_rate": 5},
+        )
+        mock_health_cls.score_to_status.return_value = "good"
+
+        # Mock EmailService
+        mock_email = MagicMock()
+        mock_email.check_domain_auth.return_value = {
+            "domain": "example.com",
+            "verified": True,
+            "dkim_enabled": True,
+            "dkim_status": "Success",
+            "dkim_tokens": [],
+            "ready": True,
+        }
+        mock_email_cls.return_value = mock_email
+
+        _seed_workspace(dynamodb_table)
+        _seed_warmup(dynamodb_table)
+
+        event = api_gateway_event(
+            method="GET",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/example.com/domain-health",
+            path_params={"workspace_id": WORKSPACE_ID, "domain": "example.com"},
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 200
+        body = _parse_body(response)
+        assert body["domain"] == "example.com"
+        assert body["score"] == 95
+        assert body["status"] == "good"
+        assert body["spf_valid"] is True
+        assert body["dkim_enabled"] is True
+        assert body["cached"] is False
+        assert "score_breakdown" in body
+
+    def test_domain_health_not_found(self, dynamodb_table, api_gateway_event):
+        """Test health check for non-existent domain."""
+        from api.email_warmup import handler
+
+        _seed_workspace(dynamodb_table)
+
+        event = api_gateway_event(
+            method="GET",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/nonexistent.com/domain-health",
+            path_params={"workspace_id": WORKSPACE_ID, "domain": "nonexistent.com"},
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 404
+
+    def test_domain_health_wrong_workspace(self, dynamodb_table, api_gateway_event):
+        """Test health check for domain belonging to another workspace."""
+        from api.email_warmup import handler
+
+        _seed_workspace(dynamodb_table)
+        _seed_warmup(dynamodb_table)
+
+        event = api_gateway_event(
+            method="GET",
+            path="/workspaces/other-workspace/email-warmup/example.com/domain-health",
+            path_params={"workspace_id": "other-workspace", "domain": "example.com"},
+            workspace_ids=["other-workspace"],
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 404
+
+    @patch("api.email_warmup.EmailService")
+    @patch("complens.services.domain_health_service.DomainHealthService")
+    def test_cached_health_check(self, mock_health_cls, mock_email_cls, dynamodb_table, api_gateway_event):
+        """Test that cached health check is returned within TTL."""
+        from api.email_warmup import handler
+        from datetime import datetime, timezone
+
+        # Seed warmup with recent cached health data
+        now = datetime.now(timezone.utc).isoformat()
+        cached_result = {
+            "domain": "example.com",
+            "score": 85,
+            "status": "good",
+            "spf_valid": True,
+            "spf_record": "v=spf1 ~all",
+            "dkim_enabled": True,
+            "dmarc_valid": True,
+            "dmarc_record": "v=DMARC1; p=reject;",
+            "dmarc_policy": "reject",
+            "mx_valid": True,
+            "mx_hosts": ["mail.example.com"],
+            "blacklisted": False,
+            "blacklist_listings": [],
+            "bounce_rate": Decimal("0.4"),
+            "complaint_rate": Decimal("0.0"),
+            "open_rate": Decimal("20.41"),
+            "click_rate": Decimal("5.1"),
+            "reply_rate": Decimal("2.04"),
+            "score_breakdown": {"spf": 15, "dkim": 15},
+            "checked_at": now,
+            "cached": False,
+            "errors": [],
+        }
+
+        _seed_workspace(dynamodb_table)
+        _seed_warmup(dynamodb_table)
+
+        # Add cached health data directly to DynamoDB
+        dynamodb_table.update_item(
+            Key={"PK": "WARMUP#example.com", "SK": "META"},
+            UpdateExpression="SET health_check_result = :r, health_check_at = :t",
+            ExpressionAttributeValues={":r": cached_result, ":t": now},
+        )
+
+        event = api_gateway_event(
+            method="GET",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/example.com/domain-health",
+            path_params={"workspace_id": WORKSPACE_ID, "domain": "example.com"},
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 200
+        body = _parse_body(response)
+        assert body["cached"] is True
+        assert body["score"] == 85
+        # DNS service should NOT have been called
+        mock_health_cls.return_value.check_dns.assert_not_called()

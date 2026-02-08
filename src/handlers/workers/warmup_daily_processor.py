@@ -49,7 +49,11 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         completed=completed,
     )
 
-    # Step 2: Drain deferred email queue
+    # Step 2: Refresh domain health checks for active domains
+    health_refreshed = _refresh_domain_health(active_domains, repo)
+    logger.info("Domain health checks refreshed", count=health_refreshed)
+
+    # Step 3: Drain deferred email queue
     deferred_queue_url = os.environ.get("DEFERRED_EMAIL_QUEUE_URL")
     if deferred_queue_url:
         drained = _drain_deferred_emails(service, deferred_queue_url)
@@ -62,8 +66,71 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         "status": "success",
         "advanced": advanced,
         "completed": completed,
+        "health_refreshed": health_refreshed,
         "deferred_drained": drained,
     }
+
+
+def _refresh_domain_health(
+    active_domains: list, repo: WarmupDomainRepository,
+) -> int:
+    """Refresh domain health checks for all active warmup domains.
+
+    Runs DNS checks and caches results on each warmup record.
+    Fails open per domain so one failure doesn't block others.
+
+    Args:
+        active_domains: List of active WarmupDomain instances.
+        repo: WarmupDomainRepository for persisting cached results.
+
+    Returns:
+        Number of domains successfully refreshed.
+    """
+    from datetime import datetime, timezone
+
+    from complens.services.domain_health_service import DomainHealthService
+
+    health_service = DomainHealthService()
+    email_service = EmailService()
+    refreshed = 0
+
+    for warmup in active_domains:
+        try:
+            dns_result = health_service.check_dns(warmup.domain)
+            auth_status = email_service.check_domain_auth(warmup.domain)
+            dkim_enabled = auth_status.get("dkim_enabled", False)
+
+            score, breakdown = DomainHealthService.compute_health_score(
+                spf_valid=dns_result["spf_valid"],
+                dkim_enabled=dkim_enabled,
+                dmarc_valid=dns_result["dmarc_valid"],
+                dmarc_policy=dns_result["dmarc_policy"],
+                blacklist_count=len(dns_result["blacklist_listings"]),
+                bounce_rate=warmup.bounce_rate,
+                complaint_rate=warmup.complaint_rate,
+                open_rate=warmup.open_rate,
+            )
+
+            now = datetime.now(timezone.utc).isoformat()
+            warmup.health_check_result = {
+                "domain": warmup.domain,
+                "score": score,
+                "status": DomainHealthService.score_to_status(score),
+                "score_breakdown": breakdown,
+                "checked_at": now,
+            }
+            warmup.health_check_at = now
+            repo.update_warmup(warmup)
+            refreshed += 1
+
+        except Exception as e:
+            logger.warning(
+                "Failed to refresh domain health",
+                domain=warmup.domain,
+                error=str(e),
+            )
+
+    return refreshed
 
 
 def _drain_deferred_emails(service: WarmupService, queue_url: str) -> int:

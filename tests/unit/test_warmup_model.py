@@ -3,6 +3,7 @@
 import pytest
 from complens.models.warmup_domain import (
     DEFAULT_WARMUP_SCHEDULE,
+    DomainHealthResponse,
     WarmupDomain,
     WarmupStatus,
     StartWarmupRequest,
@@ -323,3 +324,108 @@ class TestDeferredEmail:
         assert restored.body_html == "<p>Hello</p>"
         assert restored.tags == {"campaign": "welcome"}
         assert restored.domain == "example.com"
+
+
+class TestDomainHealthResponse:
+    """Tests for DomainHealthResponse model."""
+
+    def test_default_values(self):
+        """Test default field values."""
+        resp = DomainHealthResponse(domain="example.com", score=80, status="good")
+
+        assert resp.domain == "example.com"
+        assert resp.score == 80
+        assert resp.status == "good"
+        assert resp.spf_valid is False
+        assert resp.dkim_enabled is False
+        assert resp.dmarc_valid is False
+        assert resp.blacklisted is False
+        assert resp.blacklist_listings == []
+        assert resp.errors == []
+        assert resp.cached is False
+
+    def test_full_response(self):
+        """Test fully populated response."""
+        resp = DomainHealthResponse(
+            domain="example.com",
+            score=95,
+            status="good",
+            spf_valid=True,
+            spf_record="v=spf1 ~all",
+            dkim_enabled=True,
+            dmarc_valid=True,
+            dmarc_record="v=DMARC1; p=reject;",
+            dmarc_policy="reject",
+            mx_valid=True,
+            mx_hosts=["mail.example.com"],
+            blacklisted=False,
+            blacklist_listings=[],
+            bounce_rate=0.5,
+            complaint_rate=0.01,
+            open_rate=25.0,
+            click_rate=5.0,
+            reply_rate=2.0,
+            score_breakdown={"spf": 15, "dkim": 15, "dmarc": 10},
+            checked_at="2026-01-01T00:00:00+00:00",
+            cached=False,
+            errors=[],
+        )
+
+        assert resp.score == 95
+        assert resp.dmarc_policy == "reject"
+        assert resp.mx_hosts == ["mail.example.com"]
+
+    def test_json_serialization(self):
+        """Test JSON serialization for API responses."""
+        resp = DomainHealthResponse(
+            domain="example.com",
+            score=75,
+            status="warning",
+            spf_valid=True,
+            errors=["DNS check failed: timeout"],
+        )
+        data = resp.model_dump(mode="json")
+
+        assert data["domain"] == "example.com"
+        assert data["score"] == 75
+        assert data["status"] == "warning"
+        assert data["spf_valid"] is True
+        assert data["errors"] == ["DNS check failed: timeout"]
+        assert isinstance(data["score_breakdown"], dict)
+
+    def test_score_bounds(self):
+        """Test that score must be 0-100."""
+        with pytest.raises(Exception):
+            DomainHealthResponse(domain="x.com", score=101, status="good")
+
+        with pytest.raises(Exception):
+            DomainHealthResponse(domain="x.com", score=-1, status="good")
+
+
+class TestWarmupDomainHealthFields:
+    """Tests for health check cached fields on WarmupDomain."""
+
+    def test_default_health_fields(self):
+        """Test health fields default to None."""
+        wd = WarmupDomain(workspace_id="ws-1", domain="example.com")
+        assert wd.health_check_result is None
+        assert wd.health_check_at is None
+
+    def test_health_fields_serialization(self):
+        """Test health fields serialize/deserialize correctly."""
+        from datetime import datetime, timezone
+
+        wd = WarmupDomain(
+            workspace_id="ws-1",
+            domain="example.com",
+            health_check_result={"score": 85, "status": "good"},
+            health_check_at="2026-01-01T00:00:00+00:00",
+        )
+        db_item = wd.to_dynamodb()
+        db_item.update(wd.get_keys())
+        db_item.update(wd.get_gsi1_keys())
+
+        restored = WarmupDomain.from_dynamodb(db_item)
+        assert restored.health_check_result == {"score": 85, "status": "good"}
+        # DynamoDB deserializer converts ISO strings to datetime objects
+        assert restored.health_check_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
