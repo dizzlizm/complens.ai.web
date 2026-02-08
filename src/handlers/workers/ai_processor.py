@@ -107,7 +107,7 @@ def process_inbound_message(data: dict) -> dict:
     # Generate AI response
     from complens.services.ai_agent import AIAgentService
 
-    agent = AIAgentService()
+    agent = AIAgentService(workspace_id=workspace_id)
 
     # Run async code
     loop = asyncio.new_event_loop()

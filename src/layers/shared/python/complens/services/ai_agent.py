@@ -119,15 +119,18 @@ class AIAgentService:
 
     def __init__(
         self,
+        workspace_id: str = "",
         model_id: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
         max_tokens: int = 1000,
     ):
         """Initialize AI Agent service.
 
         Args:
+            workspace_id: Workspace ID for knowledge base lookups.
             model_id: Bedrock model ID.
             max_tokens: Maximum tokens for response.
         """
+        self.workspace_id = workspace_id
         self.model_id = model_id
         self.max_tokens = max_tokens
         self._bedrock = None
