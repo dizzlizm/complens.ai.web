@@ -9,6 +9,7 @@ import boto3
 import structlog
 
 from complens.repositories.page import PageRepository
+from complens.services.knowledge_base_service import get_knowledge_base_service
 from complens.utils.rate_limiter import check_rate_limit
 
 logger = structlog.get_logger()
@@ -173,14 +174,27 @@ def handle_public_chat(
             ai_persona = "You are a helpful assistant."
             business_context = {}
 
+        # Retrieve knowledge base context if available
+        kb_context = ""
+        try:
+            kb_service = get_knowledge_base_service()
+            kb_results = kb_service.retrieve(page.workspace_id, message, max_results=3)
+            if kb_results:
+                kb_snippets = "\n---\n".join(r["text"] for r in kb_results)
+                kb_context = f"\n\nRelevant Knowledge Base Information:\n{kb_snippets}"
+                logger.info("KB context retrieved", workspace_id=page.workspace_id, results=len(kb_results))
+        except Exception as e:
+            logger.warning("KB retrieval skipped", error=str(e))
+
         system_prompt = f"""{ai_persona}
 
 Page Context:
 - Page Name: {page.name}
 - Headline: {page.headline}
 {f"- Business Context: {json.dumps(business_context)}" if business_context else ""}
-
-Keep responses concise and helpful. If you don't know something, say so politely."""
+{kb_context}
+Keep responses concise and helpful. If you don't know something, say so politely.
+You may use markdown formatting (bold, lists, links) when it improves readability."""
 
         # Fire EventBridge event for workflow triggers
         _fire_chat_event(

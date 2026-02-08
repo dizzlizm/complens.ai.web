@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
 import type { ChatConfig } from '../../lib/hooks/usePages';
 
 interface ChatMessage {
@@ -208,7 +209,13 @@ export default function ChatWidget({
                     : undefined
                 }
               >
-                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                {msg.role === 'assistant' ? (
+                  <div className="text-sm prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-1.5">
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                )}
               </div>
             </div>
           ))}
@@ -353,7 +360,13 @@ export default function ChatWidget({
                       : undefined
                   }
                 >
+                  {msg.role === 'assistant' ? (
+                  <div className="text-sm prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-1.5">
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  </div>
+                ) : (
                   <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                )}
                 </div>
               </div>
             ))}
