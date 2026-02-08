@@ -50,7 +50,7 @@ class Document(BaseModel):
         """Get GSI1 keys for listing documents."""
         return {
             "GSI1PK": f"WS#{self.workspace_id}#DOCS",
-            "GSI1SK": f"{self.status.value}#{self.name}",
+            "GSI1SK": f"{self.status}#{self.name}",
         }
 
 
