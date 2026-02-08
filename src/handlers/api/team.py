@@ -69,8 +69,10 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         if "/invite" in path and http_method == "POST":
             return invite_member(team_repo, invite_repo, workspace_id, auth, event)
         elif "/invitations/" in path and http_method == "DELETE":
-            # Use pathParameters (URL-decoded by API Gateway) instead of path splitting
-            email = path_params.get("email") or unquote(path.split("/invitations/")[-1])
+            # API Gateway REST API may not decode path params - decode explicitly
+            raw_email = path_params.get("email") or path.split("/invitations/")[-1]
+            email = unquote(raw_email)
+            logger.info("Revoke invitation request", raw_email=raw_email, decoded_email=email, workspace_id=workspace_id)
             return revoke_invitation(invite_repo, workspace_id, email)
         elif http_method == "GET" and not user_id:
             return list_team(team_repo, invite_repo, workspace_id)
@@ -292,8 +294,7 @@ def accept_invitation(
 ) -> dict:
     """Accept an invitation using a token.
 
-    The user must be authenticated. We look up invitations by their email
-    and match the provided token.
+    The user must be authenticated and their email must match the invitation.
     """
     try:
         body = json.loads(event.get("body", "{}"))
@@ -307,21 +308,31 @@ def accept_invitation(
     if not auth.email:
         return error("Could not determine your email address", 400)
 
-    # Find all pending invitations for this email
-    invitations = invite_repo.get_invitations_for_email(auth.email)
+    logger.info("Accept invitation attempt", user_email=auth.email, token_prefix=token[:8] if len(token) > 8 else token)
 
-    # Find the invitation matching the token
-    matching_invite = None
-    for inv in invitations:
-        if inv.token == token:
-            matching_invite = inv
-            break
+    # Find invitation by token
+    matching_invite = invite_repo.find_by_token(token)
 
     if not matching_invite:
+        logger.warning("Invitation not found for token", token_prefix=token[:8])
         return error("Invalid or expired invitation token", 404)
 
     if matching_invite.is_expired:
         return error("This invitation has expired", 400)
+
+    # Check if the signed-in user's email matches the invitation
+    if auth.email.lower() != matching_invite.email.lower():
+        logger.warning(
+            "Email mismatch on invite accept",
+            signed_in_email=auth.email,
+            invited_email=matching_invite.email,
+        )
+        return error(
+            f"This invitation was sent to {matching_invite.email}. "
+            f"Please sign in with that email address to accept it.",
+            403,
+            error_code="EMAIL_MISMATCH",
+        )
 
     workspace_id = matching_invite.workspace_id
 
@@ -329,7 +340,7 @@ def accept_invitation(
     existing = team_repo.get_member(workspace_id, auth.user_id)
     if existing:
         # Already a member, just clean up the invitation
-        invite_repo.revoke_invitation(workspace_id, auth.email)
+        invite_repo.revoke_invitation(workspace_id, matching_invite.email)
         return success({
             "accepted": True,
             "workspace_id": workspace_id,
@@ -348,8 +359,8 @@ def accept_invitation(
     )
     team_repo.add_member(member)
 
-    # Remove the invitation
-    invite_repo.revoke_invitation(workspace_id, auth.email)
+    # Remove the invitation (use the invited email, not auth email)
+    invite_repo.revoke_invitation(workspace_id, matching_invite.email)
 
     # Update Cognito custom:workspace_ids so the JWT includes the new workspace
     _update_cognito_workspace_ids(auth.user_id, workspace_id)

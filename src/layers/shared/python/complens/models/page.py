@@ -118,7 +118,7 @@ class PageBlock(PydanticBaseModel):
     # 12-column grid layout fields
     row: int | None = Field(default=None, description="Row index (0-indexed, blocks with same row display side-by-side)")
     colSpan: int | None = Field(default=None, ge=4, le=12, description="Column span in 12-col grid (4, 6, 8, or 12)")
-    colStart: int | None = Field(default=None, ge=0, le=8, description="Column start position (0-8)")
+    colStart: int | None = Field(default=None, ge=0, le=11, description="Column start position (0-11 in 12-col grid)")
 
 
 class Page(BaseModel):
@@ -322,7 +322,7 @@ class PageBlockRequest(PydanticBaseModel):
     # 12-column grid layout fields
     row: int | None = Field(default=None, description="Row index (0-indexed)")
     colSpan: int | None = Field(default=None, ge=4, le=12, description="Column span (4, 6, 8, or 12)")
-    colStart: int | None = Field(default=None, ge=0, le=8, description="Column start position")
+    colStart: int | None = Field(default=None, ge=0, le=11, description="Column start position (0-11)")
 
 
 class CreatePageRequest(PydanticBaseModel):

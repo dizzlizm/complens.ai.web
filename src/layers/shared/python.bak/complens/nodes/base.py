@@ -21,8 +21,8 @@ class NodeContext:
     Contains all data needed for a node to execute.
     """
 
-    # Core entities
-    contact: Contact
+    # Core entities (contact may be None for form submissions without contacts)
+    contact: Contact | None
     workflow_run: WorkflowRun
     conversation: Conversation | None = None
 
@@ -38,6 +38,10 @@ class NodeContext:
 
     # Node configuration
     node_config: dict[str, Any] = field(default_factory=dict)
+
+    # Provider context (for provider-based nodes)
+    provider_id: str | None = None
+    provider_credentials: Any = None  # ProviderCredentials (avoiding circular import)
 
     def get_variable(self, name: str, default: Any = None) -> Any:
         """Get a variable by name.
@@ -103,13 +107,36 @@ class NodeContext:
             # Handle contact fields: {{contact.email}}, {{contact.first_name}}
             if var_path.startswith("contact."):
                 field_name = var_path[8:]  # Remove "contact."
-                # Support nested custom_fields: {{contact.custom_fields.company}}
-                if field_name.startswith("custom_fields."):
-                    custom_key = field_name[14:]
-                    return str(self.contact.custom_fields.get(custom_key, ""))
-                if hasattr(self.contact, field_name):
-                    value = getattr(self.contact, field_name)
-                    return str(value) if value is not None else ""
+
+                # If we have a contact, use its data
+                if self.contact:
+                    # Support nested custom_fields: {{contact.custom_fields.company}}
+                    if field_name.startswith("custom_fields."):
+                        custom_key = field_name[14:]
+                        return str(self.contact.custom_fields.get(custom_key, ""))
+                    if hasattr(self.contact, field_name):
+                        value = getattr(self.contact, field_name)
+                        return str(value) if value is not None else ""
+                    return ""
+
+                # No contact - try to get from trigger_data.data (form submission data)
+                # This allows workflows to use {{contact.email}} even without a contact
+                form_data = self.trigger_data.get("data", {})
+                if form_data and isinstance(form_data, dict):
+                    # Try exact field name first
+                    if field_name in form_data:
+                        return str(form_data[field_name])
+                    # Try common field name mappings
+                    mappings = {
+                        "email": ["email", "Email", "EMAIL", "email_address"],
+                        "first_name": ["first_name", "firstName", "name", "Name", "first"],
+                        "last_name": ["last_name", "lastName", "surname", "last"],
+                        "phone": ["phone", "Phone", "phone_number", "mobile"],
+                    }
+                    if field_name in mappings:
+                        for alias in mappings[field_name]:
+                            if alias in form_data:
+                                return str(form_data[alias])
                 return ""
 
             # Handle trigger data with nested support: {{trigger_data.form_data.message}}

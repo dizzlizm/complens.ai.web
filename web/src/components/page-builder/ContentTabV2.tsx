@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { PageBlock, BlockType, groupBlocksIntoRows, flattenRowsToBlocks } from './types';
+import { PageBlock, BlockType } from './types';
+import type { PageLayout } from '../../lib/hooks/usePages';
 import LayoutCanvas from './LayoutCanvas';
 import SynthesisPopup, { type ApplyOptions } from './SynthesisPopup';
 import ProfilePromptBanner from './ProfilePromptBanner';
@@ -63,6 +64,9 @@ interface ContentTabV2Props {
   onFbPixelIdChange?: (value: string) => void;
   onScriptsHeadChange?: (value: string) => void;
   onScriptsBodyChange?: (value: string) => void;
+  // Layout
+  layout?: PageLayout;
+  onLayoutChange?: (layout: PageLayout) => void;
   // Callbacks for resource creation
   onFormCreated?: (formId: string) => void;
   onWorkflowCreated?: (workflowId: string) => void;
@@ -104,6 +108,9 @@ export default function ContentTabV2({
   onFbPixelIdChange,
   onScriptsHeadChange,
   onScriptsBodyChange,
+  // Layout
+  layout = 'full-bleed',
+  onLayoutChange,
   // Callbacks
   onFormCreated,
   onWorkflowCreated,
@@ -186,41 +193,94 @@ export default function ContentTabV2({
   // Handle applying synthesis results to the selected slots
   const handleApplySynthesis = useCallback(
     async (synthesizedBlocks: PageBlock[], synthesisResult: SynthesisResult, options: ApplyOptions) => {
-      // Group current blocks into rows to preserve layout
-      const rows = groupBlocksIntoRows(blocks);
+      const selectedSet = new Set(selectedSlotIds);
 
-      // Create a map from slot ID to synthesized block
-      // Match by index/order since synthesis returns blocks in order
-      const synthesizedMap = new Map<number, PageBlock>();
-      synthesizedBlocks.forEach((block, idx) => {
-        synthesizedMap.set(idx, block);
-      });
-
-      // Update the selected slots with synthesized content
-      let synthesisIndex = 0;
-      const updatedRows = rows.map((row) => ({
-        ...row,
-        slots: row.slots.map((slot) => {
-          if (selectedSlotIds.includes(slot.id)) {
-            const synthesizedBlock = synthesizedMap.get(synthesisIndex);
-            synthesisIndex++;
-
-            if (synthesizedBlock) {
-              // Preserve the slot's layout properties but update type and config
-              return {
-                ...slot,
-                type: synthesizedBlock.type,
-                config: synthesizedBlock.config,
-                // Keep the slot's original layout: row, colSpan, colStart
-              };
-            }
-          }
-          return slot;
-        }),
+      // Find the insertion point: the row of the first selected slot
+      const migrated = blocks.map((block, index) => ({
+        ...block,
+        row: block.row ?? index,
+        colSpan: block.colSpan ?? 12,
+        colStart: block.colStart ?? 0,
       }));
+      // Split current blocks into: before selection, after selection (excluding selected)
+      const keepBefore: PageBlock[] = [];
+      const keepAfter: PageBlock[] = [];
+      let pastSelection = false;
+      for (const block of migrated) {
+        if (selectedSet.has(block.id)) {
+          pastSelection = true;
+          continue; // Remove selected slots — they'll be replaced
+        }
+        if (!pastSelection) {
+          keepBefore.push(block);
+        } else {
+          keepAfter.push(block);
+        }
+      }
 
-      // Flatten back to blocks array
-      let newBlocks = flattenRowsToBlocks(updatedRows);
+      // Group synthesized blocks by their row from the backend layout
+      const synthByRow = new Map<number, PageBlock[]>();
+      for (const block of synthesizedBlocks) {
+        const row = block.row ?? 0;
+        if (!synthByRow.has(row)) synthByRow.set(row, []);
+        synthByRow.get(row)!.push(block);
+      }
+      const synthRows = Array.from(synthByRow.keys()).sort((a, b) => a - b);
+
+      // Build the final block list with proper row numbering
+      let currentRow = 0;
+      const finalBlocks: PageBlock[] = [];
+
+      // 1) Blocks before the selection point
+      const beforeRows = new Map<number, PageBlock[]>();
+      for (const b of keepBefore) {
+        const r = b.row ?? 0;
+        if (!beforeRows.has(r)) beforeRows.set(r, []);
+        beforeRows.get(r)!.push(b);
+      }
+      for (const row of Array.from(beforeRows.keys()).sort((a, b) => a - b)) {
+        let colStart = 0;
+        for (const b of beforeRows.get(row)!) {
+          finalBlocks.push({ ...b, row: currentRow, colStart, order: finalBlocks.length });
+          colStart += b.colSpan ?? 12;
+        }
+        currentRow++;
+      }
+
+      // 2) Synthesized blocks in place of the selection
+      for (const synthRow of synthRows) {
+        const rowBlocks = synthByRow.get(synthRow)!;
+        let colStart = 0;
+        for (const b of rowBlocks) {
+          finalBlocks.push({
+            ...b,
+            row: currentRow,
+            colSpan: (b.colSpan ?? 12) as 4 | 6 | 8 | 12,
+            colStart,
+            order: finalBlocks.length,
+          });
+          colStart += b.colSpan ?? 12;
+        }
+        currentRow++;
+      }
+
+      // 3) Blocks after the selection point
+      const afterRows = new Map<number, PageBlock[]>();
+      for (const b of keepAfter) {
+        const r = b.row ?? 0;
+        if (!afterRows.has(r)) afterRows.set(r, []);
+        afterRows.get(r)!.push(b);
+      }
+      for (const row of Array.from(afterRows.keys()).sort((a, b) => a - b)) {
+        let colStart = 0;
+        for (const b of afterRows.get(row)!) {
+          finalBlocks.push({ ...b, row: currentRow, colStart, order: finalBlocks.length });
+          colStart += b.colSpan ?? 12;
+        }
+        currentRow++;
+      }
+
+      let newBlocks = finalBlocks;
 
       onChange(newBlocks);
       setShowSynthesisPopup(false);
@@ -546,6 +606,33 @@ export default function ContentTabV2({
       {/* Blocks Subtab */}
       {contentSubTab === 'blocks' && (
         <>
+          {/* Layout Mode Toggle */}
+          <div className="flex items-center justify-between bg-white rounded-lg shadow px-4 py-2.5">
+            <span className="text-sm font-medium text-gray-700">Page Layout</span>
+            <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+              <button
+                onClick={() => onLayoutChange?.('full-bleed')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  layout === 'full-bleed'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Full-bleed
+              </button>
+              <button
+                onClick={() => onLayoutChange?.('contained')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  layout === 'contained'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Contained
+              </button>
+            </div>
+          </div>
+
           {/* Visual Layout Canvas */}
           <LayoutCanvas
             blocks={blocks}
@@ -553,6 +640,7 @@ export default function ContentTabV2({
             onSynthesizeBlocks={handleSynthesizeBlocks}
             forms={forms}
             workspaceId={workspaceId}
+            pageId={pageId}
           />
         </>
       )}
@@ -593,6 +681,7 @@ export default function ContentTabV2({
         <SynthesisPopup
           selectedBlockTypes={selectedBlockTypesForSynthesis}
           selectedSlotIds={selectedSlotIds}
+          existingBlockTypes={blocks.filter(b => b.type !== 'placeholder').map(b => b.type)}
           pageId={pageId}
           onClose={handleCloseSynthesis}
           onApply={handleApplySynthesis}

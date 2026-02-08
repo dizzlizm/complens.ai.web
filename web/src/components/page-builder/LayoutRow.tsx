@@ -44,6 +44,7 @@ interface LayoutRowProps {
   activeSlotId?: string | null; // Currently dragged slot
   forms?: FormInfo[];
   workspaceId?: string;
+  pageId?: string;
 }
 
 // Wrapper component for draggable slots - uses useDraggable (NOT sortable)
@@ -115,6 +116,7 @@ export default function LayoutRow({
   activeSlotId,
   forms = [],
   workspaceId,
+  pageId,
 }: LayoutRowProps) {
   const { rowIndex, slots, totalSpan } = row;
   const remainingSpace = 12 - totalSpan;
@@ -272,6 +274,7 @@ export default function LayoutRow({
                 isLast={slotIndex === slots.length - 1}
                 forms={forms}
                 workspaceId={workspaceId}
+                pageId={pageId}
               />
             </DraggableSlot>
 

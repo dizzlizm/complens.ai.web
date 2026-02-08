@@ -19,6 +19,10 @@ import {
 } from '../../lib/hooks/useAI';
 import { useCurrentWorkspace } from '../../lib/hooks/useWorkspaces';
 
+// Derive subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
+const API_URL = import.meta.env.VITE_API_URL || '';
+const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '') || 'complens.ai';
+
 interface AgenticPageBuilderProps {
   onComplete: (result: {
     blocks: PageBlock[];
@@ -438,7 +442,7 @@ export default function AgenticPageBuilder({
     setPhase('naming');
 
     await addAssistantMessage(
-      '📝 Almost there! Give your page a name and optional subdomain. The subdomain will let people access your page at **yourname.dev.complens.ai**.',
+      `📝 Almost there! Give your page a name and optional subdomain. The subdomain will let people access your page at **yourname.${SUBDOMAIN_SUFFIX}**.`,
       undefined,
       undefined,
       600
@@ -584,7 +588,7 @@ export default function AgenticPageBuilder({
       setPhase('review');
 
       const pageUrl = pageSubdomain.trim()
-        ? `https://${pageSubdomain}.dev.complens.ai`
+        ? `https://${pageSubdomain}.${SUBDOMAIN_SUFFIX}`
         : 'Your page is ready';
 
       const strengthsText = result.assessment.strengths.length > 0
@@ -769,7 +773,7 @@ export default function AgenticPageBuilder({
       setPhase('review');
 
       const pageUrl = pageSubdomain.trim()
-        ? `https://${pageSubdomain}.dev.complens.ai`
+        ? `https://${pageSubdomain}.${SUBDOMAIN_SUFFIX}`
         : `Your page is ready`;
 
       // Different message for update vs create
@@ -884,7 +888,7 @@ export default function AgenticPageBuilder({
       setPhase('review');
 
       const pageUrl = pageSubdomain.trim()
-        ? `https://${pageSubdomain}.dev.complens.ai`
+        ? `https://${pageSubdomain}.${SUBDOMAIN_SUFFIX}`
         : `Your page is ready`;
 
       await addAssistantMessage(
@@ -1144,7 +1148,7 @@ export default function AgenticPageBuilder({
                       className="flex-1 px-4 py-2 border border-gray-200 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
                     />
                     <span className="px-3 py-2 bg-gray-100 border border-l-0 border-gray-200 rounded-r-lg text-gray-500 text-sm">
-                      .dev.complens.ai
+                      .{SUBDOMAIN_SUFFIX}
                     </span>
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
@@ -1973,25 +1977,16 @@ function buildImagePrompt(content: GeneratedPageContent, style: WizardStyle): st
 }
 
 function buildAvatarPrompt(index: number, style: WizardStyle): string {
-  // Vary demographics for diverse testimonials
-  const demographics = [
-    'young professional woman, 30s, confident smile',
-    'middle-aged business man, 40s, friendly approachable',
-    'professional woman, 50s, warm genuine expression',
-    'young entrepreneur man, late 20s, enthusiastic',
-    'senior professional woman, 60s, wise experienced',
+  // Each entry is a complete, distinct person description to maximize visual diversity
+  const avatarDescriptions = [
+    'Portrait photo of a young woman with short dark hair, early 30s, warm confident smile, wearing a navy blazer, soft studio lighting on white background',
+    'Portrait photo of a middle-aged man with glasses and salt-and-pepper hair, late 40s, friendly genuine expression, wearing a light blue shirt, outdoor natural daylight with blurred greenery',
+    'Portrait photo of a woman with curly auburn hair, mid 50s, approachable kind eyes, wearing a cream sweater, modern office with window light',
+    'Portrait photo of a young man with a neat beard and brown skin, late 20s, enthusiastic grin, wearing a dark polo shirt, neutral gray backdrop with side lighting',
+    'Portrait photo of a senior woman with silver hair pulled back, 60s, wise warm smile, wearing a burgundy top, bright airy background with soft focus',
   ];
 
-  const backgrounds = [
-    'modern office background',
-    'neutral gray background',
-    'outdoor natural lighting',
-    'bright window light background',
-    'soft studio lighting',
-  ];
+  const description = avatarDescriptions[index % avatarDescriptions.length];
 
-  const demographic = demographics[index % demographics.length];
-  const background = backgrounds[index % backgrounds.length];
-
-  return `Professional headshot portrait, ${demographic}, ${background}, high quality corporate photo, sharp focus, ${style} aesthetic, photorealistic, friendly trustworthy appearance`.substring(0, 500);
+  return `${description}, high quality corporate photography, sharp focus, photorealistic, ${style} aesthetic`.substring(0, 500);
 }

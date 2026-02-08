@@ -1,5 +1,6 @@
 """Workspace model for multi-tenant organization."""
 
+from datetime import datetime
 from typing import ClassVar
 
 from pydantic import BaseModel as PydanticBaseModel, Field
@@ -35,6 +36,14 @@ class Workspace(BaseModel):
     # Email notification settings (used by workflows via {{workspace.field}} or {{owner.email}})
     notification_email: str | None = Field(None, description="Email for workflow notifications (owner alerts)")
     from_email: str | None = Field(None, description="Default sender email for workflow emails")
+
+    # Billing fields
+    plan: str = Field(default="free", description="Subscription plan: free, pro, business")
+    stripe_customer_id: str | None = Field(None, description="Stripe customer ID for platform billing")
+    stripe_subscription_id: str | None = Field(None, description="Stripe subscription ID")
+    subscription_status: str | None = Field(None, description="Subscription status: active, past_due, canceled, trialing")
+    trial_ends_at: datetime | None = Field(None, description="Trial end date")
+    plan_period_end: datetime | None = Field(None, description="Current billing period end")
 
     def get_pk(self) -> str:
         """Get partition key: AGENCY#{agency_id}."""
@@ -100,3 +109,7 @@ class UpdateWorkspaceRequest(PydanticBaseModel):
     sendgrid_api_key_id: str | None = None
     notification_email: str | None = None
     from_email: str | None = None
+    plan: str | None = None
+    stripe_customer_id: str | None = None
+    stripe_subscription_id: str | None = None
+    subscription_status: str | None = None

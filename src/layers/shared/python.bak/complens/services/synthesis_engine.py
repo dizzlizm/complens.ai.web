@@ -12,6 +12,7 @@ cohesive, high-conversion landing pages through a multi-stage pipeline:
 """
 
 import json
+import random
 import re
 from typing import Any
 from uuid import uuid4
@@ -21,14 +22,17 @@ import structlog
 from complens.models.business_profile import BusinessProfile
 from complens.models.synthesis import (
     BlockPlan,
+    BrandFoundation,
     ColorScheme,
     ContentAssessment,
     DesignSystem,
     FormConfig,
+    GenerateResult,
     PageBlock,
     PageGoal,
     PageIntent,
     PlannedBlock,
+    PlanResult,
     SeoConfig,
     SynthesisMetadata,
     SynthesisResult,
@@ -38,7 +42,7 @@ from complens.models.synthesis import (
     WorkflowConfig,
 )
 from complens.repositories.business_profile import BusinessProfileRepository
-from complens.services.ai_service import invoke_claude_json
+from complens.services.ai_service import FAST_MODEL, invoke_claude_json
 
 logger = structlog.get_logger()
 
@@ -203,7 +207,9 @@ class SynthesisEngine:
             form_config = self._create_form_config(intent, design, synthesized)
 
         # Build workflow config
-        workflow_config = self._create_workflow_config(intent, synthesized)
+        workflow_config = self._create_workflow_config(
+            intent, synthesized, block_types=[b.type for b in blocks]
+        )
 
         # Build metadata
         metadata = SynthesisMetadata(
@@ -220,9 +226,19 @@ class SynthesisEngine:
         )
 
         # Build SEO config from synthesized content
+        # Truncate to fit Pydantic validation limits (AI may generate longer content)
+        meta_title = (synthesized.seo.meta_title if synthesized.seo else "") or ""
+        meta_description = (synthesized.seo.meta_description if synthesized.seo else "") or ""
+
+        # Truncate with ellipsis if exceeds limits
+        if len(meta_title) > 70:
+            meta_title = meta_title[:67] + "..."
+        if len(meta_description) > 160:
+            meta_description = meta_description[:157] + "..."
+
         seo = SeoConfig(
-            meta_title=synthesized.seo.meta_title if synthesized.seo else "",
-            meta_description=synthesized.seo.meta_description if synthesized.seo else "",
+            meta_title=meta_title,
+            meta_description=meta_description,
         )
 
         result = SynthesisResult(
@@ -248,6 +264,244 @@ class SynthesisEngine:
 
         return result
 
+    def plan(
+        self,
+        workspace_id: str,
+        description: str,
+        page_id: str | None = None,
+        intent_hints: list[str] | None = None,
+        style_preference: str | None = None,
+        block_types: list[str] | None = None,
+        existing_block_types: list[str] | None = None,
+    ) -> PlanResult:
+        """Phase 1: Plan the page — fast, single Haiku call.
+
+        Runs stages 1-4 (intent, assessment, block planning, design) plus
+        brand foundation. Auto-injects a contact method if missing.
+
+        Args:
+            workspace_id: The workspace ID.
+            description: User's description of what they want.
+            page_id: Optional existing page ID for update mode.
+            intent_hints: Optional hints like ['lead-gen', 'portfolio'].
+            style_preference: Optional style like 'professional', 'bold'.
+            block_types: Optional list of specific block types to generate.
+            existing_block_types: Block types already on the page.
+
+        Returns:
+            PlanResult with intent, block plan, design, brand, SEO.
+        """
+        logger.info(
+            "Starting plan phase",
+            workspace_id=workspace_id,
+            description_length=len(description),
+        )
+
+        profile = self._get_profile(workspace_id, page_id)
+
+        # Stage 1: Intent Analysis
+        intent = self._analyze_intent(description, intent_hints, profile)
+
+        # Stage 2: Content Assessment
+        assessment = self._assess_content(profile, description, intent)
+
+        # Stage 3: Block Planning
+        include_form = "form" in (block_types or [])
+        include_chat = "chat" in (block_types or [])
+        plan = self._plan_blocks(intent, assessment, include_form, include_chat, block_types)
+
+        # Auto-inject contact method if missing from plan AND existing page
+        contact_method_injected = self._ensure_contact_method(
+            intent, plan, existing_block_types
+        )
+
+        # Stage 4: Design System
+        design = self._generate_design_system(profile, intent, style_preference)
+
+        # Brand foundation (single Haiku call)
+        brand_dict = self._synthesize_brand_foundation(profile, description, intent, design)
+        brand = BrandFoundation(
+            business_name=brand_dict.get("business_name", profile.business_name or ""),
+            tagline=brand_dict.get("tagline", profile.tagline or ""),
+            tone=brand_dict.get("tone", "professional"),
+            narrative_theme=brand_dict.get("narrative_theme", ""),
+            key_benefit=brand_dict.get("key_benefit", ""),
+            target_action=brand_dict.get("target_action", "contact us"),
+        )
+
+        # SEO from brand foundation
+        meta_title = brand_dict.get("meta_title", f"{brand.business_name} - {brand.key_benefit}")
+        meta_description = brand_dict.get("meta_description", brand.tagline)
+        if len(meta_title) > 70:
+            meta_title = meta_title[:67] + "..."
+        if len(meta_description) > 160:
+            meta_description = meta_description[:157] + "..."
+        seo = SeoConfig(meta_title=meta_title, meta_description=meta_description)
+
+        result = PlanResult(
+            plan_id=str(uuid4()),
+            intent=intent,
+            assessment=assessment,
+            block_plan=plan.blocks,
+            design_system=design,
+            brand=brand,
+            seo=seo,
+            contact_method_injected=contact_method_injected,
+            excluded=plan.excluded,
+        )
+
+        logger.info(
+            "Plan phase complete",
+            plan_id=result.plan_id,
+            blocks_planned=len(plan.blocks),
+            contact_injected=contact_method_injected,
+        )
+
+        return result
+
+    def generate(
+        self,
+        workspace_id: str,
+        description: str,
+        brand: BrandFoundation,
+        design: DesignSystem,
+        intent: PageIntent,
+        block_types: list[str],
+        page_id: str | None = None,
+        include_form: bool = False,
+    ) -> GenerateResult:
+        """Phase 2: Generate content for a batch of blocks.
+
+        Takes brand/design from plan phase and generates content for
+        up to 3 block types per call.
+
+        Args:
+            workspace_id: The workspace ID.
+            description: User's description.
+            brand: Brand context from plan phase.
+            design: Design system from plan phase.
+            intent: Intent from plan phase.
+            block_types: Block types to generate (max 3).
+            page_id: Optional page ID for profile context.
+            include_form: Whether to include form/workflow config.
+
+        Returns:
+            GenerateResult with blocks and optional form/workflow config.
+        """
+        logger.info(
+            "Starting generate phase",
+            workspace_id=workspace_id,
+            block_types=block_types,
+        )
+
+        profile = self._get_profile(workspace_id, page_id)
+        profile_context = profile.get_ai_context() if profile.business_name else ""
+
+        # Convert BrandFoundation to dict for existing _synthesize_block_batch
+        brand_dict = brand.model_dump()
+
+        # Generate content for this batch
+        synthesized_blocks = self._synthesize_block_batch(
+            block_types, brand_dict, profile_context, description, intent, design
+        )
+
+        # Build a plan for these blocks to configure widths
+        # Use constrained planning for the batch subset
+        assessment = self._assess_content(profile, description, intent)
+        include_form_block = "form" in block_types
+        include_chat_block = "chat" in block_types
+        batch_plan = self._plan_blocks_constrained(
+            intent, assessment, block_types, include_form_block, include_chat_block
+        )
+
+        # Create synthesized content wrapper
+        synthesized = SynthesizedContent(
+            blocks=synthesized_blocks,
+            business_name=brand.business_name,
+            tagline=brand.tagline,
+            tone=brand.tone,
+            narrative_theme=brand.narrative_theme,
+        )
+
+        # Configure blocks with design system
+        blocks = self._configure_blocks(batch_plan, synthesized, design)
+
+        # Build form/workflow config if requested
+        form_config = None
+        workflow_config = None
+        if include_form:
+            form_config = self._create_form_config(intent, design, synthesized)
+            workflow_config = self._create_workflow_config(
+                intent, synthesized, block_types=block_types
+            )
+
+        result = GenerateResult(
+            blocks=blocks,
+            form_config=form_config,
+            workflow_config=workflow_config,
+        )
+
+        logger.info(
+            "Generate phase complete",
+            blocks_generated=len(blocks),
+            block_types=[b.type for b in blocks],
+        )
+
+        return result
+
+    def _ensure_contact_method(
+        self,
+        intent: PageIntent,
+        plan: BlockPlan,
+        existing_block_types: list[str] | None = None,
+    ) -> str | None:
+        """Ensure the page has a lead capture method.
+
+        Checks BOTH the planned blocks AND any existing blocks already on the
+        page. Only injects a form if the full page context has no form or chat.
+
+        Args:
+            intent: Analyzed page intent.
+            plan: Block plan to potentially modify (mutated in place).
+            existing_block_types: Block types already on the page (from frontend).
+
+        Returns:
+            Description of what was injected, or None if nothing needed.
+        """
+        planned_types = {pb.type for pb in plan.blocks}
+        existing_types = set(existing_block_types or [])
+        all_types = planned_types | existing_types
+
+        has_form = "form" in all_types
+        has_chat = "chat" in all_types
+
+        # If the page (existing + planned) already has a form or chat, skip
+        if has_form or has_chat:
+            return None
+
+        # Every page goal gets a form for lead capture
+        goal_messages = {
+            "lead-gen": "Added a contact form for lead capture",
+            "services": "Added a contact form for service inquiries",
+            "event": "Added a registration form for signups",
+            "product-launch": "Added a form for early access signups",
+            "portfolio": "Added a contact form for project inquiries",
+            "coming-soon": "Added a form for waitlist signups",
+            "comparison": "Added a contact form to help visitors decide",
+        }
+
+        plan.blocks.append(
+            PlannedBlock(
+                type="form",
+                width=4,
+                emphasis="high",
+                content_source="generated",
+            )
+        )
+        return goal_messages.get(
+            intent.goal.value, "Added a contact form for lead capture"
+        )
+
     def _get_profile(
         self, workspace_id: str, page_id: str | None = None
     ) -> BusinessProfile:
@@ -262,87 +516,80 @@ class SynthesisEngine:
     ) -> PageIntent:
         """Stage 1: Analyze what kind of page the user needs.
 
-        Uses AI to determine the page goal, audience intent, and urgency.
+        Uses local keyword matching to determine intent quickly (no AI call).
+        This saves ~5 seconds vs the previous AI-based approach.
         """
-        # Build context from profile
-        profile_context = ""
-        if profile.business_name:
-            profile_context += f"Business: {profile.business_name}\n"
-        if profile.industry:
-            profile_context += f"Industry: {profile.industry}\n"
-        if profile.business_type:
-            profile_context += f"Type: {profile.business_type}\n"
-        if profile.target_audience:
-            profile_context += f"Target Audience: {profile.target_audience}\n"
+        desc_lower = description.lower()
 
-        hint_context = ""
+        # Determine goal from hints first, then keywords
+        goal = PageGoal.LEAD_GEN  # default
+        audience_intent = "Contact us to learn more"
+        content_type = "business"
+        urgency = "medium"
+
         if intent_hints:
-            hint_context = f"\nUser hints: {', '.join(intent_hints)}"
-
-        prompt = f"""Analyze this page request and determine the intent.
-
-Business Context:
-{profile_context or "No business profile available."}
-
-User Description:
-{description}
-{hint_context}
-
-Return JSON with:
-{{
-  "goal": "lead-gen|portfolio|product-launch|services|coming-soon|event|comparison",
-  "audience_intent": "What the visitor should do (e.g., 'contact us for a quote')",
-  "content_type": "Type of business/content (e.g., 'b2b saas', 'personal brand')",
-  "urgency": "low|medium|high",
-  "keywords": ["key", "terms", "extracted"]
-}}
-
-Choose the goal that best matches:
-- lead-gen: Getting contact info, lead magnets, consultation booking
-- portfolio: Showcasing work, projects, case studies
-- product-launch: Launching a product with pricing
-- services: Service business offerings
-- coming-soon: Pre-launch teaser page
-- event: Event/webinar promotion
-- comparison: Product comparison or feature breakdown"""
-
-        system = "You are an expert at understanding marketing page requirements. Return only valid JSON."
-
-        try:
-            result = invoke_claude_json(prompt, system)
-
-            # Map goal string to enum
-            goal_str = result.get("goal", "lead-gen")
-            try:
-                goal = PageGoal(goal_str)
-            except ValueError:
-                goal = PageGoal.LEAD_GEN
-
-            return PageIntent(
-                goal=goal,
-                audience_intent=result.get("audience_intent", "Contact us to learn more"),
-                content_type=result.get("content_type", "business"),
-                urgency=result.get("urgency", "medium"),
-                keywords=result.get("keywords", []),
-            )
-
-        except Exception as e:
-            logger.warning("Intent analysis failed, using defaults", error=str(e))
-            # Fallback based on hints or default
-            if intent_hints and "portfolio" in intent_hints:
+            hint_str = " ".join(intent_hints).lower()
+            if "portfolio" in hint_str:
                 goal = PageGoal.PORTFOLIO
-            elif intent_hints and "product" in intent_hints:
+                audience_intent = "Browse our work and get inspired"
+            elif "product" in hint_str or "launch" in hint_str:
                 goal = PageGoal.PRODUCT_LAUNCH
-            else:
-                goal = PageGoal.LEAD_GEN
+                audience_intent = "Discover our product and sign up"
+                urgency = "high"
+            elif "service" in hint_str:
+                goal = PageGoal.SERVICES
+                audience_intent = "Learn about our services and get a quote"
+            elif "coming-soon" in hint_str or "coming soon" in hint_str:
+                goal = PageGoal.COMING_SOON
+                audience_intent = "Sign up for updates"
+            elif "event" in hint_str or "webinar" in hint_str:
+                goal = PageGoal.EVENT
+                audience_intent = "Register for the event"
+                urgency = "high"
+            elif "comparison" in hint_str or "compare" in hint_str:
+                goal = PageGoal.COMPARISON
+                audience_intent = "Compare options and choose"
+        else:
+            # Keyword detection from description
+            if any(kw in desc_lower for kw in ["portfolio", "showcase", "gallery", "my work", "projects"]):
+                goal = PageGoal.PORTFOLIO
+                audience_intent = "Browse our work and get inspired"
+            elif any(kw in desc_lower for kw in ["launch", "new product", "pre-order", "pricing"]):
+                goal = PageGoal.PRODUCT_LAUNCH
+                audience_intent = "Discover our product and sign up"
+                urgency = "high"
+            elif any(kw in desc_lower for kw in ["coming soon", "waitlist", "pre-launch"]):
+                goal = PageGoal.COMING_SOON
+                audience_intent = "Sign up for updates"
+            elif any(kw in desc_lower for kw in ["event", "webinar", "conference", "workshop", "register"]):
+                goal = PageGoal.EVENT
+                audience_intent = "Register for the event"
+                urgency = "high"
+            elif any(kw in desc_lower for kw in ["compare", "vs", "versus", "alternative"]):
+                goal = PageGoal.COMPARISON
+                audience_intent = "Compare options and choose"
+            elif any(kw in desc_lower for kw in ["service", "consulting", "agency", "hire"]):
+                goal = PageGoal.SERVICES
+                audience_intent = "Learn about our services and get a quote"
 
-            return PageIntent(
-                goal=goal,
-                audience_intent="Contact us to learn more",
-                content_type="business",
-                urgency="medium",
-                keywords=[],
-            )
+        # Infer content type from profile
+        if profile.business_type:
+            content_type = str(profile.business_type)
+        elif profile.industry:
+            content_type = str(profile.industry)
+
+        # Extract simple keywords from description
+        keywords = [w for w in desc_lower.split() if len(w) > 4][:5]
+
+        logger.info("Intent analyzed locally", goal=goal.value, urgency=urgency)
+
+        return PageIntent(
+            goal=goal,
+            audience_intent=audience_intent,
+            content_type=content_type,
+            urgency=urgency,
+            keywords=keywords,
+        )
 
     def _assess_content(
         self,
@@ -444,7 +691,13 @@ Choose the goal that best matches:
         Makes intelligent decisions about:
         - Which blocks to include based on intent and content quality
         - Block sequence for optimal conversion
-        - Block widths for side-by-side layouts
+        - Block widths for varied layouts (not just full-width)
+
+        Layout widths use 1-4 scale:
+        - width=4 → full width (12 columns)
+        - width=3 → 2/3 width (8 columns)
+        - width=2 → half width (6 columns)
+        - width=1 → 1/3 width (4 columns)
 
         Args:
             intent: Analyzed page intent.
@@ -465,7 +718,7 @@ Choose the goal that best matches:
                 intent, assessment, block_types, include_form, include_chat
             )
 
-        # Start with hero (always included)
+        # Start with hero (always full width)
         planned_blocks.append(
             PlannedBlock(
                 type="hero",
@@ -475,19 +728,53 @@ Choose the goal that best matches:
             )
         )
 
-        # Features block
+        # Features block - can be full or 2/3 width with supporting content
         if "features" in mapping["required"] or "features" in mapping["conditional"]:
+            # For services/portfolio, pair features with stats or image
+            features_width = 4  # Default full width
+            if goal in ["services", "portfolio"] and assessment.stats_score >= 5:
+                features_width = 3  # 2/3 width to pair with stats
+
             planned_blocks.append(
                 PlannedBlock(
                     type="features",
-                    width=4,
+                    width=features_width,
                     emphasis="high" if goal == "portfolio" else "medium",
                     content_source="profile" if assessment.features_score >= 5 else "generated",
                 )
             )
 
-        # Stats block - only if we have real stats
-        if assessment.stats_score >= 5 and "stats" not in mapping["excluded"]:
+            # Add a stats block next to features if we have stats and features is 2/3
+            if features_width == 3 and assessment.stats_score >= 5:
+                planned_blocks.append(
+                    PlannedBlock(
+                        type="stats",
+                        width=1,  # 1/3 width to pair with features
+                        emphasis="high" if assessment.stats_real else "low",
+                        content_source="profile" if assessment.stats_real else "generated",
+                        config_hints={"items": assessment.stats_items},
+                    )
+                )
+        else:
+            # Stats block as standalone - only if we have real stats
+            if assessment.stats_score >= 5 and "stats" not in mapping["excluded"]:
+                planned_blocks.append(
+                    PlannedBlock(
+                        type="stats",
+                        width=4,
+                        emphasis="high" if assessment.stats_real else "low",
+                        content_source="profile" if assessment.stats_real else "generated",
+                        config_hints={"items": assessment.stats_items},
+                    )
+                )
+            elif "stats" in mapping["conditional"]:
+                excluded["stats"] = "No real statistics available (score: {})".format(
+                    assessment.stats_score
+                )
+
+        # Stats block standalone if not already added
+        stats_already_added = any(pb.type == "stats" for pb in planned_blocks)
+        if not stats_already_added and assessment.stats_score >= 5 and "stats" not in mapping["excluded"]:
             planned_blocks.append(
                 PlannedBlock(
                     type="stats",
@@ -497,32 +784,77 @@ Choose the goal that best matches:
                     config_hints={"items": assessment.stats_items},
                 )
             )
-        elif "stats" in mapping["conditional"]:
-            excluded["stats"] = "No real statistics available (score: {})".format(
-                assessment.stats_score
-            )
 
-        # Testimonials - only if quality is sufficient
-        if assessment.testimonials_score >= 5 and "testimonials" not in mapping["excluded"]:
+        # Testimonials + Form side-by-side for lead-gen (half width each)
+        has_testimonials = assessment.testimonials_score >= 5 and "testimonials" not in mapping["excluded"]
+        wants_form = include_form and "form" not in mapping["excluded"]
+
+        if has_testimonials and wants_form and goal == "lead-gen":
+            # Side-by-side: testimonials (half) + form (half)
             planned_blocks.append(
                 PlannedBlock(
                     type="testimonials",
-                    width=4,
+                    width=2,  # Half width
                     emphasis="medium",
                     content_source="profile",
                 )
             )
-        elif "testimonials" in mapping["conditional"]:
-            excluded["testimonials"] = "No real testimonials in profile (score: {})".format(
-                assessment.testimonials_score
+            planned_blocks.append(
+                PlannedBlock(
+                    type="form",
+                    width=2,  # Half width
+                    emphasis="high",
+                    content_source="generated",
+                )
             )
+        else:
+            # Add testimonials full width if available
+            if has_testimonials:
+                planned_blocks.append(
+                    PlannedBlock(
+                        type="testimonials",
+                        width=4,
+                        emphasis="medium",
+                        content_source="profile",
+                    )
+                )
+            elif "testimonials" in mapping["conditional"]:
+                excluded["testimonials"] = "No real testimonials in profile (score: {})".format(
+                    assessment.testimonials_score
+                )
 
-        # FAQ block
+            # Add form separately (consider 2/3 width with CTA)
+            if wants_form:
+                # For non-lead-gen, form can be 2/3 with CTA 1/3
+                form_width = 3 if goal in ["services", "event"] else 4
+                planned_blocks.append(
+                    PlannedBlock(
+                        type="form",
+                        width=form_width,
+                        emphasis="high",
+                        content_source="generated",
+                    )
+                )
+
+                # Add inline CTA next to form if form is 2/3
+                if form_width == 3 and "cta" not in mapping["excluded"]:
+                    planned_blocks.append(
+                        PlannedBlock(
+                            type="cta",
+                            width=1,  # 1/3 width next to form
+                            emphasis="medium",
+                            content_source="generated",
+                        )
+                    )
+
+        # FAQ block - can be half width paired with another block
         if assessment.faq_score >= 3 and "faq" not in mapping["excluded"]:
+            # FAQ is often better at half width for readability
+            faq_width = 2 if goal in ["services", "product-launch"] else 4
             planned_blocks.append(
                 PlannedBlock(
                     type="faq",
-                    width=4,
+                    width=faq_width,
                     emphasis="low",
                     content_source="profile" if assessment.faq_count > 0 else "generated",
                 )
@@ -549,50 +881,24 @@ Choose the goal that best matches:
                 )
             )
 
-        # Form block - side by side with CTA for lead-gen
-        if include_form and "form" not in mapping["excluded"]:
-            # Determine layout strategy
-            if goal == "lead-gen" and assessment.testimonials_score >= 5:
-                # Side-by-side testimonial + form
-                # Find testimonials and update width
-                for pb in planned_blocks:
-                    if pb.type == "testimonials":
-                        pb.width = 2
-                planned_blocks.append(
-                    PlannedBlock(
-                        type="form",
-                        width=2,
-                        emphasis="high",
-                        content_source="generated",
-                    )
-                )
-            else:
-                planned_blocks.append(
-                    PlannedBlock(
-                        type="form",
-                        width=4,
-                        emphasis="high",
-                        content_source="generated",
-                    )
-                )
-
-        # Chat block
+        # Chat block - typically 1/3 width at bottom
         if include_chat and "chat" not in mapping.get("excluded", []):
             planned_blocks.append(
                 PlannedBlock(
                     type="chat",
-                    width=4,
+                    width=1,  # 1/3 width for chat widget
                     emphasis="low",
                     content_source="generated",
                 )
             )
 
-        # CTA block (usually at the end)
-        if "cta" not in mapping["excluded"]:
+        # Final CTA block if not already added inline
+        cta_already_added = any(pb.type == "cta" for pb in planned_blocks)
+        if not cta_already_added and "cta" not in mapping["excluded"]:
             planned_blocks.append(
                 PlannedBlock(
                     type="cta",
-                    width=4,
+                    width=4,  # Full width final CTA
                     emphasis="medium",
                     content_source="generated",
                 )
@@ -603,14 +909,23 @@ Choose the goal that best matches:
             if block_type not in excluded:
                 excluded[block_type] = f"Not relevant for {goal} pages"
 
-        # Determine layout strategy
+        # Determine layout strategy based on block widths
         has_side_by_side = any(pb.width < 4 for pb in planned_blocks)
-        layout_strategy = "side-by-side-cta" if has_side_by_side else "full-width"
+        has_mixed = len(set(pb.width for pb in planned_blocks)) > 1
+
+        if has_mixed:
+            layout_strategy = "mixed"
+        elif has_side_by_side:
+            layout_strategy = "side-by-side-cta"
+        else:
+            layout_strategy = "full-width"
 
         # Build rationale
         rationale_parts = [
             f"Optimized for {goal} goal.",
         ]
+        if has_mixed:
+            rationale_parts.append("Using mixed-width layout for visual interest.")
         if assessment.strengths:
             rationale_parts.append(f"Leveraging: {', '.join(assessment.strengths[:2])}.")
         if excluded:
@@ -634,7 +949,14 @@ Choose the goal that best matches:
         """Plan blocks when specific block types are requested.
 
         This creates a plan with only the requested block types, in a logical
-        order based on typical landing page structure.
+        order based on typical landing page structure. Uses intelligent layout
+        widths based on block combinations.
+
+        Layout widths use 1-4 scale:
+        - width=4 → full width (12 columns)
+        - width=3 → 2/3 width (8 columns)
+        - width=2 → half width (6 columns)
+        - width=1 → 1/3 width (4 columns)
 
         Args:
             intent: Analyzed page intent.
@@ -672,6 +994,9 @@ Choose the goal that best matches:
             key=lambda t: block_order.index(t) if t in block_order else len(block_order),
         )
 
+        # Determine intelligent layout widths based on block combinations
+        block_widths = self._calculate_block_widths(sorted_types, intent)
+
         planned_blocks: list[PlannedBlock] = []
 
         for block_type in sorted_types:
@@ -693,27 +1018,13 @@ Choose the goal that best matches:
 
             # Determine emphasis
             emphasis = "medium"
-            if block_type in ["hero", "cta"]:
+            if block_type in ["hero", "cta", "form"]:
                 emphasis = "high"
             elif block_type in ["divider", "chat"]:
                 emphasis = "low"
 
-            # Default to full width
-            width = 4
-
-            # Special case: form and testimonials side-by-side for lead-gen
-            if (
-                block_type == "form"
-                and "testimonials" in sorted_types
-                and intent.goal.value == "lead-gen"
-            ):
-                width = 2
-            if (
-                block_type == "testimonials"
-                and "form" in sorted_types
-                and intent.goal.value == "lead-gen"
-            ):
-                width = 2
+            # Get width from calculated widths
+            width = block_widths.get(block_type, 4)
 
             planned_blocks.append(
                 PlannedBlock(
@@ -734,11 +1045,12 @@ Choose the goal that best matches:
         }
 
         has_side_by_side = any(pb.width < 4 for pb in planned_blocks)
-        layout_strategy = "side-by-side-cta" if has_side_by_side else "full-width"
+        has_mixed = len(set(pb.width for pb in planned_blocks)) > 1
+        layout_strategy = "mixed" if has_mixed else ("side-by-side-cta" if has_side_by_side else "full-width")
 
         rationale = (
             f"User-specified blocks: {', '.join(sorted_types)}. "
-            f"Ordered for optimal landing page flow."
+            f"Using {layout_strategy} layout for optimal visual flow."
         )
 
         return BlockPlan(
@@ -747,6 +1059,93 @@ Choose the goal that best matches:
             layout_strategy=layout_strategy,
             excluded=excluded,
         )
+
+    def _calculate_block_widths(
+        self,
+        block_types: list[str],
+        intent: PageIntent,
+    ) -> dict[str, int]:
+        """Calculate intelligent widths for blocks based on pairings.
+
+        Applies ALL matching pairings (not just one random one) so that
+        pages with many blocks get proper layout variety.
+
+        Width scale: 4=full, 3=2/3, 2=half, 1=1/3.
+        """
+        widths: dict[str, int] = {}
+        types_set = set(block_types)
+        goal = intent.goal.value
+        assigned = set()  # Track blocks already assigned a non-default width
+
+        # Phase 1: Always-fixed widths
+        for bt in block_types:
+            if bt in ["hero", "pricing", "gallery", "slider", "divider"]:
+                widths[bt] = 4
+                assigned.add(bt)
+
+        # Phase 2: Apply ALL matching pairings greedily
+        # Each pairing is (blockA, blockB, widthA, widthB, condition)
+        pairings = [
+            # Form + Chat → form prominent, chat sidebar
+            ("form", "chat", 3, 1, True),
+            # Testimonials + Form → side-by-side for lead-gen
+            ("testimonials", "form", 2, 2, goal == "lead-gen"),
+            # Features + Stats → features prominent, stats sidebar
+            ("features", "stats", 3, 1, True),
+            # FAQ + CTA → side-by-side
+            ("faq", "cta", 3, 1, True),
+            # FAQ + Form → side-by-side
+            ("faq", "form", 2, 2, True),
+            # Image + Text → side-by-side
+            ("image", "text", 2, 2, True),
+            # Testimonials + CTA → side-by-side
+            ("testimonials", "cta", 3, 1, True),
+            # Video + Text → video larger
+            ("video", "text", 3, 1, True),
+            # Features + CTA → features larger
+            ("features", "cta", 3, 1, True),
+        ]
+
+        for block_a, block_b, width_a, width_b, condition in pairings:
+            if (
+                condition
+                and block_a in types_set
+                and block_b in types_set
+                and block_a not in assigned
+                and block_b not in assigned
+            ):
+                widths[block_a] = width_a
+                widths[block_b] = width_b
+                assigned.add(block_a)
+                assigned.add(block_b)
+
+        # Phase 3: Chat defaults to 1/3 if not already paired
+        if "chat" in types_set and "chat" not in assigned:
+            widths["chat"] = 1
+            assigned.add("chat")
+            # Find an unassigned neighbor to pair with chat
+            for candidate in ["cta", "stats", "form", "testimonials"]:
+                if candidate in types_set and candidate not in assigned:
+                    widths[candidate] = 3
+                    assigned.add(candidate)
+                    break
+
+        # Phase 4: Auto-pair remaining unassigned content blocks
+        # If there are unpaired blocks, put them side-by-side for layout variety
+        remaining = [bt for bt in block_types if bt not in assigned]
+        while len(remaining) >= 2:
+            a, b = remaining.pop(0), remaining.pop(0)
+            widths[a] = 2
+            widths[b] = 2
+            assigned.add(a)
+            assigned.add(b)
+
+        # Phase 5: Default any remaining single block to full width
+        for bt in block_types:
+            if bt not in widths:
+                widths[bt] = 4
+
+        return widths
 
     def _generate_design_system(
         self,
@@ -804,124 +1203,468 @@ Choose the goal that best matches:
         plan: BlockPlan,
         design: DesignSystem,
     ) -> SynthesizedContent:
-        """Stage 5: Generate all block content in a single AI call.
+        """Stage 5: Generate block content using chunked AI calls.
 
-        Creates cohesive content with consistent tone and narrative.
+        Uses an agentic approach - first establishes brand context, then
+        generates each block type in focused batches to prevent content
+        truncation and ensure complete data.
         """
         # Build profile context
         profile_context = profile.get_ai_context() if profile.business_name else ""
 
-        # Build block list for AI
-        block_types = [pb.type for pb in plan.blocks]
+        # Step 1: Generate brand foundation (small, focused call)
+        brand = self._synthesize_brand_foundation(
+            profile, description, intent, design
+        )
 
-        prompt = f"""Generate cohesive landing page content for all these blocks: {', '.join(block_types)}
+        # Step 2: Generate blocks in focused batches
+        block_types = [pb.type for pb in plan.blocks]
+        all_blocks: list[SynthesizedBlockContent] = []
+
+        # Group blocks into larger batches (max 4-5 per call) to reduce AI calls
+        batches = self._create_block_batches(block_types)
+
+        for batch in batches:
+            batch_blocks = self._synthesize_block_batch(
+                batch, brand, profile_context, description, intent, design
+            )
+            all_blocks.extend(batch_blocks)
+
+        # Extract SEO from brand foundation (merged to save an AI call)
+        business_name = brand.get("business_name", profile.business_name or "Business")
+        key_benefit = brand.get("key_benefit", "")
+        tagline = brand.get("tagline", profile.tagline or "")
+        seo = SynthesizedSeo(
+            meta_title=brand.get("meta_title", f"{business_name} - {key_benefit}")[:70],
+            meta_description=brand.get("meta_description", tagline)[:160],
+        )
+
+        return SynthesizedContent(
+            blocks=all_blocks,
+            business_name=business_name,
+            tagline=tagline,
+            tone=brand.get("tone", "professional"),
+            narrative_theme=brand.get("narrative_theme", ""),
+            seo=seo,
+        )
+
+    def _synthesize_brand_foundation(
+        self,
+        profile: BusinessProfile,
+        description: str,
+        intent: PageIntent,
+        design: DesignSystem,
+    ) -> dict[str, Any]:
+        """Generate brand foundation - business name, tagline, tone, theme.
+
+        This is a small, focused AI call that establishes the creative direction
+        for all subsequent block generation.
+        """
+        profile_context = profile.get_ai_context() if profile.business_name else ""
+
+        prompt = f"""Extract/generate brand foundation and SEO metadata for a landing page.
 
 BUSINESS CONTEXT:
-{profile_context or "No profile - use description below."}
+{profile_context or "No profile available."}
 
 USER DESCRIPTION:
 {description}
 
-PAGE INTENT:
-- Goal: {intent.goal.value}
-- Audience intent: {intent.audience_intent}
-- Content type: {intent.content_type}
-- Style: {design.style}
-
-IMPORTANT RULES:
-1. ALL content must be consistent in tone and messaging
-2. NO placeholder names like "Sarah M." or "James T." - use realistic full names or job titles
-3. NO fake stats like "100%", "24/7", "5+" unless from the profile
-4. Headlines must be SHORT and PUNCHY (3-6 words)
-5. Features focus on BENEFITS not features
-6. Include a unifying narrative theme across all blocks
+PAGE GOAL: {intent.goal.value}
+STYLE: {design.style}
 
 Return JSON:
 {{
-  "business_name": "Extracted or inferred business name",
-  "tagline": "Short memorable tagline (5-10 words)",
+  "business_name": "The business name (extract from context or infer)",
+  "tagline": "Memorable 5-10 word tagline",
   "tone": "professional|friendly|bold|playful",
-  "narrative_theme": "The unifying story/theme",
-  "seo": {{
-    "meta_title": "SEO title (40-60 chars, include business name and key benefit)",
-    "meta_description": "Compelling SEO description (120-155 chars, include CTA and value prop)"
-  }},
-  "blocks": [
-    {{
-      "block_type": "hero",
-      "content": {{
-        "headline": "Short Punchy Headline",
-        "subheadline": "Compelling value prop (15-25 words)",
-        "buttonText": "CTA Text",
-        "buttonLink": "#contact"
-      }}
-    }},
-    {{
-      "block_type": "features",
-      "content": {{
-        "title": "Section title",
-        "subtitle": "Section subtitle",
-        "items": [
-          {{"icon": "🚀", "title": "Benefit Title", "description": "Benefit description"}}
+  "narrative_theme": "The unifying story/message (1 sentence)",
+  "key_benefit": "The #1 benefit for visitors",
+  "target_action": "What visitors should do (e.g., 'schedule a call')",
+  "meta_title": "40-60 chars SEO title, format: [Business] - [Benefit]",
+  "meta_description": "120-155 chars, action-oriented, include value prop and CTA"
+}}"""
+
+        system = "Extract brand information and generate SEO metadata. Return only valid JSON."
+
+        try:
+            result = invoke_claude_json(prompt, system, workspace_id=None, model=FAST_MODEL)
+            logger.info("Brand foundation generated", business_name=result.get("business_name"))
+            return result
+        except Exception as e:
+            logger.warning("Brand foundation failed, using defaults", error=str(e))
+            return {
+                "business_name": profile.business_name or "Business",
+                "tagline": profile.tagline or "",
+                "tone": "professional",
+                "narrative_theme": "",
+                "key_benefit": "quality service",
+                "target_action": "contact us",
+            }
+
+    def _create_block_batches(self, block_types: list[str]) -> list[list[str]]:
+        """Group blocks into batches for generation.
+
+        Max 3 blocks per batch to stay within the 29-second API Gateway
+        limit. Groups related blocks together for coherent generation.
+        """
+        if not block_types:
+            return []
+
+        MAX_BATCH_SIZE = 3
+
+        # Ordered by generation priority — hero first, then conversion, then content
+        priority_order = [
+            "hero", "cta", "form", "chat",
+            "features", "testimonials", "stats",
+            "faq", "pricing",
+            "image", "video", "text", "divider",
         ]
-      }}
-    }},
-    // ... generate content for each block type in the list
+
+        # Sort requested blocks by priority, keeping unknowns at the end
+        ordered = sorted(
+            block_types,
+            key=lambda bt: priority_order.index(bt) if bt in priority_order else 99,
+        )
+
+        # Split into batches of MAX_BATCH_SIZE
+        batches = []
+        for i in range(0, len(ordered), MAX_BATCH_SIZE):
+            batches.append(ordered[i:i + MAX_BATCH_SIZE])
+
+        return batches
+
+    def _synthesize_block_batch(
+        self,
+        block_types: list[str],
+        brand: dict[str, Any],
+        profile_context: str,
+        description: str,
+        intent: PageIntent,
+        design: DesignSystem,
+    ) -> list[SynthesizedBlockContent]:
+        """Generate content for a small batch of blocks.
+
+        Focused AI call with explicit schemas for each block type.
+        Guarantees all requested blocks are returned with usable content.
+        """
+        # Build block-specific schemas
+        schemas = self._get_block_schemas(block_types)
+
+        prompt = f"""Generate landing page content for these blocks: {', '.join(block_types)}
+
+IMPORTANT: You MUST generate content for ALL {len(block_types)} blocks listed above.
+Return exactly {len(block_types)} block objects in your response.
+
+BRAND CONTEXT:
+- Business: {brand.get('business_name', 'Business')}
+- Tagline: {brand.get('tagline', '')}
+- Tone: {brand.get('tone', 'professional')}
+- Theme: {brand.get('narrative_theme', '')}
+- Key Benefit: {brand.get('key_benefit', '')}
+- Target Action: {brand.get('target_action', 'contact us')}
+
+BUSINESS DETAILS:
+{profile_context or description}
+
+RULES:
+- Match the {brand.get('tone', 'professional')} tone consistently
+- NO placeholder names - use realistic names or just titles
+- NO fake statistics - only use real numbers if provided
+- Headlines: SHORT (3-6 words), punchy
+- Focus on BENEFITS, not features
+
+Generate COMPLETE content for each block:
+
+{schemas}
+
+Return JSON:
+{{
+  "blocks": [
+    // One object per block type — you MUST include ALL {len(block_types)} blocks
   ]
-}}
+}}"""
 
-SEO GUIDELINES:
-- meta_title: 40-60 characters, format "[Business Name] - [Key Benefit]" or "[Key Benefit] | [Business Name]"
-- meta_description: 120-155 characters, action-oriented, include what the visitor will get
-
-Generate content for: {', '.join(block_types)}"""
-
-        system = """You are an expert copywriter creating high-converting landing page content.
-Your content must be:
-- Cohesive and consistent in tone
-- Benefit-focused, not feature-focused
-- Free of placeholder content
-- Tailored to the specific business and audience
-
+        system = f"""Generate complete, high-quality content for {len(block_types)} landing page blocks.
+Each block must have ALL required fields populated with real, usable content.
+You MUST return exactly {len(block_types)} blocks. Never skip any.
 Return only valid JSON."""
 
         try:
             result = invoke_claude_json(prompt, system, workspace_id=None)
 
-            # Parse blocks
             blocks = []
             for block_data in result.get("blocks", []):
-                blocks.append(
-                    SynthesizedBlockContent(
-                        block_type=block_data.get("block_type", ""),
-                        content=block_data.get("content", {}),
+                block_type = block_data.get("block_type", "")
+                content = block_data.get("content", {})
+
+                if block_type and content:
+                    blocks.append(
+                        SynthesizedBlockContent(
+                            block_type=block_type,
+                            content=content,
+                        )
                     )
-                )
+                    logger.debug(f"Generated {block_type} block", keys=list(content.keys()))
 
-            # Parse SEO metadata
-            seo_data = result.get("seo", {})
-            seo = SynthesizedSeo(
-                meta_title=seo_data.get("meta_title", ""),
-                meta_description=seo_data.get("meta_description", ""),
-            )
+            # Fill in any missing blocks with sensible defaults
+            generated_types = {b.block_type for b in blocks}
+            missing = set(block_types) - generated_types
+            if missing:
+                logger.warning("Some blocks not generated, using defaults", missing=list(missing))
+                for missing_type in missing:
+                    default = self._get_default_block_content(missing_type, brand)
+                    blocks.append(
+                        SynthesizedBlockContent(
+                            block_type=missing_type,
+                            content=default,
+                        )
+                    )
 
-            return SynthesizedContent(
-                blocks=blocks,
-                business_name=result.get("business_name", ""),
-                tagline=result.get("tagline", ""),
-                tone=result.get("tone", "professional"),
-                narrative_theme=result.get("narrative_theme", ""),
-                seo=seo,
-            )
+            return blocks
 
         except Exception as e:
-            logger.error("Content synthesis failed", error=str(e))
-            # Return minimal content
-            return SynthesizedContent(
-                business_name=profile.business_name or "Business",
-                tagline=profile.tagline or "",
-                tone="professional",
-            )
+            logger.error("Block batch synthesis failed", blocks=block_types, error=str(e))
+            # Return defaults for all blocks instead of empty list
+            return [
+                SynthesizedBlockContent(
+                    block_type=bt,
+                    content=self._get_default_block_content(bt, brand),
+                )
+                for bt in block_types
+            ]
+
+    def _get_default_block_content(
+        self, block_type: str, brand: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Return sensible default content for a block type."""
+        business = brand.get("business_name", "Business")
+        tagline = brand.get("tagline", "")
+        action = brand.get("target_action", "Get Started")
+
+        defaults: dict[str, dict[str, Any]] = {
+            "hero": {
+                "headline": business,
+                "subheadline": tagline or f"Welcome to {business}",
+                "buttonText": action,
+            },
+            "features": {
+                "title": "Why Choose Us",
+                "items": [
+                    {"title": "Quality Service", "description": "Dedicated to delivering excellence.", "icon": "⭐"},
+                    {"title": "Expert Team", "description": "Experienced professionals at your service.", "icon": "👥"},
+                    {"title": "Fast Results", "description": "Efficient solutions tailored to your needs.", "icon": "⚡"},
+                ],
+            },
+            "testimonials": {
+                "title": "What People Say",
+                "items": [
+                    {"quote": f"Working with {business} was a great experience.", "author": "Sarah M.", "company": "Satisfied Customer"},
+                    {"quote": "Highly recommended for anyone looking for quality.", "author": "James T.", "company": "Happy Client"},
+                ],
+            },
+            "cta": {
+                "headline": "Ready to Get Started?",
+                "description": f"Join the many who trust {business}.",
+                "buttonText": action,
+            },
+            "form": {
+                "title": "Get in Touch",
+                "description": "Fill out the form and we'll be in touch shortly.",
+                "formId": "",
+            },
+            "chat": {
+                "title": "Questions?",
+                "subtitle": "Chat with us for instant answers",
+                "placeholder": "Type your question...",
+            },
+            "faq": {
+                "title": "Frequently Asked Questions",
+                "items": [
+                    {"question": "How do I get started?", "answer": f"Simply reach out to us and we'll guide you through the process."},
+                    {"question": "What makes you different?", "answer": f"{business} focuses on delivering personalized solutions."},
+                ],
+            },
+            "stats": {
+                "title": "",
+                "items": [
+                    {"value": "100%", "label": "Satisfaction"},
+                    {"value": "24/7", "label": "Support"},
+                    {"value": "5+", "label": "Years Experience"},
+                ],
+            },
+            "pricing": {
+                "title": "Pricing",
+                "subtitle": "Choose the plan that works for you",
+                "tiers": [],
+            },
+        }
+
+        return defaults.get(block_type, {"title": block_type.replace("-", " ").title()})
+
+    def _get_block_schemas(self, block_types: list[str]) -> str:
+        """Get explicit JSON schemas for block types to guide AI generation."""
+        schemas = []
+
+        schema_templates = {
+            "hero": '''HERO block:
+{
+  "block_type": "hero",
+  "content": {
+    "headline": "3-6 word punchy headline",
+    "subheadline": "15-25 word value proposition",
+    "buttonText": "CTA button text",
+    "buttonLink": "#contact"
+  }
+}''',
+            "features": '''FEATURES block:
+{
+  "block_type": "features",
+  "content": {
+    "title": "Section title",
+    "subtitle": "Section subtitle",
+    "items": [
+      {"icon": "🎯", "title": "Benefit 1", "description": "2-3 sentence description"},
+      {"icon": "⚡", "title": "Benefit 2", "description": "2-3 sentence description"},
+      {"icon": "🛡️", "title": "Benefit 3", "description": "2-3 sentence description"}
+    ]
+  }
+}''',
+            "testimonials": '''TESTIMONIALS block (generate exactly 2-3 items, no more):
+{
+  "block_type": "testimonials",
+  "content": {
+    "title": "What Our Clients Say",
+    "items": [
+      {"quote": "Detailed testimonial quote (2-3 sentences)", "author": "Full Name", "role": "Job Title", "company": "Company Name"},
+      {"quote": "Another testimonial", "author": "Full Name", "role": "Job Title", "company": "Company Name"}
+    ]
+  }
+}''',
+            "cta": '''CTA block:
+{
+  "block_type": "cta",
+  "content": {
+    "headline": "Compelling call to action headline",
+    "description": "1-2 sentence supporting text",
+    "buttonText": "Action button text",
+    "buttonLink": "#contact"
+  }
+}''',
+            "faq": '''FAQ block:
+{
+  "block_type": "faq",
+  "content": {
+    "title": "Frequently Asked Questions",
+    "items": [
+      {"question": "Common question?", "answer": "Detailed helpful answer (2-3 sentences)"},
+      {"question": "Another question?", "answer": "Another helpful answer"},
+      {"question": "Third question?", "answer": "Third answer"}
+    ]
+  }
+}''',
+            "stats": '''STATS block:
+{
+  "block_type": "stats",
+  "content": {
+    "title": "Our Impact",
+    "items": [
+      {"value": "500+", "label": "Happy Clients"},
+      {"value": "10+", "label": "Years Experience"},
+      {"value": "98%", "label": "Satisfaction Rate"}
+    ]
+  }
+}''',
+            "pricing": '''PRICING block:
+{
+  "block_type": "pricing",
+  "content": {
+    "title": "Pricing Plans",
+    "subtitle": "Choose the right plan for you",
+    "items": [
+      {"name": "Starter", "price": "$49/mo", "description": "For individuals", "features": ["Feature 1", "Feature 2"], "highlighted": false},
+      {"name": "Professional", "price": "$99/mo", "description": "For teams", "features": ["All Starter features", "Feature 3"], "highlighted": true}
+    ]
+  }
+}''',
+            "form": '''FORM block:
+{
+  "block_type": "form",
+  "content": {
+    "title": "Get in Touch",
+    "description": "Fill out the form and we'll respond within 24 hours."
+  }
+}''',
+            "chat": '''CHAT block:
+{
+  "block_type": "chat",
+  "content": {
+    "title": "Questions?",
+    "subtitle": "Chat with us for instant answers",
+    "placeholder": "Type your question..."
+  }
+}''',
+            "text": '''TEXT block:
+{
+  "block_type": "text",
+  "content": {
+    "content": "Rich text content with paragraphs...",
+    "alignment": "left"
+  }
+}''',
+            "image": '''IMAGE block:
+{
+  "block_type": "image",
+  "content": {
+    "alt": "Descriptive alt text",
+    "caption": "Optional image caption"
+  }
+}''',
+            "video": '''VIDEO block:
+{
+  "block_type": "video",
+  "content": {
+    "title": "Watch Our Story",
+    "url": ""
+  }
+}''',
+            "divider": '''DIVIDER block:
+{
+  "block_type": "divider",
+  "content": {
+    "style": "line"
+  }
+}''',
+            "gallery": '''GALLERY block:
+{
+  "block_type": "gallery",
+  "content": {
+    "title": "Our Work",
+    "images": []
+  }
+}''',
+            "slider": '''SLIDER block:
+{
+  "block_type": "slider",
+  "content": {
+    "slides": []
+  }
+}''',
+            "logo-cloud": '''LOGO-CLOUD block:
+{
+  "block_type": "logo-cloud",
+  "content": {
+    "title": "Trusted By",
+    "logos": []
+  }
+}''',
+        }
+
+        for bt in block_types:
+            if bt in schema_templates:
+                schemas.append(schema_templates[bt])
+
+        return "\n\n".join(schemas)
 
     def _configure_blocks(
         self,
@@ -932,6 +1675,7 @@ Return only valid JSON."""
         """Stage 6: Build validated PageBlock list.
 
         Combines synthesized content with design system and plan.
+        Uses the 12-column grid layout for proper responsive design.
         """
         blocks: list[PageBlock] = []
 
@@ -940,7 +1684,24 @@ Return only valid JSON."""
             bc.block_type: bc.content for bc in synthesized.blocks
         }
 
+        # Convert planned widths (1-4 scale) to 12-column grid
+        # and arrange blocks into rows
+        current_row = 0
+        current_col = 0  # Current column position within row
+        row_blocks: list[tuple[int, PlannedBlock]] = []  # (order, planned) pairs in current row
+
         for order, planned in enumerate(plan.blocks):
+            # Convert width (1-4) to colSpan (12-column grid)
+            # width=4 -> full width (12), width=2 -> half (6), width=1 -> third (4)
+            width_to_colspan = {1: 4, 2: 6, 3: 8, 4: 12}
+            col_span = width_to_colspan.get(planned.width, 12)
+
+            # Check if this block fits in the current row
+            if current_col + col_span > 12:
+                # Start a new row
+                current_row += 1
+                current_col = 0
+
             block_id = str(uuid4())[:8]
             content = content_lookup.get(planned.type, {})
 
@@ -954,10 +1715,17 @@ Return only valid JSON."""
                     id=block_id,
                     type=planned.type,
                     order=order,
-                    width=planned.width,
+                    width=planned.width,  # Keep legacy width for backwards compatibility
                     config=config,
+                    # 12-column grid layout
+                    row=current_row,
+                    colSpan=col_span,
+                    colStart=current_col,
                 )
             )
+
+            # Move to next column position
+            current_col += col_span
 
         return blocks
 
@@ -1006,6 +1774,11 @@ Return only valid JSON."""
 
         elif block_type == "features":
             config.setdefault("columns", min(len(config.get("items", [])), 3) or 3)
+
+        elif block_type == "testimonials":
+            # Cap at 3 testimonial items to avoid excessive avatar generation
+            if "items" in config and len(config["items"]) > 3:
+                config["items"] = config["items"][:3]
 
         elif block_type == "stats":
             # Use real stats from assessment if available
@@ -1106,11 +1879,62 @@ Return only valid JSON."""
         self,
         intent: PageIntent,
         synthesized: SynthesizedContent,
+        block_types: list[str] | None = None,
     ) -> WorkflowConfig:
-        """Create workflow configuration."""
+        """Create workflow configuration based on page intent and blocks.
+
+        Builds an intelligent automation workflow that:
+        1. Uses the right trigger (form submission or chat message)
+        2. Tags contacts for segmentation
+        3. Sends contextual welcome emails
+        4. Notifies the page owner of new leads
+        5. Adds AI auto-respond for chat-triggered workflows
+
+        Args:
+            intent: Analyzed page intent.
+            synthesized: Synthesized content for context.
+            block_types: List of block types on the page (for trigger selection).
+        """
+        business_name = synthesized.business_name or "Your Business"
+        blocks = set(block_types or [])
+
+        # Determine trigger type based on available blocks
+        has_form = "form" in blocks
+        has_chat = "chat" in blocks
+
+        if has_form:
+            trigger_type = "trigger_form_submitted"
+        elif has_chat:
+            trigger_type = "trigger_chat_message"
+        else:
+            trigger_type = "trigger_form_submitted"  # Default — form will be injected
+
+        # Enable AI auto-respond for chat-triggered workflows
+        include_ai_respond = trigger_type == "trigger_chat_message"
+
+        # Generate a contextual welcome message based on intent
+        welcome_messages = {
+            "lead-gen": f"Thanks for reaching out to {business_name}! We've received your message and will get back to you shortly.",
+            "services": f"Thank you for your interest in {business_name}'s services! Our team will contact you within 24 hours.",
+            "event": f"You're registered! We'll send you event details and reminders for {business_name}'s upcoming event.",
+            "product-launch": f"Thanks for your interest in {business_name}! We'll notify you when we launch.",
+            "portfolio": f"Thanks for reaching out to {business_name}! We look forward to discussing your project.",
+            "coming-soon": f"You're on the list! We'll notify you when {business_name} launches.",
+            "comparison": f"Thanks for your interest! We'll help you find the right solution from {business_name}.",
+        }
+
+        welcome_message = welcome_messages.get(
+            intent.goal.value,
+            f"Thanks for contacting {business_name}! We'll be in touch soon."
+        )
+
         return WorkflowConfig(
-            name=f"Lead Automation - {synthesized.business_name}",
+            name=f"Lead Automation - {business_name}",
+            trigger_type=trigger_type,
             send_welcome_email=True,
             notify_owner=True,
-            add_tags=["lead", intent.goal.value],
+            owner_email="{{owner.email}}",  # Resolved at workflow runtime from workspace notification_email
+            welcome_message=welcome_message,
+            add_tags=["lead", "website", intent.goal.value],
+            include_ai_respond=include_ai_respond,
         )

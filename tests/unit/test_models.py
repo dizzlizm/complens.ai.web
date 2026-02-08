@@ -122,9 +122,9 @@ class TestContact:
         )
         assert request.email == "test@example.com"
 
-        # Invalid phone
+        # Invalid phone — exceeds max_length of 30
         with pytest.raises(Exception):
-            CreateContactRequest(phone="invalid")
+            CreateContactRequest(phone="1" * 31)
 
 
 class TestWorkflow:

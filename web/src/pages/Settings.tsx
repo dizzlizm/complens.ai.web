@@ -1,11 +1,17 @@
-import { useState, useEffect } from 'react';
-import { Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle, ExternalLink } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import {
+  Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle,
+  ExternalLink, Search, Mail, Key, Smartphone, Monitor, LogOut, Plus, ChevronRight,
+  MessageSquare, Database, BarChart3, Calendar, ShoppingCart, FileText, Megaphone
+} from 'lucide-react';
 import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe } from '../lib/hooks';
 import { useBillingStatus, useCreateCheckout, useCreatePortal } from '../lib/hooks/useBilling';
 import TwilioConfigCard from '../components/settings/TwilioConfigCard';
 import SegmentConfigCard from '../components/settings/SegmentConfigCard';
 import TeamManagement from '../components/settings/TeamManagement';
 import PricingTable from '../components/settings/PricingTable';
+import { TimezoneSelect } from '../components/ui';
+
 const settingsSections = [
   {
     id: 'workspace',
@@ -20,10 +26,10 @@ const settingsSections = [
     description: 'Invite team members and manage roles',
   },
   {
-    id: 'notifications',
-    name: 'Notifications',
-    icon: Bell,
-    description: 'Configure how you receive notifications',
+    id: 'billing',
+    name: 'Billing',
+    icon: CreditCard,
+    description: 'Manage subscription and payment methods',
   },
   {
     id: 'integrations',
@@ -32,22 +38,22 @@ const settingsSections = [
     description: 'Connect third-party services and APIs',
   },
   {
-    id: 'billing',
-    name: 'Billing',
-    icon: CreditCard,
-    description: 'Manage subscription and payment methods',
+    id: 'notifications',
+    name: 'Notifications',
+    icon: Bell,
+    description: 'Configure how you receive notifications',
   },
   {
     id: 'security',
     name: 'Security',
     icon: Shield,
-    description: 'Configure security settings and access',
+    description: 'Authentication, SSO, and access control',
   },
   {
-    id: 'domains',
-    name: 'Domains',
-    icon: Globe,
-    description: 'Manage custom domains and email settings',
+    id: 'email',
+    name: 'Email & Domains',
+    icon: Mail,
+    description: 'Email sending and domain verification',
   },
 ];
 
@@ -87,14 +93,14 @@ export default function Settings() {
         </nav>
 
         {/* Settings content */}
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           {activeSection === 'workspace' && <WorkspaceSettings />}
           {activeSection === 'team' && <TeamSettings />}
           {activeSection === 'notifications' && <NotificationSettings />}
           {activeSection === 'integrations' && <IntegrationSettings />}
           {activeSection === 'billing' && <BillingSettings />}
           {activeSection === 'security' && <SecuritySettings />}
-          {activeSection === 'domains' && <DomainSettings />}
+          {activeSection === 'email' && <EmailDomainSettings />}
         </div>
       </div>
     </div>
@@ -106,14 +112,15 @@ function WorkspaceSettings() {
   const updateWorkspace = useUpdateWorkspace(workspaceId || '');
 
   const [name, setName] = useState('');
+  const [notificationEmail, setNotificationEmail] = useState('');
   const [timezone, setTimezone] = useState('America/New_York');
   const [hasChanges, setHasChanges] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-  // Load workspace data
   useEffect(() => {
     if (workspace) {
       setName(workspace.name);
+      setNotificationEmail(workspace.notification_email || '');
       setTimezone(workspace.settings?.timezone || 'America/New_York');
     }
   }, [workspace]);
@@ -125,6 +132,7 @@ function WorkspaceSettings() {
     try {
       await updateWorkspace.mutateAsync({
         name,
+        notification_email: notificationEmail || undefined,
         settings: { ...workspace?.settings, timezone },
       });
       setSaveStatus('saved');
@@ -145,69 +153,92 @@ function WorkspaceSettings() {
   }
 
   return (
-    <div className="card">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">Workspace Settings</h2>
-      <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Workspace Name
-          </label>
-          <input
-            type="text"
-            className="input"
-            value={name}
-            onChange={(e) => {
-              setName(e.target.value);
-              setHasChanges(true);
-            }}
-          />
+    <div className="space-y-6">
+      <div className="card">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">General</h2>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Workspace Name
+            </label>
+            <input
+              type="text"
+              className="input"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setHasChanges(true);
+              }}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Workspace ID
+            </label>
+            <input
+              type="text"
+              className="input bg-gray-50 font-mono text-sm"
+              value={workspaceId || ''}
+              disabled
+            />
+            <p className="text-xs text-gray-500 mt-1">Used for API integrations</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Timezone
+            </label>
+            <TimezoneSelect
+              value={timezone}
+              onChange={(value) => {
+                setTimezone(value);
+                setHasChanges(true);
+              }}
+            />
+          </div>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Workspace ID
-          </label>
-          <input
-            type="text"
-            className="input bg-gray-50 font-mono text-sm"
-            value={workspaceId || ''}
-            disabled
-          />
+      </div>
+
+      <div className="card">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Contact Information</h2>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Notification Email
+            </label>
+            <input
+              type="email"
+              className="input"
+              placeholder="alerts@yourcompany.com"
+              value={notificationEmail}
+              onChange={(e) => {
+                setNotificationEmail(e.target.value);
+                setHasChanges(true);
+              }}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Receive workflow notifications and form submissions here
+            </p>
+          </div>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Timezone
-          </label>
-          <select
-            className="input"
-            value={timezone}
-            onChange={(e) => {
-              setTimezone(e.target.value);
-              setHasChanges(true);
-            }}
-          >
-            <option value="America/New_York">America/New_York (EST)</option>
-            <option value="America/Chicago">America/Chicago (CST)</option>
-            <option value="America/Denver">America/Denver (MST)</option>
-            <option value="America/Los_Angeles">America/Los_Angeles (PST)</option>
-            <option value="UTC">UTC</option>
-          </select>
-        </div>
-        <div className="pt-4 flex items-center gap-3">
-          <button
-            onClick={handleSave}
-            disabled={!hasChanges || saveStatus === 'saving'}
-            className="btn btn-primary inline-flex items-center gap-2"
-          >
-            {saveStatus === 'saving' && <Loader2 className="w-4 h-4 animate-spin" />}
-            {saveStatus === 'saving' ? 'Saving...' : 'Save Changes'}
-          </button>
-          {saveStatus === 'saved' && (
-            <span className="text-sm text-green-600">Changes saved!</span>
-          )}
-          {saveStatus === 'error' && (
-            <span className="text-sm text-red-600">Failed to save</span>
-          )}
-        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleSave}
+          disabled={!hasChanges || saveStatus === 'saving'}
+          className="btn btn-primary inline-flex items-center gap-2"
+        >
+          {saveStatus === 'saving' && <Loader2 className="w-4 h-4 animate-spin" />}
+          {saveStatus === 'saving' ? 'Saving...' : 'Save Changes'}
+        </button>
+        {saveStatus === 'saved' && (
+          <span className="text-sm text-green-600 flex items-center gap-1">
+            <Check className="w-4 h-4" /> Saved
+          </span>
+        )}
+        {saveStatus === 'error' && (
+          <span className="text-sm text-red-600">Failed to save</span>
+        )}
       </div>
     </div>
   );
@@ -219,79 +250,369 @@ function TeamSettings() {
 }
 
 function NotificationSettings() {
-  return (
-    <div className="card">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">Notification Preferences</h2>
-      <div className="space-y-4">
-        {[
-          { label: 'Email notifications', description: 'Receive email updates about your workflows' },
-          { label: 'Push notifications', description: 'Get browser notifications for important events' },
-          { label: 'SMS alerts', description: 'Receive text messages for critical issues' },
-          { label: 'Weekly digest', description: 'Get a weekly summary of your account activity' },
-        ].map((item) => (
-          <div key={item.label} className="flex items-center justify-between py-3 border-b border-gray-100 last:border-0">
-            <div>
-              <p className="font-medium text-gray-900">{item.label}</p>
-              <p className="text-sm text-gray-500">{item.description}</p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" className="sr-only peer" defaultChecked />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
-            </label>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+  const { workspace, workspaceId } = useCurrentWorkspace();
+  const updateWorkspace = useUpdateWorkspace(workspaceId || '');
+  const [settings, setSettings] = useState({
+    email_form_submissions: true,
+    email_workflow_errors: true,
+    email_weekly_digest: false,
+    email_new_contacts: false,
+  });
+  const [saving, setSaving] = useState(false);
 
-function IntegrationSettings() {
-  const { workspaceId } = useCurrentWorkspace();
+  useEffect(() => {
+    if (workspace?.settings?.notifications) {
+      setSettings({ ...settings, ...workspace.settings.notifications });
+    }
+  }, [workspace]);
+
+  const handleToggle = async (key: string) => {
+    const newSettings = { ...settings, [key]: !settings[key as keyof typeof settings] };
+    setSettings(newSettings);
+
+    setSaving(true);
+    try {
+      await updateWorkspace.mutateAsync({
+        settings: {
+          ...workspace?.settings,
+          notifications: newSettings
+        },
+      });
+    } catch (error) {
+      // Revert on error
+      setSettings(settings);
+    }
+    setSaving(false);
+  };
+
+  const notificationOptions = [
+    {
+      key: 'email_form_submissions',
+      label: 'Form Submissions',
+      description: 'Get notified when someone submits a form on your pages',
+      icon: FileText,
+    },
+    {
+      key: 'email_workflow_errors',
+      label: 'Workflow Errors',
+      description: 'Alert when a workflow fails or encounters an error',
+      icon: AlertCircle,
+    },
+    {
+      key: 'email_new_contacts',
+      label: 'New Contacts',
+      description: 'Notification when a new contact is added',
+      icon: Users,
+    },
+    {
+      key: 'email_weekly_digest',
+      label: 'Weekly Digest',
+      description: 'Summary of your workspace activity each week',
+      icon: BarChart3,
+    },
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Stripe Connect */}
-      <StripeIntegrationCard workspaceId={workspaceId || ''} />
-
-      {/* Twilio */}
-      <TwilioConfigCard workspaceId={workspaceId || ''} />
-
-      {/* Segment */}
-      <SegmentConfigCard workspaceId={workspaceId || ''} />
-
-      {/* Coming Soon Integrations */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">More Integrations</h2>
-        <div className="space-y-3">
-          {[
-            { name: 'Slack', description: 'Team notifications', comingSoon: true },
-            { name: 'Zapier', description: 'Workflow automation', comingSoon: true },
-          ].map((integration) => (
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Email Notifications</h2>
+            <p className="text-sm text-gray-500">Choose what you want to be notified about</p>
+          </div>
+          {saving && <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />}
+        </div>
+        <div className="space-y-1">
+          {notificationOptions.map((item) => (
             <div
-              key={integration.name}
-              className="flex items-center justify-between p-4 border border-gray-200 rounded-lg"
+              key={item.key}
+              className="flex items-center justify-between py-4 border-b border-gray-100 last:border-0"
             >
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                  <Zap className="w-5 h-5 text-gray-600" />
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center">
+                  <item.icon className="w-5 h-5 text-gray-600" />
                 </div>
                 <div>
-                  <p className="font-medium text-gray-900">
-                    {integration.name}
-                    <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
-                      Coming Soon
-                    </span>
-                  </p>
-                  <p className="text-sm text-gray-500">{integration.description}</p>
+                  <p className="font-medium text-gray-900">{item.label}</p>
+                  <p className="text-sm text-gray-500">{item.description}</p>
                 </div>
               </div>
-              <button className="btn btn-primary" disabled>
-                Connect
+              <button
+                onClick={() => handleToggle(item.key)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  settings[item.key as keyof typeof settings] ? 'bg-primary-600' : 'bg-gray-200'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    settings[item.key as keyof typeof settings] ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
               </button>
             </div>
           ))}
         </div>
       </div>
+
+      <div className="card bg-gray-50 border-dashed">
+        <div className="flex items-center gap-3 text-gray-500">
+          <Bell className="w-5 h-5" />
+          <div>
+            <p className="font-medium text-gray-700">Push & SMS Notifications</p>
+            <p className="text-sm">Browser push and SMS alerts coming soon</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Integration categories and items
+const integrationCategories = [
+  {
+    id: 'payments',
+    name: 'Payments',
+    icon: CreditCard,
+    integrations: [
+      { id: 'stripe', name: 'Stripe', description: 'Accept payments and subscriptions', status: 'available', component: 'stripe' },
+      { id: 'paypal', name: 'PayPal', description: 'PayPal payments and checkout', status: 'coming_soon' },
+      { id: 'square', name: 'Square', description: 'In-person and online payments', status: 'coming_soon' },
+    ],
+  },
+  {
+    id: 'communication',
+    name: 'Communication',
+    icon: MessageSquare,
+    integrations: [
+      { id: 'twilio', name: 'Twilio', description: 'SMS and voice messaging', status: 'available', component: 'twilio' },
+      { id: 'sendgrid', name: 'SendGrid', description: 'Transactional email delivery', status: 'coming_soon' },
+      { id: 'mailgun', name: 'Mailgun', description: 'Email API and SMTP', status: 'coming_soon' },
+      { id: 'slack', name: 'Slack', description: 'Team notifications', status: 'coming_soon' },
+      { id: 'discord', name: 'Discord', description: 'Community notifications', status: 'coming_soon' },
+    ],
+  },
+  {
+    id: 'analytics',
+    name: 'Analytics & Data',
+    icon: BarChart3,
+    integrations: [
+      { id: 'segment', name: 'Segment', description: 'Customer data platform', status: 'available', component: 'segment' },
+      { id: 'google_analytics', name: 'Google Analytics', description: 'Website analytics', status: 'coming_soon' },
+      { id: 'mixpanel', name: 'Mixpanel', description: 'Product analytics', status: 'coming_soon' },
+      { id: 'amplitude', name: 'Amplitude', description: 'Digital analytics', status: 'coming_soon' },
+    ],
+  },
+  {
+    id: 'crm',
+    name: 'CRM & Sales',
+    icon: Database,
+    integrations: [
+      { id: 'hubspot', name: 'HubSpot', description: 'CRM and marketing', status: 'coming_soon' },
+      { id: 'salesforce', name: 'Salesforce', description: 'Enterprise CRM', status: 'coming_soon' },
+      { id: 'pipedrive', name: 'Pipedrive', description: 'Sales pipeline CRM', status: 'coming_soon' },
+      { id: 'close', name: 'Close', description: 'Inside sales CRM', status: 'coming_soon' },
+    ],
+  },
+  {
+    id: 'marketing',
+    name: 'Marketing',
+    icon: Megaphone,
+    integrations: [
+      { id: 'mailchimp', name: 'Mailchimp', description: 'Email marketing', status: 'coming_soon' },
+      { id: 'convertkit', name: 'ConvertKit', description: 'Creator email marketing', status: 'coming_soon' },
+      { id: 'klaviyo', name: 'Klaviyo', description: 'E-commerce email', status: 'coming_soon' },
+      { id: 'activecampaign', name: 'ActiveCampaign', description: 'Marketing automation', status: 'coming_soon' },
+    ],
+  },
+  {
+    id: 'ecommerce',
+    name: 'E-commerce',
+    icon: ShoppingCart,
+    integrations: [
+      { id: 'shopify', name: 'Shopify', description: 'E-commerce platform', status: 'coming_soon' },
+      { id: 'woocommerce', name: 'WooCommerce', description: 'WordPress e-commerce', status: 'coming_soon' },
+      { id: 'gumroad', name: 'Gumroad', description: 'Digital products', status: 'coming_soon' },
+    ],
+  },
+  {
+    id: 'scheduling',
+    name: 'Scheduling',
+    icon: Calendar,
+    integrations: [
+      { id: 'calendly', name: 'Calendly', description: 'Appointment scheduling', status: 'coming_soon' },
+      { id: 'cal', name: 'Cal.com', description: 'Open-source scheduling', status: 'coming_soon' },
+      { id: 'acuity', name: 'Acuity', description: 'Client scheduling', status: 'coming_soon' },
+    ],
+  },
+  {
+    id: 'automation',
+    name: 'Automation',
+    icon: Zap,
+    integrations: [
+      { id: 'zapier', name: 'Zapier', description: 'Connect 5000+ apps', status: 'coming_soon' },
+      { id: 'make', name: 'Make (Integromat)', description: 'Visual automation', status: 'coming_soon' },
+      { id: 'n8n', name: 'n8n', description: 'Self-hosted automation', status: 'coming_soon' },
+    ],
+  },
+];
+
+function IntegrationSettings() {
+  const { workspaceId } = useCurrentWorkspace();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [expandedIntegration, setExpandedIntegration] = useState<string | null>(null);
+
+  const filteredCategories = useMemo(() => {
+    if (!searchQuery && !selectedCategory) return integrationCategories;
+
+    return integrationCategories
+      .map(category => ({
+        ...category,
+        integrations: category.integrations.filter(int => {
+          const matchesSearch = !searchQuery ||
+            int.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            int.description.toLowerCase().includes(searchQuery.toLowerCase());
+          const matchesCategory = !selectedCategory || category.id === selectedCategory;
+          return matchesSearch && matchesCategory;
+        }),
+      }))
+      .filter(category => category.integrations.length > 0);
+  }, [searchQuery, selectedCategory]);
+
+  const availableCount = integrationCategories
+    .flatMap(c => c.integrations)
+    .filter(i => i.status === 'available').length;
+
+  return (
+    <div className="space-y-6">
+      {/* Header with search */}
+      <div className="card">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Integrations</h2>
+            <p className="text-sm text-gray-500">
+              {availableCount} connected services available, more coming soon
+            </p>
+          </div>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search integrations..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="input pl-9 w-full sm:w-64"
+            />
+          </div>
+        </div>
+
+        {/* Category filters */}
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setSelectedCategory(null)}
+            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+              !selectedCategory
+                ? 'bg-primary-100 text-primary-700'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            All
+          </button>
+          {integrationCategories.map(category => (
+            <button
+              key={category.id}
+              onClick={() => setSelectedCategory(selectedCategory === category.id ? null : category.id)}
+              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                selectedCategory === category.id
+                  ? 'bg-primary-100 text-primary-700'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {category.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Integration list by category */}
+      {filteredCategories.map(category => (
+        <div key={category.id} className="card">
+          <div className="flex items-center gap-2 mb-4">
+            <category.icon className="w-5 h-5 text-gray-600" />
+            <h3 className="font-semibold text-gray-900">{category.name}</h3>
+          </div>
+          <div className="space-y-3">
+            {category.integrations.map(integration => {
+              const isExpanded = expandedIntegration === integration.id;
+              const isAvailable = integration.status === 'available';
+
+              return (
+                <div key={integration.id}>
+                  <button
+                    onClick={() => isAvailable && setExpandedIntegration(isExpanded ? null : integration.id)}
+                    disabled={!isAvailable}
+                    className={`w-full flex items-center justify-between p-4 rounded-lg border transition-all text-left ${
+                      isAvailable
+                        ? 'border-gray-200 hover:border-primary-300 hover:bg-primary-50/50 cursor-pointer'
+                        : 'border-gray-100 bg-gray-50 cursor-not-allowed'
+                    } ${isExpanded ? 'border-primary-300 bg-primary-50/50' : ''}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                        isAvailable ? 'bg-primary-100' : 'bg-gray-100'
+                      }`}>
+                        <Zap className={`w-5 h-5 ${isAvailable ? 'text-primary-600' : 'text-gray-400'}`} />
+                      </div>
+                      <div>
+                        <p className={`font-medium ${isAvailable ? 'text-gray-900' : 'text-gray-500'}`}>
+                          {integration.name}
+                          {!isAvailable && (
+                            <span className="ml-2 text-xs bg-gray-200 text-gray-500 px-2 py-0.5 rounded">
+                              Coming Soon
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-sm text-gray-500">{integration.description}</p>
+                      </div>
+                    </div>
+                    {isAvailable && (
+                      <ChevronRight className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                    )}
+                  </button>
+
+                  {/* Expanded integration config */}
+                  {isExpanded && integration.component && (
+                    <div className="mt-3 ml-4 pl-4 border-l-2 border-primary-200">
+                      {integration.component === 'stripe' && (
+                        <StripeIntegrationCard workspaceId={workspaceId || ''} />
+                      )}
+                      {integration.component === 'twilio' && (
+                        <TwilioConfigCard workspaceId={workspaceId || ''} />
+                      )}
+                      {integration.component === 'segment' && (
+                        <SegmentConfigCard workspaceId={workspaceId || ''} />
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      {filteredCategories.length === 0 && (
+        <div className="card text-center py-12">
+          <Search className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+          <p className="text-gray-600">No integrations found for "{searchQuery}"</p>
+          <button
+            onClick={() => setSearchQuery('')}
+            className="text-primary-600 hover:text-primary-700 text-sm mt-2"
+          >
+            Clear search
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -304,14 +625,11 @@ function StripeIntegrationCard({ workspaceId }: { workspaceId: string }) {
 
   const handleConnect = async () => {
     if (!workspaceId) return;
-
     try {
       const result = await startConnect.mutateAsync({
         workspaceId,
         redirectUri: `${window.location.origin}/settings?stripe_callback=1`,
       });
-
-      // Redirect to Stripe OAuth
       window.location.href = result.oauth_url;
     } catch (error) {
       console.error('Failed to start Stripe Connect:', error);
@@ -320,7 +638,6 @@ function StripeIntegrationCard({ workspaceId }: { workspaceId: string }) {
 
   const handleDisconnect = async () => {
     if (!workspaceId) return;
-
     try {
       await disconnectStripe.mutateAsync({ workspaceId });
       setShowDisconnectConfirm(false);
@@ -331,19 +648,8 @@ function StripeIntegrationCard({ workspaceId }: { workspaceId: string }) {
 
   if (isLoading) {
     return (
-      <div className="card">
-        <div className="flex items-center gap-4 mb-4">
-          <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center">
-            <CreditCard className="w-6 h-6 text-indigo-600" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Stripe Connect</h2>
-            <p className="text-sm text-gray-500">Accept payments from your landing pages</p>
-          </div>
-        </div>
-        <div className="flex items-center justify-center py-8">
-          <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
-        </div>
+      <div className="py-8 flex justify-center">
+        <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
       </div>
     );
   }
@@ -351,160 +657,66 @@ function StripeIntegrationCard({ workspaceId }: { workspaceId: string }) {
   const isConnected = stripeStatus?.connected;
   const account = stripeStatus?.account;
 
-  return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center">
-            <CreditCard className="w-6 h-6 text-indigo-600" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Stripe Connect</h2>
-            <p className="text-sm text-gray-500">Accept payments from your landing pages</p>
+  if (isConnected) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 text-green-600">
+          <Check className="w-5 h-5" />
+          <span className="font-medium">Connected</span>
+        </div>
+        <div className="p-4 bg-white rounded-lg border border-gray-200">
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <p className="text-gray-500">Account</p>
+              <p className="font-medium">{account?.email || 'Connected'}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Mode</p>
+              <p className="font-medium">{stripeStatus?.livemode ? 'Live' : 'Test'}</p>
+            </div>
           </div>
         </div>
-        {isConnected && (
-          <div className="flex items-center gap-2 px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm">
-            <Check className="w-4 h-4" />
-            Connected
+        {!account?.details_submitted && (
+          <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm">
+            <p className="text-yellow-800">Complete your Stripe setup to start accepting payments.</p>
+            <a
+              href="https://dashboard.stripe.com/connect/accounts"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-yellow-700 font-medium mt-1 hover:underline"
+            >
+              Complete setup <ExternalLink className="w-3 h-3" />
+            </a>
           </div>
         )}
-      </div>
-
-      {isConnected ? (
-        <>
-          <div className="p-4 bg-gray-50 rounded-lg mb-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Account</p>
-                <p className="font-medium text-gray-900">{account?.email || 'Connected'}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Mode</p>
-                <p className="font-medium text-gray-900">
-                  {stripeStatus?.livemode ? 'Live' : 'Test'}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Charges</p>
-                <p className="font-medium text-gray-900 flex items-center gap-1">
-                  {account?.charges_enabled ? (
-                    <><Check className="w-4 h-4 text-green-600" /> Enabled</>
-                  ) : (
-                    <><AlertCircle className="w-4 h-4 text-yellow-600" /> Pending</>
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Payouts</p>
-                <p className="font-medium text-gray-900 flex items-center gap-1">
-                  {account?.payouts_enabled ? (
-                    <><Check className="w-4 h-4 text-green-600" /> Enabled</>
-                  ) : (
-                    <><AlertCircle className="w-4 h-4 text-yellow-600" /> Pending</>
-                  )}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {!account?.details_submitted && (
-            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mb-4">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-medium text-yellow-800">Complete your Stripe setup</p>
-                  <p className="text-sm text-yellow-700 mt-1">
-                    You need to complete your Stripe account setup to start accepting payments.
-                  </p>
-                  <a
-                    href="https://dashboard.stripe.com/connect/accounts"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-yellow-800 font-medium mt-2 hover:underline"
-                  >
-                    Complete setup in Stripe <ExternalLink className="w-4 h-4" />
-                  </a>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between pt-4 border-t">
-            <p className="text-sm text-gray-500">
-              Connected account: {stripeStatus?.stripe_account_id}
-            </p>
-            {showDisconnectConfirm ? (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">Are you sure?</span>
-                <button
-                  onClick={handleDisconnect}
-                  disabled={disconnectStripe.isPending}
-                  className="btn btn-sm bg-red-600 hover:bg-red-700 text-white"
-                >
-                  {disconnectStripe.isPending ? 'Disconnecting...' : 'Yes, Disconnect'}
-                </button>
-                <button
-                  onClick={() => setShowDisconnectConfirm(false)}
-                  className="btn btn-sm btn-secondary"
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowDisconnectConfirm(true)}
-                className="text-sm text-red-600 hover:text-red-700"
-              >
-                Disconnect
+        <div className="flex items-center justify-between pt-2">
+          <p className="text-xs text-gray-500 font-mono">{stripeStatus?.stripe_account_id}</p>
+          {showDisconnectConfirm ? (
+            <div className="flex items-center gap-2">
+              <button onClick={handleDisconnect} disabled={disconnectStripe.isPending} className="btn btn-sm bg-red-600 text-white hover:bg-red-700">
+                {disconnectStripe.isPending ? 'Disconnecting...' : 'Confirm'}
               </button>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="p-4 bg-gray-50 rounded-lg mb-4">
-            <h3 className="font-medium text-gray-900 mb-2">What you can do with Stripe:</h3>
-            <ul className="space-y-2 text-sm text-gray-600">
-              <li className="flex items-center gap-2">
-                <Check className="w-4 h-4 text-green-600" />
-                Accept one-time payments on landing pages
-              </li>
-              <li className="flex items-center gap-2">
-                <Check className="w-4 h-4 text-green-600" />
-                Create recurring subscriptions
-              </li>
-              <li className="flex items-center gap-2">
-                <Check className="w-4 h-4 text-green-600" />
-                Trigger workflows on payment events
-              </li>
-              <li className="flex items-center gap-2">
-                <Check className="w-4 h-4 text-green-600" />
-                Automatic platform fee collection (2%)
-              </li>
-            </ul>
-          </div>
-
-          <button
-            onClick={handleConnect}
-            disabled={startConnect.isPending || !workspaceId}
-            className="btn btn-primary w-full flex items-center justify-center gap-2"
-          >
-            {startConnect.isPending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <CreditCard className="w-4 h-4" />
-            )}
-            {startConnect.isPending ? 'Connecting...' : 'Connect with Stripe'}
-          </button>
-
-          {startConnect.isError && (
-            <p className="text-sm text-red-600 mt-2 text-center">
-              Failed to connect. Please try again.
-            </p>
+              <button onClick={() => setShowDisconnectConfirm(false)} className="btn btn-sm btn-secondary">Cancel</button>
+            </div>
+          ) : (
+            <button onClick={() => setShowDisconnectConfirm(true)} className="text-sm text-red-600 hover:text-red-700">Disconnect</button>
           )}
-        </>
-      )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <ul className="space-y-2 text-sm text-gray-600">
+        <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-600" /> Accept one-time and recurring payments</li>
+        <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-600" /> Trigger workflows on payment events</li>
+        <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-600" /> Automatic 2% platform fee</li>
+      </ul>
+      <button onClick={handleConnect} disabled={startConnect.isPending || !workspaceId} className="btn btn-primary w-full">
+        {startConnect.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+        Connect Stripe
+      </button>
     </div>
   );
 }
@@ -517,6 +729,7 @@ function BillingSettings() {
   const [loadingPlan, setLoadingPlan] = useState('');
 
   const currentPlan = billing?.plan || 'free';
+  const isPaid = currentPlan !== 'free';
 
   const handleSelectPlan = async (priceId: string) => {
     setLoadingPlan(priceId);
@@ -546,63 +759,69 @@ function BillingSettings() {
     );
   }
 
+  const planColors = {
+    free: { bg: 'bg-gray-50', border: 'border-gray-200', badge: 'bg-gray-100 text-gray-700' },
+    pro: { bg: 'bg-primary-50', border: 'border-primary-200', badge: 'bg-primary-100 text-primary-700' },
+    business: { bg: 'bg-violet-50', border: 'border-violet-200', badge: 'bg-violet-100 text-violet-700' },
+  };
+  const colors = planColors[currentPlan as keyof typeof planColors] || planColors.free;
+
   return (
     <div className="space-y-6">
-      {/* Current plan status */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Current Plan</h2>
+      <div className={`rounded-xl border-2 ${colors.border} ${colors.bg} p-6`}>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className={`w-12 h-12 rounded-xl ${isPaid ? 'bg-gradient-to-br from-primary-500 to-violet-500' : 'bg-gray-200'} flex items-center justify-center`}>
+              <CreditCard className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xl font-bold text-gray-900 capitalize">{currentPlan} Plan</h3>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${colors.badge}`}>
+                  {billing?.subscription_status === 'active' ? 'Active' : billing?.subscription_status === 'past_due' ? 'Past Due' : 'Free Tier'}
+                </span>
+              </div>
+              <p className="text-sm text-gray-600 mt-0.5">
+                {isPaid ? 'Thank you for being a subscriber!' : 'Upgrade to unlock more features'}
+              </p>
+            </div>
+          </div>
+
           {billing?.has_stripe_customer && (
             <button
               onClick={handleManageBilling}
               disabled={createPortal.isPending}
-              className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-50"
             >
-              {createPortal.isPending ? 'Opening...' : 'Manage Billing'}
+              {createPortal.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+              Manage Subscription
             </button>
-          )}
-        </div>
-        <div className="flex items-center justify-between p-4 bg-primary-50 rounded-lg">
-          <div>
-            <p className="font-semibold text-primary-900 capitalize">{currentPlan} Plan</p>
-            <p className="text-sm text-primary-700">
-              {billing?.subscription_status === 'active'
-                ? 'Active subscription'
-                : billing?.subscription_status === 'past_due'
-                ? 'Payment past due'
-                : 'Free tier'}
-            </p>
-          </div>
-          {currentPlan === 'free' && (
-            <span className="text-xs bg-primary-100 text-primary-700 px-2 py-1 rounded">
-              Upgrade to unlock more
-            </span>
           )}
         </div>
       </div>
 
-      {/* Usage summary */}
       {billing?.usage && (
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Usage</h2>
-          <div className="space-y-3">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Resource Usage</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {Object.entries(billing.usage).map(([key, value]) => {
               if ('enabled' in value) return null;
               const usage = value as { current: number; limit: number | string; percentage: number };
+              const isUnlimited = usage.limit === 'unlimited' || usage.limit === -1;
               return (
-                <div key={key} className="flex items-center gap-4">
-                  <span className="text-sm text-gray-600 w-28 capitalize">{key.replace('_', ' ')}</span>
-                  <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                <div key={key} className="p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-700 capitalize">{key.replace(/_/g, ' ')}</span>
+                    <span className="text-sm font-semibold text-gray-900">
+                      {usage.current.toLocaleString()} <span className="text-gray-400 font-normal">/ {isUnlimited ? '∞' : usage.limit.toLocaleString()}</span>
+                    </span>
+                  </div>
+                  <div className="bg-gray-200 rounded-full h-2 overflow-hidden">
                     <div
-                      className={`h-full rounded-full ${
-                        usage.percentage > 80 ? 'bg-red-500' : usage.percentage > 50 ? 'bg-yellow-500' : 'bg-green-500'
-                      }`}
-                      style={{ width: `${Math.min(usage.percentage, 100)}%` }}
+                      className={`h-full rounded-full ${isUnlimited ? 'bg-primary-400' : usage.percentage > 90 ? 'bg-red-500' : usage.percentage > 70 ? 'bg-amber-500' : 'bg-primary-500'}`}
+                      style={{ width: isUnlimited ? '15%' : `${Math.min(usage.percentage, 100)}%` }}
                     />
                   </div>
-                  <span className="text-xs text-gray-500 w-24 text-right">
-                    {usage.current} / {usage.limit === 'unlimited' ? '\u221e' : usage.limit}
-                  </span>
                 </div>
               );
             })}
@@ -610,15 +829,12 @@ function BillingSettings() {
         </div>
       )}
 
-      {/* Pricing table */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-6">Plans</h2>
-        <PricingTable
-          currentPlan={currentPlan}
-          onSelectPlan={handleSelectPlan}
-          isLoading={!!loadingPlan}
-          loadingPlan={loadingPlan}
-        />
+        <div className="text-center mb-8">
+          <h2 className="text-2xl font-bold text-gray-900">Choose Your Plan</h2>
+          <p className="text-gray-600 mt-2">Scale your marketing automation as you grow</p>
+        </div>
+        <PricingTable currentPlan={currentPlan} onSelectPlan={handleSelectPlan} isLoading={!!loadingPlan} loadingPlan={loadingPlan} />
       </div>
     </div>
   );
@@ -627,65 +843,236 @@ function BillingSettings() {
 function SecuritySettings() {
   return (
     <div className="space-y-6">
+      {/* Social Connections */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Password</h2>
-        <p className="text-sm text-gray-500 mb-4">
-          Change your password to keep your account secure
-        </p>
-        <button className="btn btn-secondary">Change Password</button>
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">Social Connections</h2>
+        <p className="text-sm text-gray-500 mb-4">Connect social accounts for easier sign-in</p>
+        <div className="space-y-3">
+          {[
+            { name: 'Google', icon: '🔵', connected: false, description: 'Sign in with Google' },
+            { name: 'Microsoft', icon: '🟦', connected: false, description: 'Sign in with Microsoft 365' },
+            { name: 'GitHub', icon: '⚫', connected: false, description: 'Sign in with GitHub' },
+          ].map((provider) => (
+            <div key={provider.name} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">{provider.icon}</span>
+                <div>
+                  <p className="font-medium text-gray-900">{provider.name}</p>
+                  <p className="text-sm text-gray-500">{provider.description}</p>
+                </div>
+              </div>
+              <button className="btn btn-secondary btn-sm" disabled>
+                Connect
+              </button>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-gray-500 mt-3">Social sign-in coming soon</p>
       </div>
 
+      {/* SAML SSO */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Two-Factor Authentication</h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold text-gray-900">SAML Single Sign-On</h2>
+          <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-medium">Business</span>
+        </div>
         <p className="text-sm text-gray-500 mb-4">
-          Add an extra layer of security to your account
+          Configure SAML 2.0 SSO for enterprise identity providers like Okta, Azure AD, or OneLogin
         </p>
-        <button className="btn btn-primary">Enable 2FA</button>
+        <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+          <div className="flex items-center gap-3">
+            <Key className="w-8 h-8 text-gray-400" />
+            <div>
+              <p className="font-medium text-gray-700">Enterprise SSO</p>
+              <p className="text-sm text-gray-500">Available on Business plan</p>
+            </div>
+          </div>
+        </div>
       </div>
 
+      {/* Two-Factor Authentication */}
+      <div className="card">
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">Two-Factor Authentication</h2>
+        <p className="text-sm text-gray-500 mb-4">Add an extra layer of security to your account</p>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+                <Smartphone className="w-5 h-5 text-gray-600" />
+              </div>
+              <div>
+                <p className="font-medium text-gray-900">Authenticator App</p>
+                <p className="text-sm text-gray-500">Use Google Authenticator or Authy</p>
+              </div>
+            </div>
+            <button className="btn btn-primary btn-sm" disabled>
+              Enable
+            </button>
+          </div>
+          <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+                <Mail className="w-5 h-5 text-gray-600" />
+              </div>
+              <div>
+                <p className="font-medium text-gray-900">Email Verification</p>
+                <p className="text-sm text-gray-500">Receive codes via email</p>
+              </div>
+            </div>
+            <span className="text-xs text-green-600 font-medium flex items-center gap-1">
+              <Check className="w-3 h-3" /> Active
+            </span>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 mt-3">Additional 2FA methods coming soon</p>
+      </div>
+
+      {/* Active Sessions */}
       <div className="card">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Active Sessions</h2>
         <div className="space-y-3">
-          <div className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
-            <div>
-              <p className="font-medium text-gray-900">Current Session</p>
-              <p className="text-sm text-gray-500">Chrome on macOS - Active now</p>
+          <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center">
+                <Monitor className="w-5 h-5 text-green-600" />
+              </div>
+              <div>
+                <p className="font-medium text-gray-900">Current Session</p>
+                <p className="text-sm text-gray-500">This device · Active now</p>
+              </div>
             </div>
-            <span className="text-xs text-green-600 font-medium">Current</span>
+            <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-medium">Current</span>
           </div>
         </div>
+        <button className="mt-4 text-sm text-red-600 hover:text-red-700 flex items-center gap-1">
+          <LogOut className="w-4 h-4" />
+          Sign out of all other sessions
+        </button>
+      </div>
+
+      {/* Password */}
+      <div className="card">
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">Password</h2>
+        <p className="text-sm text-gray-500 mb-4">Change your password to keep your account secure</p>
+        <button className="btn btn-secondary">Change Password</button>
       </div>
     </div>
   );
 }
 
-function DomainSettings() {
+function EmailDomainSettings() {
+  const { workspace, workspaceId } = useCurrentWorkspace();
+  const updateWorkspace = useUpdateWorkspace(workspaceId || '');
+  const [fromEmail, setFromEmail] = useState('');
+  const [fromName, setFromName] = useState('');
+  const [replyTo, setReplyTo] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (workspace) {
+      setFromEmail(workspace.from_email || '');
+      setFromName(workspace.settings?.from_name || '');
+      setReplyTo(workspace.settings?.reply_to || '');
+    }
+  }, [workspace]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await updateWorkspace.mutateAsync({
+        from_email: fromEmail || undefined,
+        settings: { ...workspace?.settings, from_name: fromName, reply_to: replyTo },
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      console.error('Failed to save:', error);
+    }
+    setSaving(false);
+  };
+
   return (
     <div className="space-y-6">
+      {/* Email Sending Defaults */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Custom Domains</h2>
-        <p className="text-sm text-gray-500 mb-4">
-          Connect your own domain for branded emails and landing pages
-        </p>
-        <button className="btn btn-primary">Add Domain</button>
-      </div>
-
-      <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Email Settings</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">Email Sending Defaults</h2>
+        <p className="text-sm text-gray-500 mb-4">Configure default sender information for workflow emails</p>
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Default From Name
-            </label>
-            <input type="text" className="input" placeholder="Your Company" />
+            <label className="block text-sm font-medium text-gray-700 mb-1">From Name</label>
+            <input
+              type="text"
+              className="input"
+              placeholder="Your Company"
+              value={fromName}
+              onChange={(e) => setFromName(e.target.value)}
+            />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Default Reply-To Email
-            </label>
-            <input type="email" className="input" placeholder="support@yourcompany.com" />
+            <label className="block text-sm font-medium text-gray-700 mb-1">From Email</label>
+            <input
+              type="email"
+              className="input"
+              placeholder="hello@yourcompany.com"
+              value={fromEmail}
+              onChange={(e) => setFromEmail(e.target.value)}
+            />
+            <p className="text-xs text-gray-500 mt-1">Must be verified in your email provider</p>
           </div>
-          <button className="btn btn-primary">Save Changes</button>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Reply-To Email</label>
+            <input
+              type="email"
+              className="input"
+              placeholder="support@yourcompany.com"
+              value={replyTo}
+              onChange={(e) => setReplyTo(e.target.value)}
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <button onClick={handleSave} disabled={saving} className="btn btn-primary inline-flex items-center gap-2">
+              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+              Save Changes
+            </button>
+            {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check className="w-4 h-4" /> Saved</span>}
+          </div>
+        </div>
+      </div>
+
+      {/* Domain Verification */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold text-gray-900">Domain Verification</h2>
+          <span className="text-xs bg-primary-100 text-primary-700 px-2 py-0.5 rounded-full font-medium">Pro</span>
+        </div>
+        <p className="text-sm text-gray-500 mb-4">
+          Verify your domain to improve email deliverability and enable custom sending addresses
+        </p>
+        <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+          <div className="flex items-center gap-3">
+            <Globe className="w-8 h-8 text-gray-400" />
+            <div>
+              <p className="font-medium text-gray-700">Add Your Domain</p>
+              <p className="text-sm text-gray-500">Configure DKIM, SPF, and DMARC records</p>
+            </div>
+          </div>
+          <button className="btn btn-primary mt-4" disabled>
+            <Plus className="w-4 h-4 mr-2" />
+            Add Domain
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 mt-3">Domain verification coming soon</p>
+      </div>
+
+      {/* Email Deliverability */}
+      <div className="card bg-gray-50 border-dashed">
+        <div className="flex items-center gap-3 text-gray-500">
+          <Mail className="w-5 h-5" />
+          <div>
+            <p className="font-medium text-gray-700">Email Deliverability Reports</p>
+            <p className="text-sm">Track bounce rates, opens, and spam complaints - coming soon</p>
+          </div>
         </div>
       </div>
     </div>

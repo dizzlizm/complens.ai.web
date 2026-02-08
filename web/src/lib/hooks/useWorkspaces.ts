@@ -4,27 +4,43 @@ import api from '../api';
 
 const WORKSPACE_STORAGE_KEY = 'complens_current_workspace';
 
+export interface WorkspaceNotificationSettings {
+  email_form_submissions?: boolean;
+  email_workflow_errors?: boolean;
+  email_weekly_digest?: boolean;
+  email_new_contacts?: boolean;
+}
+
+export interface WorkspaceSettings {
+  timezone?: string;
+  default_from_email?: string;
+  default_from_phone?: string;
+  from_name?: string;
+  reply_to?: string;
+  notifications?: WorkspaceNotificationSettings;
+}
+
 export interface Workspace {
   id: string;
   agency_id: string;
   name: string;
   slug: string;
-  settings: {
-    timezone?: string;
-    default_from_email?: string;
-    default_from_phone?: string;
-  };
+  settings: WorkspaceSettings;
   metadata?: Record<string, unknown>;
   is_active?: boolean;
+  notification_email?: string;
+  from_email?: string;
   created_at: string;
   updated_at: string;
 }
 
 export interface CreateWorkspaceInput {
   name: string;
-  slug: string;
-  settings?: Workspace['settings'];
+  slug?: string;
+  settings?: Partial<WorkspaceSettings>;
   metadata?: Record<string, unknown>;
+  notification_email?: string;
+  from_email?: string;
 }
 
 // Fetch all workspaces

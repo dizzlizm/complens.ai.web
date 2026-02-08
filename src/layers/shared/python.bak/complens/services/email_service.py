@@ -98,13 +98,7 @@ class EmailService:
         Raises:
             EmailError: If sending fails.
         """
-        from_email = from_email or os.environ.get("SES_FROM_EMAIL")
-
-        if not from_email:
-            raise EmailError(
-                "Sender email address is required",
-                code="SENDER_MISSING",
-            )
+        from_email = from_email or os.environ.get("SES_FROM_EMAIL") or "noreply@complens.ai"
 
         if not to:
             raise EmailError("Recipient email address is required", code="RECIPIENT_MISSING")
@@ -388,10 +382,7 @@ class EmailService:
         """
         import json
 
-        from_email = from_email or os.environ.get("SES_FROM_EMAIL")
-
-        if not from_email:
-            raise EmailError("Sender email is required", code="SENDER_MISSING")
+        from_email = from_email or os.environ.get("SES_FROM_EMAIL") or "noreply@complens.ai"
 
         # Normalize to list
         if isinstance(to, str):

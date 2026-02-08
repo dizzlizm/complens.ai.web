@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { Loader2, CheckCircle, AlertCircle, LogIn } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, LogIn, LogOut, UserX } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useAcceptInvite } from '../../lib/hooks/useTeam';
+import { AxiosError } from 'axios';
 
 export default function AcceptInvite() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
   const navigate = useNavigate();
-  const { isAuthenticated, isLoading: isAuthLoading, refreshUser } = useAuth();
+  const { isAuthenticated, isLoading: isAuthLoading, refreshUser, logout } = useAuth();
   const acceptInvite = useAcceptInvite();
   const [hasAttempted, setHasAttempted] = useState(false);
 
@@ -123,10 +124,38 @@ export default function AcceptInvite() {
 
   // Error
   if (acceptInvite.isError) {
-    const errorMessage =
-      acceptInvite.error instanceof Error
-        ? acceptInvite.error.message
-        : 'Failed to accept invitation';
+    const axiosError = acceptInvite.error as AxiosError<{ error: string; error_code?: string }>;
+    const errorData = axiosError.response?.data;
+    const errorCode = errorData?.error_code;
+    const errorMessage = errorData?.error ||
+      (acceptInvite.error instanceof Error ? acceptInvite.error.message : 'Failed to accept invitation');
+
+    // Special case: Email mismatch - user is signed in with wrong account
+    if (errorCode === 'EMAIL_MISMATCH') {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+          <div className="max-w-md w-full text-center">
+            <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
+              <UserX className="w-8 h-8 text-amber-600" />
+            </div>
+            <h2 className="text-xl font-semibold text-gray-900 mb-2">Wrong Account</h2>
+            <p className="text-gray-600 mb-6">{errorMessage}</p>
+            <div className="space-y-3">
+              <button
+                onClick={() => logout()}
+                className="btn btn-primary w-full inline-flex items-center justify-center gap-2"
+              >
+                <LogOut className="w-4 h-4" />
+                Sign Out & Sign In with Correct Account
+              </button>
+              <Link to="/dashboard" className="btn btn-secondary w-full inline-block">
+                Go to Dashboard
+              </Link>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">

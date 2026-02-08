@@ -1008,9 +1008,16 @@ def render_full_page(
         if block.get("type") == "form"
     }
 
+    # Check layout mode from theme
+    theme = page.get("theme", {}) or {}
+    page_layout = theme.get("layout", "full-bleed")
+
     # Render blocks if present, otherwise use body_content
     if blocks:
         body_content = render_blocks_html(blocks, primary_color, forms, workspace_id)
+        # Wrap in contained layout if configured
+        if page_layout == "contained":
+            body_content = f'<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{body_content}</div>'
 
     # Build chat widget script
     chat_script = ""

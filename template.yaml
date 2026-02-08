@@ -309,6 +309,9 @@ Resources:
         - Name: workspace_ids
           AttributeDataType: String
           Mutable: true
+        - Name: is_super_admin
+          AttributeDataType: String
+          Mutable: true
       AccountRecoverySetting:
         RecoveryMechanisms:
           - Name: verified_email
@@ -650,6 +653,7 @@ Resources:
                 - "'https://complens.ai'"
                 - !Sub "'https://${DomainName}'"
               Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+              Access-Control-Allow-Credentials: "'true'"
           ResponseTemplates:
             application/json: '{"message": "$context.error.messageString"}'
         DEFAULT_5XX:
@@ -661,6 +665,7 @@ Resources:
                 - "'https://complens.ai'"
                 - !Sub "'https://${DomainName}'"
               Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+              Access-Control-Allow-Credentials: "'true'"
           ResponseTemplates:
             application/json: '{"message": "Internal server error"}'
         UNAUTHORIZED:
@@ -672,6 +677,7 @@ Resources:
                 - "'https://complens.ai'"
                 - !Sub "'https://${DomainName}'"
               Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+              Access-Control-Allow-Credentials: "'true'"
               Access-Control-Allow-Methods: "'GET,POST,PUT,PATCH,DELETE,OPTIONS'"
           ResponseTemplates:
             application/json: '{"message": "Unauthorized"}'
@@ -1173,9 +1179,11 @@ Resources:
               Action:
                 - bedrock:InvokeModel
               Resource:
-                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
                 - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-image-generator-v2:0"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"
         - Statement:
             - Effect: Allow
               Action:
@@ -1369,9 +1377,11 @@ Resources:
               Action:
                 - bedrock:InvokeModel
               Resource:
-                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
                 - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-image-generator-v2:0"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"
       Events:
         # Business Profile
         GetProfile:
@@ -1441,6 +1451,18 @@ Resources:
           Properties:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/ai/refine-page-content
+            Method: POST
+        SynthesizePlan:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/synthesize-page/plan
+            Method: POST
+        SynthesizeGenerate:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/synthesize-page/generate
             Method: POST
         SynthesizePage:
           Type: Api
@@ -1717,8 +1739,9 @@ Resources:
               Action:
                 - bedrock:InvokeModel
               Resource:
-                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-3-sonnet-20240229-v1:0"
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
         - Statement:
             - Effect: Allow
               Action:
@@ -1755,9 +1778,11 @@ Resources:
                 - bedrock:InvokeModel
                 - bedrock:InvokeModelWithResponseStream
               Resource:
-                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
                 - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-image-generator-v2:0"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"
         - Statement:
             - Effect: Allow
               Action:
@@ -1859,8 +1884,10 @@ Resources:
               Action:
                 - bedrock:InvokeModel
               Resource:
-                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"
         - Statement:
             - Effect: Allow
               Action:
@@ -2106,7 +2133,7 @@ Resources:
   StripeFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Handler: stripe.handler
+      Handler: stripe_connect.handler
       CodeUri: src/handlers/api/
       Description: Stripe Connect OAuth and account management
       Timeout: 30
@@ -2248,6 +2275,143 @@ Resources:
             Path: /workspaces/{workspace_id}/billing/portal
             Method: POST
 
+  # ============================================
+  # Super Admin Functions
+  # ============================================
+  AdminFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "complens-${Stage}-admin"
+      Handler: admin.handler
+      CodeUri: src/handlers/api/
+      Description: Super admin platform management
+      Timeout: 30
+      Environment:
+        Variables:
+          COGNITO_USER_POOL_ID: !Ref UserPool
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+                - cognito-idp:AdminGetUser
+                - cognito-idp:AdminDisableUser
+                - cognito-idp:AdminEnableUser
+              Resource: !GetAtt UserPool.Arn
+            - Effect: Allow
+              Action:
+                - cloudwatch:GetMetricData
+                - cloudwatch:GetMetricStatistics
+                - cloudwatch:ListMetrics
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - sqs:GetQueueAttributes
+              Resource:
+                - !GetAtt AIProcessingQueue.Arn
+                - !GetAtt WorkflowQueue.Arn
+            - Effect: Allow
+              Action:
+                - lambda:ListFunctions
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - states:ListStateMachines
+                - states:ListExecutions
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-*"
+            - Effect: Allow
+              Action:
+                - ce:GetCostAndUsage
+              Resource: "*"
+      Events:
+        ListWorkspaces:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces
+            Method: GET
+        GetWorkspace:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}
+            Method: GET
+        UpdateWorkspace:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}
+            Method: PUT
+        ListUsers:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/users
+            Method: GET
+        GetUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/users/{user_id}
+            Method: GET
+        DisableUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/users/{user_id}/disable
+            Method: POST
+        EnableUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/users/{user_id}/enable
+            Method: POST
+        BillingSummary:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/billing/summary
+            Method: GET
+        SystemHealth:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/system/health
+            Method: GET
+        GetWorkspaceStats:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/stats
+            Method: GET
+        GetUserStats:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/users/{user_id}/stats
+            Method: GET
+        GetUsageMetrics:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/costs/usage
+            Method: GET
+        GetActualCosts:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/costs/actual
+            Method: GET
+        GetPlatformStats:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/stats/platform
+            Method: GET
+
   BillingWebhookFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -2264,18 +2428,12 @@ Resources:
           STRIPE_BUSINESS_PRICE_ID: !Ref StripeBusinessPriceId
 
   # Stripe EventBridge integration
-  StripeEventBus:
-    Type: AWS::Events::EventBus
-    Condition: StripeEventBridgeEnabled
-    Properties:
-      Name: !Ref StripeEventSourceName
-      EventSourceName: !Ref StripeEventSourceName
-
+  # Note: Partner event bus already exists from Stripe, just reference it by name
   StripeBillingEventRule:
     Type: AWS::Events::Rule
     Condition: StripeEventBridgeEnabled
     Properties:
-      EventBusName: !Ref StripeEventBus
+      EventBusName: !Ref StripeEventSourceName
       EventPattern:
         source:
           - prefix: "aws.partner/stripe.com"

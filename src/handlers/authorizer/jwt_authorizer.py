@@ -60,6 +60,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             "agencyId": claims.get("custom:agency_id", ""),
             "workspaceIds": claims.get("custom:workspace_ids", ""),
             "isAdmin": claims.get("custom:is_admin", "false"),
+            "isSuperAdmin": claims.get("custom:is_super_admin", "false"),
         }
 
         logger.info(

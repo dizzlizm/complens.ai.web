@@ -189,6 +189,10 @@ def get_analytics(workspace_id: str, event: dict) -> dict:
     if "forms" in include_sections:
         result["form_analytics"] = _get_form_analytics(workspace_id)
 
+    # Recent activity
+    if "activity" in include_sections:
+        result["recent_activity"] = _get_recent_activity(workspace_id, all_runs, contacts)
+
     return success(result)
 
 
@@ -353,3 +357,63 @@ def _calc_trend(first_half: int, second_half: int) -> float:
     if first_half == 0:
         return 100.0 if second_half > 0 else 0.0
     return round(((second_half - first_half) / first_half) * 100, 1)
+
+
+def _get_recent_activity(workspace_id: str, runs: list, contacts: list) -> list[dict]:
+    """Get recent activity feed for the dashboard.
+
+    Combines workflow runs and new contacts into a unified activity feed.
+
+    Args:
+        workspace_id: Workspace ID.
+        runs: List of workflow runs.
+        contacts: List of contacts.
+
+    Returns:
+        List of recent activity items, sorted by timestamp descending.
+    """
+    activities = []
+
+    # Add workflow runs to activity feed
+    for run in runs[:50]:  # Limit to last 50
+        status = _get_status(run)
+        status_map = {
+            "completed": "success",
+            "failed": "failed",
+            "running": "running",
+            "pending": "running",
+        }
+
+        wf_name = getattr(run, "workflow_name", None) or "Workflow"
+        created_at = getattr(run, "created_at", None)
+        if created_at:
+            activities.append({
+                "id": f"run_{run.id}",
+                "type": "workflow_run",
+                "title": wf_name,
+                "description": f"Workflow {status}",
+                "status": status_map.get(status, "running"),
+                "timestamp": created_at.isoformat(),
+                "link": f"/workflows/{getattr(run, 'workflow_id', '')}",
+            })
+
+    # Add recent contacts
+    for contact in contacts[:20]:  # Limit to last 20
+        created_at = getattr(contact, "created_at", None)
+        if created_at:
+            email = getattr(contact, "email", "") or "Unknown"
+            first_name = getattr(contact, "first_name", "") or ""
+            display_name = f"{first_name} ({email})" if first_name else email
+
+            activities.append({
+                "id": f"contact_{contact.id}",
+                "type": "contact_created",
+                "title": "New contact",
+                "description": display_name,
+                "timestamp": created_at.isoformat(),
+                "link": f"/contacts/{contact.id}",
+            })
+
+    # Sort by timestamp descending and limit to 10 most recent
+    activities.sort(key=lambda x: x["timestamp"], reverse=True)
+    return activities[:10]

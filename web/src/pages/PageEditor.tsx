@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { usePage, useUpdatePage, type UpdatePageInput, type ChatConfig } from '../lib/hooks/usePages';
+import { usePage, useUpdatePage, type UpdatePageInput, type ChatConfig, type PageLayout } from '../lib/hooks/usePages';
 import { usePageForms, type Form } from '../lib/hooks/useForms';
 import { usePageWorkflows } from '../lib/hooks/useWorkflows';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
@@ -22,8 +22,8 @@ import AITab, { type AISubTab } from '../components/page-editor/AITab';
 const AUTO_SAVE_DELAY = 3000;
 
 // Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.dev.complens.ai';
-const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '');
+const API_URL = import.meta.env.VITE_API_URL || '';
+const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '') || 'complens.ai';
 
 type Tab = 'content' | 'forms' | 'workflows' | 'ai' | 'domain';
 
@@ -153,6 +153,8 @@ export default function PageEditor() {
         // Domain
         subdomain: page.subdomain || '',
         custom_domain: page.custom_domain || '',
+        // Theme
+        theme: page.theme || {},
       });
 
       // Only initialize blocks on first load
@@ -435,6 +437,8 @@ export default function PageEditor() {
             onFbPixelIdChange={(value) => handleChange('fb_pixel_id', value)}
             onScriptsHeadChange={(value) => handleChange('scripts_head', value)}
             onScriptsBodyChange={(value) => handleChange('scripts_body', value)}
+            layout={((formData.theme as Record<string, unknown>)?.layout as PageLayout) || 'full-bleed'}
+            onLayoutChange={(layout) => handleChange('theme', { ...formData.theme, layout })}
           />
         )}
 

@@ -221,6 +221,15 @@ class FormSubmission(BaseModel):
             "GSI1SK": f"SUB#{self.created_at.isoformat()}",
         }
 
+    def get_gsi2_keys(self) -> dict[str, str] | None:
+        """Get GSI2 keys for listing submissions by contact."""
+        if self.contact_id:
+            return {
+                "GSI2PK": f"CONTACT#{self.contact_id}",
+                "GSI2SK": f"SUB#{self.created_at.isoformat()}",
+            }
+        return None
+
 
 class CreateFormRequest(PydanticBaseModel):
     """Request model for creating a form."""

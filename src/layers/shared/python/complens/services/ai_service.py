@@ -535,6 +535,11 @@ def generate_image(
             raise NotImplementedError(
                 "Image generation not available. Enable 'Titan Image Generator G1 v2' in AWS Bedrock Model Access."
             )
+        if "ValidationException" in error_msg and "content filters" in error_msg.lower():
+            logger.warning("Image prompt blocked by content filter", prompt=truncated_prompt[:100])
+            raise ValueError(
+                "Image prompt was flagged by content filters. Try a different description."
+            )
         logger.error("Image generation failed", error=error_msg)
         raise
 

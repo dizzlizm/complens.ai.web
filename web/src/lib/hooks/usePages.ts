@@ -21,6 +21,8 @@ export interface PageBlock {
   colStart?: number;
 }
 
+export type PageLayout = 'full-bleed' | 'contained';
+
 export interface Page {
   id: string;
   workspace_id: string;
@@ -37,7 +39,7 @@ export interface Page {
   primary_color: string;
   secondary_color: string | null;
   accent_color: string | null;
-  theme: Record<string, unknown>;
+  theme: Record<string, unknown> & { layout?: PageLayout };
   custom_css: string | null;
   // SEO fields
   meta_title: string | null;

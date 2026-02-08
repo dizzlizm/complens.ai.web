@@ -186,7 +186,7 @@ class TestCreateCompletePage:
         # Find the notify owner node and check the email
         notify_nodes = [n for n in nodes if n["data"]["label"] == "Notify Owner"]
         assert len(notify_nodes) == 1
-        assert notify_nodes[0]["data"]["config"]["to"] == "boss@company.com"
+        assert notify_nodes[0]["data"]["config"]["email_to"] == "boss@company.com"
 
     def test_create_complete_with_custom_tags(
         self, dynamodb_table, api_gateway_event, create_complete_request
@@ -218,8 +218,9 @@ class TestCreateCompletePage:
         assert len(tag_nodes) == 1
         assert tag_nodes[0]["data"]["config"]["add_tags"] == ["premium", "landing-page", "2024"]
 
+    @patch("api.pages.get_workspace_plan", return_value="pro")
     def test_create_complete_slug_uniqueness(
-        self, dynamodb_table, api_gateway_event, create_complete_request
+        self, mock_plan, dynamodb_table, api_gateway_event, create_complete_request
     ):
         """Test that duplicate slugs are rejected."""
         from api.pages import handler
@@ -247,8 +248,9 @@ class TestCreateCompletePage:
         body = json.loads(response2["body"])
         assert "slug" in body.get("message", "").lower() or "SLUG_EXISTS" in str(body)
 
+    @patch("api.pages.get_workspace_plan", return_value="pro")
     def test_create_complete_subdomain_uniqueness(
-        self, dynamodb_table, api_gateway_event, create_complete_request
+        self, mock_plan, dynamodb_table, api_gateway_event, create_complete_request
     ):
         """Test that duplicate subdomains are rejected."""
         from api.pages import handler

@@ -197,11 +197,19 @@ class WorkflowConfig(PydanticBaseModel):
     """Configuration for the automation workflow."""
 
     name: str = Field(default="Lead Automation")
+    trigger_type: str = Field(
+        default="trigger_form_submitted",
+        description="Workflow trigger type (trigger_form_submitted, trigger_chat_message, etc.)",
+    )
     send_welcome_email: bool = Field(default=True)
     notify_owner: bool = Field(default=True)
     owner_email: str | None = Field(default=None)
     welcome_message: str | None = Field(default=None)
     add_tags: list[str] = Field(default_factory=list)
+    include_ai_respond: bool = Field(
+        default=False,
+        description="Whether to add an AI auto-respond node (for chat-triggered workflows)",
+    )
 
 
 class SynthesisMetadata(PydanticBaseModel):
@@ -325,3 +333,109 @@ class SynthesizePageRequest(PydanticBaseModel):
         """Post-initialization validation."""
         if self.block_types:
             self.validate_block_types(self.block_types)
+
+
+# ==================== Two-Phase Synthesis Models ====================
+
+
+class BrandFoundation(PydanticBaseModel):
+    """Brand context generated during the plan phase.
+
+    Passed back by the frontend to each generate call to ensure
+    all batches share the same creative direction.
+    """
+
+    business_name: str = Field(default="", description="The business name")
+    tagline: str = Field(default="", description="Memorable 5-10 word tagline")
+    tone: str = Field(default="professional", description="Brand tone")
+    narrative_theme: str = Field(
+        default="", description="Unifying story/message across all blocks"
+    )
+    key_benefit: str = Field(default="", description="The #1 benefit for visitors")
+    target_action: str = Field(
+        default="contact us", description="What visitors should do"
+    )
+
+
+class PlanResult(PydanticBaseModel):
+    """Output of the plan phase — everything needed before generation."""
+
+    plan_id: str = Field(..., description="Unique ID for this plan")
+    intent: PageIntent = Field(..., description="Analyzed page intent")
+    assessment: ContentAssessment = Field(..., description="Content quality assessment")
+    block_plan: list[PlannedBlock] = Field(..., description="Planned blocks with widths")
+    design_system: DesignSystem = Field(..., description="Design system")
+    brand: BrandFoundation = Field(..., description="Brand context for generation")
+    seo: SeoConfig = Field(default_factory=SeoConfig, description="SEO metadata")
+    contact_method_injected: str | None = Field(
+        default=None,
+        description="If set, describes what contact method was auto-injected (e.g., 'Added a form for lead capture')",
+    )
+    excluded: dict[str, str] = Field(
+        default_factory=dict, description="Block type -> exclusion reason"
+    )
+
+
+class SynthesizePlanRequest(PydanticBaseModel):
+    """Request model for the synthesize-page/plan endpoint."""
+
+    description: str = Field(
+        ..., min_length=10, max_length=10000, description="Business/page description"
+    )
+    intent_hints: list[str] | None = Field(
+        default=None, description="Hints like 'lead-gen', 'portfolio'"
+    )
+    style_preference: str | None = Field(
+        default=None, description="Style preference"
+    )
+    page_id: str | None = Field(
+        default=None, description="Existing page ID for update mode"
+    )
+    block_types: list[str] | None = Field(
+        default=None,
+        description="Only generate these block types",
+    )
+    existing_block_types: list[str] | None = Field(
+        default=None,
+        description="Block types already on the page (used to avoid injecting duplicates)",
+    )
+
+    def model_post_init(self, __context: Any) -> None:
+        """Post-initialization validation."""
+        if self.block_types:
+            invalid_types = set(self.block_types) - VALID_BLOCK_TYPES
+            if invalid_types:
+                raise ValueError(f"Invalid block types: {', '.join(invalid_types)}")
+
+
+class SynthesizeGenerateRequest(PydanticBaseModel):
+    """Request model for the synthesize-page/generate endpoint."""
+
+    description: str = Field(
+        ..., min_length=10, max_length=10000, description="Business/page description"
+    )
+    page_id: str | None = Field(default=None)
+    brand: BrandFoundation = Field(..., description="Brand context from plan phase")
+    design_system: DesignSystem = Field(..., description="Design system from plan phase")
+    intent: PageIntent = Field(..., description="Intent from plan phase")
+    block_types: list[str] = Field(
+        ..., min_length=1, max_length=3,
+        description="Block types to generate in this batch (max 3)",
+    )
+    include_form: bool = Field(
+        default=False, description="Whether to include form config in response"
+    )
+
+    def model_post_init(self, __context: Any) -> None:
+        """Post-initialization validation."""
+        invalid_types = set(self.block_types) - VALID_BLOCK_TYPES
+        if invalid_types:
+            raise ValueError(f"Invalid block types: {', '.join(invalid_types)}")
+
+
+class GenerateResult(PydanticBaseModel):
+    """Output of a single generate call — one batch of blocks."""
+
+    blocks: list[PageBlock] = Field(..., description="Generated blocks for this batch")
+    form_config: FormConfig | None = Field(default=None)
+    workflow_config: WorkflowConfig | None = Field(default=None)

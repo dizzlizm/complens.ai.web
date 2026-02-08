@@ -83,6 +83,7 @@ interface LayoutSlotProps {
   isLast?: boolean;
   forms?: FormInfo[];
   workspaceId?: string;
+  pageId?: string;
 }
 
 export default function LayoutSlot({
@@ -96,6 +97,7 @@ export default function LayoutSlot({
   showDeleteButton = true,
   forms = [],
   workspaceId,
+  pageId,
 }: LayoutSlotProps) {
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
   const [showWidthDropdown, setShowWidthDropdown] = useState(false);
@@ -429,6 +431,7 @@ export default function LayoutSlot({
           onConfigChange={handleConfigChange}
           forms={forms}
           workspaceId={workspaceId}
+          pageId={pageId}
         />
       )}
     </div>

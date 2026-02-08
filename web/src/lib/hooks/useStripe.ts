@@ -77,46 +77,6 @@ export function useStartStripeConnect() {
 }
 
 /**
- * Hook to complete Stripe Connect OAuth callback.
- */
-export function useCompleteStripeConnect() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({
-      code,
-      state,
-    }: {
-      code: string;
-      state: string;
-    }) => {
-      const { data } = await api.post('/stripe/connect/callback', {
-        code,
-        state,
-      });
-      return data;
-    },
-    onSuccess: (_, variables) => {
-      // Parse state to get workspace_id
-      try {
-        const stateData = JSON.parse(variables.state);
-        const workspaceId = stateData.workspace_id;
-        if (workspaceId) {
-          queryClient.invalidateQueries({
-            queryKey: ['stripe', 'status', workspaceId],
-          });
-          queryClient.invalidateQueries({
-            queryKey: ['workspaces', workspaceId],
-          });
-        }
-      } catch (e) {
-        // Ignore parse errors
-      }
-    },
-  });
-}
-
-/**
  * Hook to disconnect Stripe account.
  */
 export function useDisconnectStripe() {

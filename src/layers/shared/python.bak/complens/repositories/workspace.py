@@ -91,16 +91,17 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         """
         return self.create(workspace, gsi_keys=self._get_all_gsi_keys(workspace))
 
-    def update_workspace(self, workspace: Workspace) -> Workspace:
+    def update_workspace(self, workspace: Workspace, check_version: bool = True) -> Workspace:
         """Update an existing workspace.
 
         Args:
             workspace: The workspace to update.
+            check_version: Whether to enforce optimistic locking.
 
         Returns:
             The updated workspace.
         """
-        return self.update(workspace, gsi_keys=self._get_all_gsi_keys(workspace))
+        return self.update(workspace, gsi_keys=self._get_all_gsi_keys(workspace), check_version=check_version)
 
     def delete_workspace(self, agency_id: str, workspace_id: str) -> bool:
         """Delete a workspace.
@@ -113,3 +114,61 @@ class WorkspaceRepository(BaseRepository[Workspace]):
             True if deleted, False if not found.
         """
         return self.delete(pk=f"AGENCY#{agency_id}", sk=f"WS#{workspace_id}")
+
+    def list_all(self, limit: int = 50, last_key: dict | None = None) -> tuple[list[Workspace], dict | None]:
+        """List all workspaces across all agencies.
+
+        Used by super admin panel for platform-wide workspace view.
+
+        Args:
+            limit: Maximum workspaces to return.
+            last_key: Last evaluated key for pagination.
+
+        Returns:
+            Tuple of (workspaces, last_evaluated_key).
+        """
+        from botocore.exceptions import ClientError
+
+        try:
+            # Use GSI1 to query all workspaces - they all have GSI1PK starting with "WS#"
+            # Actually, we need to scan with a filter since workspaces use GSI1PK=WS#{id}, GSI1SK=META
+            # Scan with filter for SK begins_with "WS#"
+            kwargs = {
+                "FilterExpression": "begins_with(SK, :sk_prefix)",
+                "ExpressionAttributeValues": {":sk_prefix": "WS#"},
+                "Limit": limit,
+            }
+
+            if last_key:
+                kwargs["ExclusiveStartKey"] = last_key
+
+            response = self.table.scan(**kwargs)
+
+            workspaces = [
+                self.model_class.from_dynamodb(item)
+                for item in response.get("Items", [])
+            ]
+            last_evaluated_key = response.get("LastEvaluatedKey")
+
+            return workspaces, last_evaluated_key
+
+        except ClientError as e:
+            import structlog
+            logger = structlog.get_logger()
+            logger.error("Failed to list all workspaces", error=str(e))
+            raise
+
+    def list_by_agency(self, agency_id: str) -> list[Workspace]:
+        """List workspaces by agency ID.
+
+        Args:
+            agency_id: The agency ID.
+
+        Returns:
+            List of workspaces.
+        """
+        workspaces, _ = self.query(
+            pk=f"AGENCY#{agency_id}",
+            sk_begins_with="WS#",
+        )
+        return workspaces

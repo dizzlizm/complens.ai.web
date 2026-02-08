@@ -7,10 +7,10 @@ import structlog
 
 from complens.repositories.workspace import WorkspaceRepository
 from complens.services.billing_service import get_billing_service
-from complens.services.feature_gate import get_usage_summary
+from complens.services.feature_gate import count_resources, get_usage_summary
 from complens.utils.auth import get_auth_context, require_workspace_access
-from complens.utils.exceptions import NotFoundError, ValidationError
-from complens.utils.responses import error, not_found, success, validation_error
+from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
+from complens.utils.responses import error, forbidden, not_found, success, validation_error
 
 logger = structlog.get_logger()
 
@@ -42,6 +42,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         else:
             return error("Method not allowed", 405)
 
+    except ForbiddenError as e:
+        return forbidden(str(e))
     except ValidationError as e:
         return validation_error(e.errors)
     except NotFoundError as e:
@@ -70,35 +72,26 @@ def get_billing_status(workspace_id: str, auth: dict) -> dict:
     subscription_status = getattr(workspace, "subscription_status", None)
     stripe_customer_id = getattr(workspace, "stripe_customer_id", None)
 
-    # Get current usage counts
-    from complens.repositories.contact import ContactRepository
-    from complens.repositories.page import PageRepository
-    from complens.repositories.workflow import WorkflowRepository
+    # Get current usage counts using efficient DynamoDB COUNT queries
+    import boto3
+    import os
 
-    contact_repo = ContactRepository()
-    page_repo = PageRepository()
-    workflow_repo = WorkflowRepository()
+    table_name = os.environ.get("TABLE_NAME", "complens-dev")
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(table_name)
 
     try:
-        contacts, _ = contact_repo.query(
-            pk=f"WS#{workspace_id}",
-            sk_begins_with="CONTACT#",
-            limit=1,
-        )
-        # For count, we'd need a separate counter; use rough estimate
-        contact_count = len(contacts)
+        contact_count = count_resources(table, workspace_id, "CONTACT#")
     except Exception:
         contact_count = 0
 
     try:
-        pages, _ = page_repo.list_by_workspace(workspace_id, limit=1000)
-        page_count = len(pages)
+        page_count = count_resources(table, workspace_id, "PAGE#")
     except Exception:
         page_count = 0
 
     try:
-        workflows, _ = workflow_repo.list_by_workspace(workspace_id, limit=1000)
-        workflow_count = len(workflows)
+        workflow_count = count_resources(table, workspace_id, "WF#")
     except Exception:
         workflow_count = 0
 
@@ -141,17 +134,20 @@ def create_checkout(workspace_id: str, event: dict, auth: dict) -> dict:
         return not_found("workspace", workspace_id)
 
     billing = get_billing_service()
-    customer_email = auth.get("email", "")
+    customer_email = auth.email or ""
     stripe_customer_id = getattr(workspace, "stripe_customer_id", None)
 
-    result = billing.create_checkout_session(
-        workspace_id=workspace_id,
-        price_id=price_id,
-        customer_email=customer_email,
-        stripe_customer_id=stripe_customer_id,
-        success_url=body.get("success_url"),
-        cancel_url=body.get("cancel_url"),
-    )
+    try:
+        result = billing.create_checkout_session(
+            workspace_id=workspace_id,
+            price_id=price_id,
+            customer_email=customer_email,
+            stripe_customer_id=stripe_customer_id,
+            success_url=body.get("success_url"),
+            cancel_url=body.get("cancel_url"),
+        )
+    except ValueError as e:
+        return error(str(e), 400)
 
     return success(result)
 

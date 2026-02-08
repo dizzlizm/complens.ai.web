@@ -33,12 +33,18 @@ STRIPE_CONNECT_CLIENT_ID = os.environ.get("STRIPE_CONNECT_CLIENT_ID", "")
 # Platform fee percentage (2% = 0.02)
 PLATFORM_FEE_PERCENT = float(os.environ.get("STRIPE_PLATFORM_FEE_PERCENT", "0.02"))
 
-# OAuth state encryption key - MUST be set in production
-# Use: openssl rand -hex 32 to generate
-STATE_ENCRYPTION_KEY = os.environ.get("OAUTH_STATE_SECRET", "")
-
 # State token validity period (5 minutes)
+# Note: OAUTH_STATE_SECRET is read at call time via _get_state_encryption_key()
+# Use: openssl rand -hex 32 to generate the secret
 STATE_TOKEN_TTL_SECONDS = 300
+
+
+def _get_state_encryption_key() -> str:
+    """Get OAuth state encryption key from environment.
+
+    This reads the env var at call time to support testing and env changes.
+    """
+    return os.environ.get("OAUTH_STATE_SECRET", "")
 
 
 class StripeError(Exception):
@@ -75,7 +81,8 @@ def encrypt_oauth_state(data: dict) -> str:
     Raises:
         StripeError: If encryption key is not configured.
     """
-    if not STATE_ENCRYPTION_KEY:
+    encryption_key = _get_state_encryption_key()
+    if not encryption_key:
         logger.error("CONFIGURATION ERROR: OAUTH_STATE_SECRET not configured")
         raise StripeError(
             "OAuth state encryption not configured", "config_error"
@@ -89,7 +96,7 @@ def encrypt_oauth_state(data: dict) -> str:
 
     # Create HMAC signature
     signature = hmac.new(
-        STATE_ENCRYPTION_KEY.encode("utf-8"),
+        encryption_key.encode("utf-8"),
         payload.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
@@ -118,7 +125,8 @@ def decrypt_oauth_state(encrypted_state: str) -> dict:
     Raises:
         StripeError: If state is invalid, tampered, or expired.
     """
-    if not STATE_ENCRYPTION_KEY:
+    encryption_key = _get_state_encryption_key()
+    if not encryption_key:
         logger.error("CONFIGURATION ERROR: OAUTH_STATE_SECRET not configured")
         raise StripeError(
             "OAuth state encryption not configured", "config_error"
@@ -136,7 +144,7 @@ def decrypt_oauth_state(encrypted_state: str) -> dict:
 
         # Verify signature
         expected_signature = hmac.new(
-            STATE_ENCRYPTION_KEY.encode("utf-8"),
+            encryption_key.encode("utf-8"),
             payload.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()

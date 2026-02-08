@@ -42,7 +42,7 @@ class SendSmsAction(BaseNode):
         if not to_number:
             return NodeResult.failed(
                 error="No phone number available",
-                error_details={"contact_id": context.contact.id},
+                error_details={"contact_id": context.contact.id if context.contact else None},
             )
 
         if not message:
@@ -50,8 +50,8 @@ class SendSmsAction(BaseNode):
 
         # Get from number from config or workspace settings
         from_number = self._get_config_value("sms_from")
-        if not from_number and hasattr(context, "workspace"):
-            from_number = getattr(context.workspace, "twilio_phone_number", None)
+        if not from_number:
+            from_number = context.workspace_settings.get("twilio_phone_number") or None
 
         self.logger.info(
             "Sending SMS",
@@ -135,7 +135,7 @@ class SendEmailAction(BaseNode):
         if not to_email:
             return NodeResult.failed(
                 error="No email address available",
-                error_details={"contact_id": context.contact.id},
+                error_details={"contact_id": context.contact.id if context.contact else None},
             )
 
         # Get subject and body
@@ -248,7 +248,7 @@ class AIRespondAction(BaseNode):
         respond_via = self._get_config_value("ai_respond_via", "same_channel")
         max_tokens = self._get_config_value("ai_max_tokens", 500)
         model = self._get_config_value(
-            "ai_model", "us.anthropic.claude-3-sonnet-20240229-v1:0"
+            "ai_model", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
         )
         system_prompt = self._get_config_value(
             "ai_system_prompt",
@@ -263,12 +263,24 @@ class AIRespondAction(BaseNode):
             trigger_channel = context.trigger_data.get("channel", "email")
             respond_via = trigger_channel
 
-        # Build context for AI
-        contact_info = f"""Contact Information:
+        # Build context for AI - handle case where contact may be None
+        if context.contact:
+            contact_info = f"""Contact Information:
 - Name: {context.contact.full_name}
 - Email: {context.contact.email or 'N/A'}
 - Phone: {context.contact.phone or 'N/A'}
 - Tags: {', '.join(context.contact.tags) if context.contact.tags else 'None'}"""
+        else:
+            # No contact - extract from form submission data if available
+            form_data = context.trigger_data.get("data", {})
+            email = form_data.get("email", "N/A")
+            name = form_data.get("first_name", form_data.get("name", "Unknown"))
+            phone = form_data.get("phone", "N/A")
+            contact_info = f"""Contact Information:
+- Name: {name}
+- Email: {email}
+- Phone: {phone}
+- Tags: None (no contact created)"""
 
         # Get any message being responded to
         incoming_message = context.variables.get("message_content") or context.trigger_data.get("body", "")
@@ -328,16 +340,21 @@ Task:
         if respond_via == "sms":
             from complens.services.twilio_service import TwilioError, get_twilio_service
 
-            to_number = context.contact.phone
+            # Get phone from contact or fall back to trigger data
+            to_number = context.contact.phone if context.contact else None
+            if not to_number:
+                form_data = context.trigger_data.get("data", {})
+                to_number = form_data.get("phone", form_data.get("Phone", form_data.get("phone_number")))
             if not to_number:
                 return NodeResult.failed(
-                    error="Contact has no phone number for SMS response"
+                    error="No phone number available for SMS response"
                 )
 
             twilio = get_twilio_service()
+            from_number = self._get_config_value("sms_from") or context.workspace_settings.get("twilio_phone_number") or None
             if twilio.is_configured:
                 try:
-                    result = twilio.send_sms(to=to_number, body=ai_response)
+                    result = twilio.send_sms(to=to_number, body=ai_response, from_number=from_number)
                     send_result = {
                         "channel": "sms",
                         "message_sid": result["message_sid"],
@@ -352,10 +369,14 @@ Task:
         elif respond_via == "email":
             from complens.services.email_service import EmailError, get_email_service
 
-            to_email = context.contact.email
+            # Get email from contact or fall back to trigger data
+            to_email = context.contact.email if context.contact else None
+            if not to_email:
+                form_data = context.trigger_data.get("data", {})
+                to_email = form_data.get("email", form_data.get("Email", form_data.get("email_address")))
             if not to_email:
                 return NodeResult.failed(
-                    error="Contact has no email address for email response"
+                    error="No email address available for email response"
                 )
 
             email_service = get_email_service()
@@ -410,6 +431,18 @@ class UpdateContactAction(BaseNode):
         Returns:
             NodeResult with update status.
         """
+        # This action requires a contact to exist
+        if not context.contact:
+            self.logger.warning("Cannot update contact - no contact available")
+            return NodeResult.completed(
+                output={
+                    "contact_id": None,
+                    "changes": [],
+                    "skipped": True,
+                    "reason": "No contact available to update",
+                }
+            )
+
         update_fields = self._get_config_value("update_fields", {})
         add_tags = self._get_config_value("add_tags", [])
         remove_tags = self._get_config_value("remove_tags", [])
@@ -640,7 +673,7 @@ class CreateTaskAction(BaseNode):
                 "description": description,
                 "assigned_to": assigned_to,
                 "due_date": due_date.isoformat() if due_date else None,
-                "contact_id": context.contact.id,
+                "contact_id": context.contact.id if context.contact else None,
             }
         )
 
@@ -725,6 +758,12 @@ class StripeCheckoutAction(BaseNode):
         )
 
         try:
+            # Get customer email from contact or trigger data
+            customer_email = context.contact.email if context.contact else None
+            if not customer_email:
+                form_data = context.trigger_data.get("data", {})
+                customer_email = form_data.get("email", form_data.get("Email"))
+
             result = create_checkout_session(
                 connected_account_id=stripe_account_id,
                 workspace_id=context.workspace_id,
@@ -736,9 +775,9 @@ class StripeCheckoutAction(BaseNode):
                 },
                 success_url=success_url,
                 cancel_url=cancel_url,
-                customer_email=context.contact.email,
+                customer_email=customer_email,
                 metadata={
-                    "contact_id": context.contact.id,
+                    "contact_id": context.contact.id if context.contact else None,
                     "workflow_run_id": context.workflow_run.id,
                 },
                 mode="payment",
@@ -830,6 +869,12 @@ class StripeSubscriptionAction(BaseNode):
         )
 
         try:
+            # Get customer email from contact or trigger data
+            customer_email = context.contact.email if context.contact else None
+            if not customer_email:
+                form_data = context.trigger_data.get("data", {})
+                customer_email = form_data.get("email", form_data.get("Email"))
+
             result = create_checkout_session(
                 connected_account_id=stripe_account_id,
                 workspace_id=context.workspace_id,
@@ -841,9 +886,9 @@ class StripeSubscriptionAction(BaseNode):
                 },
                 success_url=success_url,
                 cancel_url=cancel_url,
-                customer_email=context.contact.email,
+                customer_email=customer_email,
                 metadata={
-                    "contact_id": context.contact.id,
+                    "contact_id": context.contact.id if context.contact else None,
                     "workflow_run_id": context.workflow_run.id,
                 },
                 mode="subscription",

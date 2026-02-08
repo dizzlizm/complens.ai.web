@@ -198,6 +198,7 @@ export default function PublicPage() {
           primaryColor={safeColor}
           workspaceId={workspaceId}
           pageId={page.id}
+          layout={(page.theme?.layout as 'full-bleed' | 'contained') || 'full-bleed'}
         />
       ) : hasRichContent ? (
         // Legacy rich HTML content

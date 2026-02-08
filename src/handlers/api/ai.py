@@ -25,7 +25,11 @@ from complens.models.business_profile import (
     UpdateBusinessProfileRequest,
     ONBOARDING_QUESTIONS,
 )
-from complens.models.synthesis import SynthesizePageRequest
+from complens.models.synthesis import (
+    SynthesizeGenerateRequest,
+    SynthesizePageRequest,
+    SynthesizePlanRequest,
+)
 from complens.repositories.business_profile import BusinessProfileRepository
 from complens.services import ai_service
 from complens.services.synthesis_engine import SynthesisEngine
@@ -62,7 +66,7 @@ def _check_ai_rate_limit(
     Raises:
         _AIRateLimitExceeded: If rate limit exceeded.
     """
-    user_id = auth.get("userId", workspace_id)
+    user_id = auth.user_id
     result = check_rate_limit(
         identifier=f"{workspace_id}:{user_id}",
         action=action,
@@ -94,6 +98,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         POST   /workspaces/{workspace_id}/ai/generate-page-content - Generate page content from description
         POST   /workspaces/{workspace_id}/ai/refine-page-content - Refine generated content with feedback
         POST   /workspaces/{workspace_id}/ai/synthesize-page - Unified synthesis engine for complete page
+        POST   /workspaces/{workspace_id}/ai/synthesize-page/plan - Plan phase (fast, 1 Haiku call)
+        POST   /workspaces/{workspace_id}/ai/synthesize-page/generate - Generate phase (batch of ≤3 blocks)
     """
     try:
         http_method = event.get("httpMethod", "").upper()
@@ -140,6 +146,12 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         elif "/ai/refine-page-content" in path and http_method == "POST":
             _check_ai_rate_limit(auth, workspace_id)
             return refine_page_content(workspace_id, event)
+        elif "/ai/synthesize-page/plan" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
+            return synthesize_plan(workspace_id, event)
+        elif "/ai/synthesize-page/generate" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
+            return synthesize_generate(workspace_id, event)
         elif "/ai/synthesize-page" in path and http_method == "POST":
             _check_ai_rate_limit(auth, workspace_id)
             return synthesize_page(workspace_id, event)
@@ -491,6 +503,9 @@ def generate_image(workspace_id: str, event: dict) -> dict:
         # Image generation not available (model not enabled)
         logger.warning("Image generation not available", error=str(e))
         return error(str(e), 501)  # 501 Not Implemented
+    except ValueError as e:
+        # Content filter rejection or invalid prompt
+        return error(str(e), 422)
     except Exception as e:
         logger.error("Image generation failed", error=str(e))
         return error(f"Image generation failed: {str(e)}", 500)
@@ -607,6 +622,115 @@ def refine_page_content(workspace_id: str, event: dict) -> dict:
     except Exception as e:
         logger.error("Page content refinement failed", error=str(e))
         return error(f"Content refinement failed: {str(e)}", 500)
+
+
+def synthesize_plan(workspace_id: str, event: dict) -> dict:
+    """Plan phase of two-phase synthesis.
+
+    Runs intent analysis, content assessment, block planning, design system,
+    and brand foundation (single Haiku call). Returns everything the frontend
+    needs to preview before generation.
+
+    Request body:
+        description: Business/page description (required)
+        intent_hints: Optional hints like ['lead-gen', 'portfolio']
+        style_preference: Optional style like 'professional', 'bold'
+        page_id: Existing page ID for update mode
+        block_types: Optional specific block types to plan
+
+    Returns:
+        PlanResult with intent, block plan, design, brand, SEO
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+        request = SynthesizePlanRequest.model_validate(body)
+    except PydanticValidationError as e:
+        return validation_error([
+            {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
+            for err in e.errors()
+        ])
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    try:
+        engine = SynthesisEngine()
+        result = engine.plan(
+            workspace_id=workspace_id,
+            description=request.description,
+            page_id=request.page_id,
+            intent_hints=request.intent_hints,
+            style_preference=request.style_preference,
+            block_types=request.block_types,
+            existing_block_types=request.existing_block_types,
+        )
+
+        logger.info(
+            "Plan phase complete",
+            workspace_id=workspace_id,
+            plan_id=result.plan_id,
+            blocks_planned=len(result.block_plan),
+        )
+
+        return success(result.model_dump(mode="json"))
+
+    except Exception as e:
+        logger.error("Plan phase failed", error=str(e))
+        return error(f"Plan phase failed: {str(e)}", 500)
+
+
+def synthesize_generate(workspace_id: str, event: dict) -> dict:
+    """Generate phase of two-phase synthesis.
+
+    Takes brand/design from plan phase and generates content for a batch
+    of up to 3 block types. Called 1-2 times by the frontend.
+
+    Request body:
+        description: Business/page description (required)
+        brand: BrandFoundation from plan phase
+        design_system: DesignSystem from plan phase
+        intent: PageIntent from plan phase
+        block_types: Block types to generate (max 3)
+        page_id: Optional page ID
+        include_form: Whether to include form/workflow config
+
+    Returns:
+        GenerateResult with blocks and optional form/workflow config
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+        request = SynthesizeGenerateRequest.model_validate(body)
+    except PydanticValidationError as e:
+        return validation_error([
+            {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
+            for err in e.errors()
+        ])
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    try:
+        engine = SynthesisEngine()
+        result = engine.generate(
+            workspace_id=workspace_id,
+            description=request.description,
+            brand=request.brand,
+            design=request.design_system,
+            intent=request.intent,
+            block_types=request.block_types,
+            page_id=request.page_id,
+            include_form=request.include_form,
+        )
+
+        logger.info(
+            "Generate phase complete",
+            workspace_id=workspace_id,
+            blocks_generated=len(result.blocks),
+        )
+
+        return success(result.model_dump(mode="json"))
+
+    except Exception as e:
+        logger.error("Generate phase failed", error=str(e))
+        return error(f"Generate phase failed: {str(e)}", 500)
 
 
 def synthesize_page(workspace_id: str, event: dict) -> dict:

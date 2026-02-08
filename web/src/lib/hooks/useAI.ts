@@ -273,6 +273,9 @@ export interface SynthesisPageBlock {
   order: number;
   width: number;
   config: Record<string, unknown>;
+  row?: number;
+  colSpan?: number;
+  colStart?: number;
 }
 
 export interface SynthesisFormConfig {
@@ -291,6 +294,7 @@ export interface SynthesisWorkflowConfig {
   owner_email?: string;
   welcome_message?: string;
   add_tags: string[];
+  include_ai_respond?: boolean;
 }
 
 export interface SynthesisMetadata {
@@ -579,6 +583,90 @@ export function useSynthesizePage(workspaceId: string) {
     mutationFn: async (input: SynthesizePageInput) => {
       const { data } = await api.post<SynthesisResult>(
         `/workspaces/${workspaceId}/ai/synthesize-page`,
+        input
+      );
+      return data;
+    },
+  });
+}
+
+// ==================== TWO-PHASE SYNTHESIS TYPES ====================
+
+export interface BrandFoundation {
+  business_name: string;
+  tagline: string;
+  tone: string;
+  narrative_theme: string;
+  key_benefit: string;
+  target_action: string;
+}
+
+export interface PlannedBlock {
+  type: string;
+  width: number;
+  emphasis: 'high' | 'medium' | 'low';
+  content_source: 'profile' | 'generated' | 'hybrid';
+  config_hints: Record<string, unknown>;
+}
+
+export interface PlanResult {
+  plan_id: string;
+  intent: PageIntent;
+  assessment: ContentAssessment;
+  block_plan: PlannedBlock[];
+  design_system: SynthesisDesignSystem;
+  brand: BrandFoundation;
+  seo: SynthesisSeoConfig;
+  contact_method_injected: string | null;
+  excluded: Record<string, string>;
+}
+
+export interface SynthesizePlanInput {
+  description: string;
+  intent_hints?: string[];
+  style_preference?: 'professional' | 'bold' | 'minimal' | 'playful';
+  page_id?: string;
+  block_types?: string[];
+  existing_block_types?: string[];
+}
+
+export interface SynthesizeGenerateInput {
+  description: string;
+  page_id?: string;
+  brand: BrandFoundation;
+  design_system: SynthesisDesignSystem;
+  intent: PageIntent;
+  block_types: string[];
+  include_form?: boolean;
+}
+
+export interface GenerateResult {
+  blocks: SynthesisPageBlock[];
+  form_config: SynthesisFormConfig | null;
+  workflow_config: SynthesisWorkflowConfig | null;
+}
+
+// ==================== TWO-PHASE SYNTHESIS HOOKS ====================
+
+// Plan phase: fast, returns block plan + brand + design
+export function useSynthesizePlan(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: SynthesizePlanInput) => {
+      const { data } = await api.post<PlanResult>(
+        `/workspaces/${workspaceId}/ai/synthesize-page/plan`,
+        input
+      );
+      return data;
+    },
+  });
+}
+
+// Generate phase: generates content for a batch of ≤3 blocks
+export function useSynthesizeGenerate(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: SynthesizeGenerateInput) => {
+      const { data } = await api.post<GenerateResult>(
+        `/workspaces/${workspaceId}/ai/synthesize-page/generate`,
         input
       );
       return data;
