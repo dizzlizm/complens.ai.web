@@ -27,6 +27,7 @@ import NotFound from './pages/NotFound';
 
 // Public pages (no auth)
 import PublicPage from './pages/public/PublicPage';
+import EmbedChat from './pages/public/EmbedChat';
 
 // Error boundary
 import ErrorBoundary from './components/ErrorBoundary';
@@ -72,6 +73,9 @@ function App() {
 
           {/* Public pages (no auth required) */}
           <Route path="/p/:pageSlug" element={<PublicPage />} />
+
+          {/* Embeddable chat widget (loaded in iframe on external sites) */}
+          <Route path="/embed/chat" element={<EmbedChat />} />
 
           {/* 404 */}
           <Route path="*" element={<NotFound />} />

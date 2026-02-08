@@ -40,6 +40,19 @@ export default function ChatWidget({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const visitorId = useRef<string>(getOrCreateVisitorId());
 
+  // Notify parent frame (if embedded) when chat opens/closes
+  const isEmbedded = window !== window.parent;
+
+  const toggleChat = useCallback((open: boolean) => {
+    setIsOpen(open);
+    if (isEmbedded) {
+      window.parent.postMessage(
+        { type: open ? 'complens-chat-active' : 'complens-chat-inactive' },
+        '*'
+      );
+    }
+  }, [isEmbedded]);
+
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
@@ -259,7 +272,7 @@ export default function ChatWidget({
     <>
       {/* Chat bubble button */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => toggleChat(!isOpen)}
         className={`fixed bottom-4 ${positionClasses} w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-transform hover:scale-110 z-50`}
         style={{ backgroundColor: primaryColor }}
         aria-label={isOpen ? 'Close chat' : 'Open chat'}
