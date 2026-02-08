@@ -2829,6 +2829,7 @@ Resources:
     Condition: CustomDomainEnabled
     Properties:
       OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-frontend-oac"
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
