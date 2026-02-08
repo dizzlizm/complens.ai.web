@@ -1,6 +1,7 @@
 """Knowledge base API handler."""
 
 import json
+import os
 from typing import Any
 
 import structlog
@@ -154,7 +155,7 @@ def confirm_upload(
     workspace_id: str,
     document_id: str,
 ) -> dict:
-    """Confirm a document upload completed and mark as indexed.
+    """Confirm a document upload, process it to markdown, and mark as indexed.
 
     Args:
         repo: Document repository.
@@ -164,11 +165,33 @@ def confirm_upload(
     Returns:
         API response with updated document.
     """
+    from complens.services.document_processor import process_document
+
     document = repo.get_by_id(workspace_id, document_id)
     if not document:
         return not_found("document", document_id)
 
-    document.status = DocumentStatus.INDEXED
+    # Mark as processing
+    document.status = DocumentStatus.PROCESSING
+    document.update_timestamp()
+    repo.update_document(document)
+
+    bucket = os.environ.get("KB_DOCUMENTS_BUCKET", "")
+
+    try:
+        processed_key = process_document(
+            bucket=bucket,
+            file_key=document.file_key,
+            content_type=document.content_type,
+            name=document.name,
+        )
+        document.processed_key = processed_key
+        document.status = DocumentStatus.INDEXED
+    except Exception as e:
+        logger.error("Document processing failed", document_id=document_id, error=str(e))
+        document.status = DocumentStatus.FAILED
+        document.error_message = str(e)
+
     document.update_timestamp()
     document = repo.update_document(document)
 
@@ -176,6 +199,7 @@ def confirm_upload(
         "Document upload confirmed",
         workspace_id=workspace_id,
         document_id=document_id,
+        status=document.status,
     )
 
     return success(document.model_dump(mode="json", by_alias=True))

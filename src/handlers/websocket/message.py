@@ -264,19 +264,17 @@ def _get_document_context(workspace_id: str, max_chars: int = 8000) -> str:
     if not bucket:
         return ""
 
-    TEXT_TYPES = {"text/plain", "text/markdown", "text/csv", "text/html", "application/json"}
     snippets = []
     total_chars = 0
 
     for doc in documents:
-        if not doc.file_key:
-            continue
-        # Only read text-based files (skip PDFs, DOCX for now)
-        if doc.content_type not in TEXT_TYPES:
+        # Prefer processed markdown, fall back to raw file for text types
+        key = doc.processed_key or doc.file_key
+        if not key:
             continue
 
         try:
-            obj = s3.get_object(Bucket=bucket, Key=doc.file_key)
+            obj = s3.get_object(Bucket=bucket, Key=key)
             content = obj["Body"].read().decode("utf-8", errors="replace")
 
             # Truncate individual doc if needed
