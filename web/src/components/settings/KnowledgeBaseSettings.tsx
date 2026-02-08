@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { BookOpen, Upload, Trash2, RefreshCw, FileText, Loader2, CheckCircle, AlertCircle, Clock } from 'lucide-react';
-import { useKBDocuments, useKBStatus, useCreateKBDocument, useDeleteKBDocument, useSyncKB } from '../../lib/hooks/useKnowledgeBase';
+import { useKBDocuments, useKBStatus, useCreateKBDocument, useConfirmKBUpload, useDeleteKBDocument, useSyncKB } from '../../lib/hooks/useKnowledgeBase';
 
 interface KnowledgeBaseSettingsProps {
   workspaceId: string;
@@ -23,6 +23,7 @@ export default function KnowledgeBaseSettings({ workspaceId }: KnowledgeBaseSett
   const { data: documents = [], isLoading: loadingDocs } = useKBDocuments(workspaceId || undefined);
   const { data: status } = useKBStatus(workspaceId || undefined);
   const createDocument = useCreateKBDocument(workspaceId);
+  const confirmUpload = useConfirmKBUpload(workspaceId);
   const deleteDocument = useDeleteKBDocument(workspaceId);
   const syncKB = useSyncKB(workspaceId);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -42,11 +43,15 @@ export default function KnowledgeBaseSettings({ workspaceId }: KnowledgeBaseSett
         });
 
         // Upload to presigned URL
-        await fetch(result.upload_url, {
+        const uploadRes = await fetch(result.upload_url, {
           method: 'PUT',
           body: file,
           headers: { 'Content-Type': file.type || 'application/octet-stream' },
         });
+
+        if (uploadRes.ok) {
+          await confirmUpload.mutateAsync(result.id);
+        }
       }
     } catch (err) {
       console.error('Upload failed:', err);

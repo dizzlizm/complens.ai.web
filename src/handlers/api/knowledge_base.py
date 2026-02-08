@@ -50,6 +50,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return list_documents(repo, workspace_id, event)
         elif http_method == "POST" and not document_id:
             return create_document(repo, kb_service, workspace_id, event)
+        elif path.endswith("/confirm-upload") and http_method == "POST" and document_id:
+            return confirm_upload(repo, workspace_id, document_id)
         elif http_method == "DELETE" and document_id:
             return delete_document(repo, kb_service, workspace_id, document_id)
         else:
@@ -145,6 +147,38 @@ def create_document(
     result["upload_url"] = upload_url
 
     return created(result)
+
+
+def confirm_upload(
+    repo: DocumentRepository,
+    workspace_id: str,
+    document_id: str,
+) -> dict:
+    """Confirm a document upload completed and mark as indexed.
+
+    Args:
+        repo: Document repository.
+        workspace_id: Workspace ID.
+        document_id: Document ID.
+
+    Returns:
+        API response with updated document.
+    """
+    document = repo.get_by_id(workspace_id, document_id)
+    if not document:
+        return not_found("document", document_id)
+
+    document.status = DocumentStatus.INDEXED
+    document.update_timestamp()
+    document = repo.update_document(document)
+
+    logger.info(
+        "Document upload confirmed",
+        workspace_id=workspace_id,
+        document_id=document_id,
+    )
+
+    return success(document.model_dump(mode="json", by_alias=True))
 
 
 def delete_document(

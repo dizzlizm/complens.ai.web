@@ -2517,6 +2517,12 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/knowledge-base/documents
             Method: POST
+        ConfirmUpload:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/knowledge-base/documents/{document_id}/confirm-upload
+            Method: POST
         DeleteDocument:
           Type: Api
           Properties:
