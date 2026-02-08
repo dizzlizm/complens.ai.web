@@ -31,6 +31,7 @@ build-layer:
 	@mv src/layers/shared/python src/layers/shared/python.bak 2>/dev/null || true
 	@mv .layer-build/python src/layers/shared/python
 	@rm -rf .layer-build
+	@rm -rf src/layers/shared/python.bak
 	@echo "Layer built successfully!"
 
 build-cached:
