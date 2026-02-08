@@ -77,6 +77,7 @@ class EmailService:
         bcc: list[str] | None = None,
         attachments: list[dict] | None = None,
         tags: dict[str, str] | None = None,
+        _skip_warmup_check: bool = False,
     ) -> dict[str, Any]:
         """Send an email.
 
@@ -91,6 +92,7 @@ class EmailService:
             bcc: BCC addresses.
             attachments: List of attachment dicts with keys: filename, content, content_type.
             tags: Message tags for tracking.
+            _skip_warmup_check: Internal flag to bypass warm-up check (used by daily processor).
 
         Returns:
             Dict with message_id and status.
@@ -109,6 +111,15 @@ class EmailService:
         # Normalize to list
         if isinstance(to, str):
             to = [to]
+
+        # Warm-up check: defer email if over daily limit
+        if not _skip_warmup_check and not attachments:
+            deferred = self._check_warmup_and_defer(
+                to=to, subject=subject, body_text=body_text, body_html=body_html,
+                from_email=from_email, reply_to=reply_to, cc=cc, bcc=bcc, tags=tags,
+            )
+            if deferred is not None:
+                return deferred
 
         logger.info(
             "Sending email",
@@ -163,6 +174,54 @@ class EmailService:
                 code=error_code,
                 details={"aws_error": error_message},
             ) from e
+
+    def _check_warmup_and_defer(
+        self,
+        to: list[str],
+        subject: str,
+        body_text: str | None,
+        body_html: str | None,
+        from_email: str,
+        reply_to: list[str] | None,
+        cc: list[str] | None,
+        bcc: list[str] | None,
+        tags: dict[str, str] | None,
+    ) -> dict[str, Any] | None:
+        """Check warm-up limits and defer email if over daily limit.
+
+        Returns None if the email should be sent normally, or a deferred
+        result dict if the email was queued for later.
+        Fails open: if anything goes wrong, returns None (send normally).
+
+        Args:
+            to: Recipient addresses.
+            subject: Email subject.
+            body_text: Plain text body.
+            body_html: HTML body.
+            from_email: Sender email.
+            reply_to: Reply-to addresses.
+            cc: CC addresses.
+            bcc: BCC addresses.
+            tags: Message tags.
+
+        Returns:
+            Deferred result dict, or None to proceed with normal send.
+        """
+        try:
+            from complens.services.warmup_service import WarmupService
+            service = WarmupService()
+            check = service.check_warmup_limit(from_email)
+
+            if check.should_defer:
+                return service.defer_email(
+                    to=to, subject=subject, body_text=body_text, body_html=body_html,
+                    from_email=from_email, reply_to=reply_to, cc=cc, bcc=bcc,
+                    tags=tags, domain=check.domain,
+                )
+        except Exception:
+            logger.debug("Warmup check failed, proceeding with send", from_email=from_email)
+
+        return None
 
     def _send_simple_email(
         self,
@@ -361,6 +420,7 @@ class EmailService:
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
         tags: dict[str, str] | None = None,
+        _skip_warmup_check: bool = False,
     ) -> dict[str, Any]:
         """Send an email using an SES template.
 
@@ -373,6 +433,7 @@ class EmailService:
             cc: CC addresses.
             bcc: BCC addresses.
             tags: Message tags.
+            _skip_warmup_check: Internal flag to bypass warm-up check.
 
         Returns:
             Dict with message_id and status.
@@ -387,6 +448,16 @@ class EmailService:
         # Normalize to list
         if isinstance(to, str):
             to = [to]
+
+        # Warm-up check for templated emails
+        if not _skip_warmup_check:
+            deferred = self._check_warmup_and_defer(
+                to=to, subject=f"[template:{template_name}]", body_text=None,
+                body_html=None, from_email=from_email, reply_to=reply_to,
+                cc=cc, bcc=bcc, tags=tags,
+            )
+            if deferred is not None:
+                return deferred
 
         logger.info(
             "Sending templated email",

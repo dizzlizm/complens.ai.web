@@ -17,6 +17,7 @@ PLAN_LIMITS = {
         "team_members": 1,
         "custom_domain": False,
         "knowledge_base": False,
+        "email_warmup": False,
     },
     "pro": {
         "contacts": 10000,
@@ -26,6 +27,7 @@ PLAN_LIMITS = {
         "team_members": 5,
         "custom_domain": True,
         "knowledge_base": True,
+        "email_warmup": True,
     },
     "business": {
         "contacts": -1,  # unlimited
@@ -35,6 +37,7 @@ PLAN_LIMITS = {
         "team_members": -1,
         "custom_domain": True,
         "knowledge_base": True,
+        "email_warmup": True,
     },
 }
 

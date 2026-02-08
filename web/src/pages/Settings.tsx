@@ -2,9 +2,11 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle,
   ExternalLink, Search, Mail, Key, Smartphone, Monitor, LogOut, Plus, ChevronRight,
-  MessageSquare, Database, BarChart3, Calendar, ShoppingCart, FileText, Megaphone
+  MessageSquare, Database, BarChart3, Calendar, ShoppingCart, FileText, Megaphone,
+  Pause, Play, Trash2, AlertTriangle, TrendingUp
 } from 'lucide-react';
-import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe } from '../lib/hooks';
+import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup, useCancelWarmup, getWarmupStatusInfo } from '../lib/hooks';
+import type { WarmupDomain } from '../lib/hooks/useEmailWarmup';
 import { useBillingStatus, useCreateCheckout, useCreatePortal } from '../lib/hooks/useBilling';
 import TwilioConfigCard from '../components/settings/TwilioConfigCard';
 import SegmentConfigCard from '../components/settings/SegmentConfigCard';
@@ -1040,39 +1042,278 @@ function EmailDomainSettings() {
         </div>
       </div>
 
-      {/* Domain Verification */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold text-gray-900">Domain Verification</h2>
+      {/* Email Warm-up */}
+      <EmailWarmupSection workspaceId={workspaceId} />
+    </div>
+  );
+}
+
+function EmailWarmupSection({ workspaceId }: { workspaceId: string | undefined }) {
+  const { data: warmupsData, isLoading } = useWarmups(workspaceId);
+  const startWarmup = useStartWarmup(workspaceId || '');
+  const pauseWarmup = usePauseWarmup(workspaceId || '');
+  const resumeWarmup = useResumeWarmup(workspaceId || '');
+  const cancelWarmup = useCancelWarmup(workspaceId || '');
+
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newDomain, setNewDomain] = useState('');
+  const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
+
+  const warmups = warmupsData?.items || [];
+
+  const handleStartWarmup = async () => {
+    if (!newDomain.trim()) return;
+    try {
+      await startWarmup.mutateAsync({ domain: newDomain.trim().toLowerCase() });
+      setNewDomain('');
+      setShowAddForm(false);
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
+  const handleCancel = async (domain: string) => {
+    try {
+      await cancelWarmup.mutateAsync(domain);
+      setConfirmCancel(null);
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-gray-900">Domain Warm-up</h2>
           <span className="text-xs bg-primary-100 text-primary-700 px-2 py-0.5 rounded-full font-medium">Pro</span>
         </div>
-        <p className="text-sm text-gray-500 mb-4">
-          Verify your domain to improve email deliverability and enable custom sending addresses
-        </p>
-        <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-          <div className="flex items-center gap-3">
-            <Globe className="w-8 h-8 text-gray-400" />
-            <div>
-              <p className="font-medium text-gray-700">Add Your Domain</p>
-              <p className="text-sm text-gray-500">Configure DKIM, SPF, and DMARC records</p>
-            </div>
-          </div>
-          <button className="btn btn-primary mt-4" disabled>
-            <Plus className="w-4 h-4 mr-2" />
-            Add Domain
+        {!showAddForm && (
+          <button
+            onClick={() => setShowAddForm(true)}
+            className="btn btn-primary btn-sm inline-flex items-center gap-1"
+          >
+            <Plus className="w-4 h-4" />
+            Start Warm-up
           </button>
+        )}
+      </div>
+      <p className="text-sm text-gray-500 mb-4">
+        Gradually ramp up sending volume on new domains to build reputation and avoid spam filters
+      </p>
+
+      {/* Add domain form */}
+      {showAddForm && (
+        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Domain</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              className="input flex-1"
+              placeholder="yourcompany.com"
+              value={newDomain}
+              onChange={(e) => setNewDomain(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleStartWarmup()}
+            />
+            <button
+              onClick={handleStartWarmup}
+              disabled={!newDomain.trim() || startWarmup.isPending}
+              className="btn btn-primary inline-flex items-center gap-2"
+            >
+              {startWarmup.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+              Start
+            </button>
+            <button
+              onClick={() => { setShowAddForm(false); setNewDomain(''); }}
+              className="btn btn-secondary"
+            >
+              Cancel
+            </button>
+          </div>
+          {startWarmup.isError && (
+            <p className="text-sm text-red-600 mt-2 flex items-center gap-1">
+              <AlertCircle className="w-4 h-4" />
+              {(startWarmup.error as any)?.response?.data?.error || 'Failed to start warm-up'}
+            </p>
+          )}
+          <p className="text-xs text-gray-500 mt-2">
+            Emails from this domain will be gradually ramped up over 14 days (50 &rarr; 10,000/day)
+          </p>
         </div>
-        <p className="text-xs text-gray-500 mt-3">Domain verification coming soon</p>
+      )}
+
+      {/* Loading */}
+      {isLoading && (
+        <div className="flex items-center justify-center py-8 text-gray-500">
+          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+          Loading warm-up domains...
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!isLoading && warmups.length === 0 && !showAddForm && (
+        <div className="p-6 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-center">
+          <TrendingUp className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+          <p className="font-medium text-gray-700">No domains warming up</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Start a warm-up to build sending reputation for a new domain
+          </p>
+        </div>
+      )}
+
+      {/* Warmup list */}
+      {warmups.length > 0 && (
+        <div className="space-y-3">
+          {warmups.map((warmup) => (
+            <WarmupDomainCard
+              key={warmup.domain}
+              warmup={warmup}
+              onPause={(d) => pauseWarmup.mutate(d)}
+              onResume={(d) => resumeWarmup.mutate(d)}
+              onCancel={(d) => confirmCancel === d ? handleCancel(d) : setConfirmCancel(d)}
+              confirmingCancel={confirmCancel === warmup.domain}
+              isPausing={pauseWarmup.isPending}
+              isResuming={resumeWarmup.isPending}
+              isCancelling={cancelWarmup.isPending}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WarmupDomainCard({
+  warmup,
+  onPause,
+  onResume,
+  onCancel,
+  confirmingCancel,
+  isPausing,
+  isResuming,
+  isCancelling,
+}: {
+  warmup: WarmupDomain;
+  onPause: (domain: string) => void;
+  onResume: (domain: string) => void;
+  onCancel: (domain: string) => void;
+  confirmingCancel: boolean;
+  isPausing: boolean;
+  isResuming: boolean;
+  isCancelling: boolean;
+}) {
+  const statusInfo = getWarmupStatusInfo(warmup.status);
+  const progress = warmup.schedule_length > 0
+    ? Math.round((warmup.warmup_day / warmup.schedule_length) * 100)
+    : 0;
+
+  return (
+    <div className="border border-gray-200 rounded-lg p-4">
+      {/* Header row */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <Globe className="w-5 h-5 text-gray-400" />
+          <span className="font-medium text-gray-900">{warmup.domain}</span>
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusInfo.color} ${statusInfo.bgColor}`}>
+            {statusInfo.label}
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
+          {warmup.status === 'active' && (
+            <button
+              onClick={() => onPause(warmup.domain)}
+              disabled={isPausing}
+              className="p-1.5 text-gray-500 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors"
+              title="Pause warm-up"
+            >
+              <Pause className="w-4 h-4" />
+            </button>
+          )}
+          {warmup.status === 'paused' && (
+            <button
+              onClick={() => onResume(warmup.domain)}
+              disabled={isResuming}
+              className="p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
+              title="Resume warm-up"
+            >
+              <Play className="w-4 h-4" />
+            </button>
+          )}
+          {(warmup.status === 'active' || warmup.status === 'paused') && (
+            <button
+              onClick={() => onCancel(warmup.domain)}
+              disabled={isCancelling}
+              className={`p-1.5 rounded transition-colors ${
+                confirmingCancel
+                  ? 'text-red-600 bg-red-50'
+                  : 'text-gray-500 hover:text-red-600 hover:bg-red-50'
+              }`}
+              title={confirmingCancel ? 'Click again to confirm' : 'Cancel warm-up'}
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Email Deliverability */}
-      <div className="card bg-gray-50 border-dashed">
-        <div className="flex items-center gap-3 text-gray-500">
-          <Mail className="w-5 h-5" />
+      {/* Auto-pause alert */}
+      {warmup.status === 'paused' && warmup.pause_reason && warmup.pause_reason !== 'manual' && (
+        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-3 text-sm">
+          <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
           <div>
-            <p className="font-medium text-gray-700">Email Deliverability Reports</p>
-            <p className="text-sm">Track bounce rates, opens, and spam complaints - coming soon</p>
+            <p className="font-medium text-amber-800">Auto-paused</p>
+            <p className="text-amber-700">{warmup.pause_reason}</p>
           </div>
+        </div>
+      )}
+
+      {/* Progress bar */}
+      {(warmup.status === 'active' || warmup.status === 'paused') && (
+        <div className="mb-3">
+          <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+            <span>Day {warmup.warmup_day + 1} of {warmup.schedule_length}</span>
+            <span>{warmup.daily_limit === -1 ? 'Unlimited' : `${warmup.daily_limit.toLocaleString()}/day limit`}</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div
+              className={`h-2 rounded-full transition-all ${
+                warmup.status === 'paused' ? 'bg-amber-400' : 'bg-primary-500'
+              }`}
+              style={{ width: `${Math.min(progress, 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Completed state */}
+      {warmup.status === 'completed' && (
+        <div className="flex items-center gap-2 text-sm text-green-600 mb-3">
+          <Check className="w-4 h-4" />
+          <span>Warm-up complete - no sending limits enforced</span>
+        </div>
+      )}
+
+      {/* Stats row */}
+      <div className="grid grid-cols-4 gap-3 text-center">
+        <div className="bg-gray-50 rounded-lg p-2">
+          <p className="text-xs text-gray-500">Sent</p>
+          <p className="text-sm font-semibold text-gray-900">{warmup.total_sent.toLocaleString()}</p>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-2">
+          <p className="text-xs text-gray-500">Bounced</p>
+          <p className="text-sm font-semibold text-gray-900">{warmup.total_bounced.toLocaleString()}</p>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-2">
+          <p className="text-xs text-gray-500">Bounce Rate</p>
+          <p className={`text-sm font-semibold ${warmup.bounce_rate > warmup.max_bounce_rate ? 'text-red-600' : 'text-gray-900'}`}>
+            {warmup.bounce_rate.toFixed(2)}%
+          </p>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-2">
+          <p className="text-xs text-gray-500">Complaints</p>
+          <p className={`text-sm font-semibold ${warmup.complaint_rate > warmup.max_complaint_rate ? 'text-red-600' : 'text-gray-900'}`}>
+            {warmup.complaint_rate.toFixed(3)}%
+          </p>
         </div>
       </div>
     </div>

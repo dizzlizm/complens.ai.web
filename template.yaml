@@ -163,6 +163,7 @@ Globals:
         TWILIO_AUTH_TOKEN: !Ref TwilioAuthToken
         TWILIO_PHONE_NUMBER: !Ref TwilioPhoneNumber
         SES_FROM_EMAIL: !Ref SesFromEmail
+        DEFERRED_EMAIL_QUEUE_URL: !Ref DeferredEmailQueue
         SEGMENT_SHARED_SECRET: !Ref SegmentSharedSecret
         # Stripe settings
         STRIPE_SECRET_KEY: !Ref StripeSecretKey
@@ -2526,6 +2527,18 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/knowledge-base/documents/{document_id}/confirm-upload
             Method: POST
+        GetDocumentContent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/knowledge-base/documents/{document_id}/content
+            Method: GET
+        UpdateDocumentContent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/knowledge-base/documents/{document_id}/content
+            Method: PUT
         DeleteDocument:
           Type: Api
           Properties:
@@ -2557,6 +2570,144 @@ Resources:
             AllowedOrigins:
               - !If [IsProd, "https://complens.ai", !Sub "https://${DomainName}"]
             MaxAge: 3600
+
+  # ============================================
+  # Email Warm-up Infrastructure
+  # ============================================
+  DeferredEmailQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600  # 14 days
+      VisibilityTimeout: 120
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeferredEmailDLQ.Arn
+        maxReceiveCount: 5
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  DeferredEmailDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  SESFeedbackTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: "SES Bounce/Complaint Feedback"
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  EmailWarmupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: email_warmup.handler
+      CodeUri: src/handlers/api/
+      Description: Email domain warm-up management API
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt DeferredEmailQueue.QueueName
+      Environment:
+        Variables:
+          DEFERRED_EMAIL_QUEUE_URL: !Ref DeferredEmailQueue
+      Events:
+        ListWarmups:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup
+            Method: GET
+        StartWarmup:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup
+            Method: POST
+        GetWarmupStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}
+            Method: GET
+        PauseWarmup:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/pause
+            Method: POST
+        ResumeWarmup:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/resume
+            Method: POST
+        CancelWarmup:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}
+            Method: DELETE
+
+  WarmupDailyProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: warmup_daily_processor.handler
+      CodeUri: src/handlers/workers/
+      Description: Daily warm-up day advancement and deferred email drain
+      Timeout: 300
+      MemorySize: 512
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt DeferredEmailQueue.QueueName
+        - SQSPollerPolicy:
+            QueueName: !GetAtt DeferredEmailQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+      Environment:
+        Variables:
+          DEFERRED_EMAIL_QUEUE_URL: !Ref DeferredEmailQueue
+      Events:
+        DailySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(5 0 * * ? *)
+            Description: Advance warm-up days and drain deferred emails daily at 00:05 UTC
+            Enabled: true
+
+  SESFeedbackHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: ses_feedback_handler.handler
+      CodeUri: src/handlers/workers/
+      Description: Process SES bounce/complaint feedback for warm-up domains
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Events:
+        SESFeedback:
+          Type: SNS
+          Properties:
+            Topic: !Ref SESFeedbackTopic
 
   # ============================================
   # Step Functions - Workflow Executor
@@ -3402,3 +3553,15 @@ Outputs:
     Value: !Ref DLQAlertTopic
     Export:
       Name: !Sub "${AWS::StackName}-DLQAlertTopicArn"
+
+  DeferredEmailQueueUrl:
+    Description: Deferred Email Queue URL
+    Value: !Ref DeferredEmailQueue
+    Export:
+      Name: !Sub "${AWS::StackName}-DeferredEmailQueueUrl"
+
+  SESFeedbackTopicArn:
+    Description: SES Feedback SNS Topic ARN
+    Value: !Ref SESFeedbackTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-SESFeedbackTopicArn"
