@@ -2834,6 +2834,30 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
+  # Response headers policy for embeddable content (no X-Frame-Options)
+  EmbedResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Condition: CustomDomainEnabled
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub "${AWS::StackName}-embed-headers"
+        SecurityHeadersConfig:
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: strict-origin-when-cross-origin
+          StrictTransportSecurity:
+            Override: true
+            AccessControlMaxAgeSec: 63072000
+            IncludeSubdomains: true
+            Preload: true
+          XSSProtection:
+            Override: true
+            ModeBlock: true
+            Protection: true
+          # No FrameOptions — intentionally omitted to allow iframe embedding
+
   FrontendDistribution:
     Type: AWS::CloudFront::Distribution
     Condition: CustomDomainEnabled
@@ -2854,6 +2878,22 @@ Resources:
             S3OriginConfig:
               OriginAccessIdentity: ""
             OriginAccessControlId: !GetAtt FrontendOriginAccessControl.Id
+        CacheBehaviors:
+          # /embed/* paths need to be frameable on external sites
+          - PathPattern: /embed/*
+            TargetOriginId: S3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+            OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf  # CORS-S3Origin
+            ResponseHeadersPolicyId: !Ref EmbedResponseHeadersPolicy
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
