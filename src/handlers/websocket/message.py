@@ -8,8 +8,9 @@ from typing import Any
 import boto3
 import structlog
 
+from complens.repositories.business_profile import BusinessProfileRepository
+from complens.repositories.document import DocumentRepository
 from complens.repositories.page import PageRepository
-from complens.services.knowledge_base_service import get_knowledge_base_service
 from complens.utils.rate_limiter import check_rate_limit
 
 logger = structlog.get_logger()
@@ -174,26 +175,33 @@ def handle_public_chat(
             ai_persona = "You are a helpful assistant."
             business_context = {}
 
-        # Retrieve knowledge base context if available
+        # Fetch business profile for richer AI context
+        profile_context = ""
+        try:
+            profile_repo = BusinessProfileRepository()
+            profile = profile_repo.get_effective_profile(page.workspace_id, page_id)
+            if profile:
+                profile_context = profile.get_ai_context()
+        except Exception as e:
+            logger.warning("Business profile fetch skipped", error=str(e))
+
+        # Fetch knowledge base documents directly from S3
         kb_context = ""
         try:
-            kb_service = get_knowledge_base_service()
-            kb_results = kb_service.retrieve(page.workspace_id, message, max_results=3)
-            if kb_results:
-                kb_snippets = "\n---\n".join(r["text"] for r in kb_results)
-                kb_context = f"\n\nRelevant Knowledge Base Information:\n{kb_snippets}"
-                logger.info("KB context retrieved", workspace_id=page.workspace_id, results=len(kb_results))
+            kb_context = _get_document_context(page.workspace_id)
         except Exception as e:
-            logger.warning("KB retrieval skipped", error=str(e))
+            logger.warning("KB document fetch skipped", error=str(e))
 
         system_prompt = f"""{ai_persona}
+
+{profile_context}
 
 Page Context:
 - Page Name: {page.name}
 - Headline: {page.headline}
 {f"- Business Context: {json.dumps(business_context)}" if business_context else ""}
 {kb_context}
-Keep responses concise and helpful. If you don't know something, say so politely.
+Keep responses concise and helpful. Use the business profile and knowledge base documents above to give informed, accurate answers. If you don't know something, say so politely.
 You may use markdown formatting (bold, lists, links) when it improves readability."""
 
         # Fire EventBridge event for workflow triggers
@@ -230,6 +238,64 @@ You may use markdown formatting (bold, lists, links) when it improves readabilit
             },
         )
         return {"statusCode": 500}
+
+
+def _get_document_context(workspace_id: str, max_chars: int = 8000) -> str:
+    """Fetch indexed KB document content directly from S3.
+
+    Reads text-based documents and concatenates them for the system prompt.
+    Limits total context to max_chars to avoid exceeding model limits.
+
+    Args:
+        workspace_id: Workspace ID.
+        max_chars: Maximum characters of document content to include.
+
+    Returns:
+        Formatted document context string, or empty string if none.
+    """
+    doc_repo = DocumentRepository()
+    documents, _ = doc_repo.list_by_workspace(workspace_id, status="indexed", limit=20)
+
+    if not documents:
+        return ""
+
+    s3 = boto3.client("s3")
+    bucket = os.environ.get("KB_DOCUMENTS_BUCKET", "")
+    if not bucket:
+        return ""
+
+    TEXT_TYPES = {"text/plain", "text/markdown", "text/csv", "text/html", "application/json"}
+    snippets = []
+    total_chars = 0
+
+    for doc in documents:
+        if not doc.file_key:
+            continue
+        # Only read text-based files (skip PDFs, DOCX for now)
+        if doc.content_type not in TEXT_TYPES:
+            continue
+
+        try:
+            obj = s3.get_object(Bucket=bucket, Key=doc.file_key)
+            content = obj["Body"].read().decode("utf-8", errors="replace")
+
+            # Truncate individual doc if needed
+            remaining = max_chars - total_chars
+            if remaining <= 0:
+                break
+            if len(content) > remaining:
+                content = content[:remaining] + "..."
+
+            snippets.append(f"--- Document: {doc.name} ---\n{content}")
+            total_chars += len(content)
+        except Exception as e:
+            logger.warning("Failed to read KB document", document_id=doc.id, error=str(e))
+
+    if not snippets:
+        return ""
+
+    logger.info("KB documents loaded", workspace_id=workspace_id, count=len(snippets), chars=total_chars)
+    return "\n\nKnowledge Base Documents:\n" + "\n\n".join(snippets)
 
 
 def _fire_chat_event(

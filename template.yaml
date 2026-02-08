@@ -1737,11 +1737,14 @@ Resources:
           TABLE_NAME: !Ref MainTable
           CONNECTIONS_TABLE: !Ref ConnectionsTable
           CHAT_MODEL: "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+          KB_DOCUMENTS_BUCKET: !Ref KBDocumentsBucket
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ConnectionsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
+        - S3ReadPolicy:
+            BucketName: !Ref KBDocumentsBucket
         - Statement:
             - Effect: Allow
               Action:
