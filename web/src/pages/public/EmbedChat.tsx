@@ -22,6 +22,12 @@ export default function EmbedChat() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Make the iframe content fully transparent so only the chat bubble/popup shows
+  useEffect(() => {
+    document.documentElement.style.backgroundColor = 'transparent';
+    document.body.style.backgroundColor = 'transparent';
+  }, []);
+
   useEffect(() => {
     if (!pageId || !workspaceId) {
       setError('Missing page_id or ws parameter');
@@ -60,19 +66,11 @@ export default function EmbedChat() {
   }, [config]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-transparent">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400" />
-      </div>
-    );
+    return null; // Don't show anything while loading — iframe should be invisible
   }
 
   if (error || !config || !pageId || !workspaceId) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-transparent">
-        <p className="text-gray-500 text-sm">{error || 'Chat unavailable'}</p>
-      </div>
-    );
+    return null; // Don't show error UI in the iframe — just hide
   }
 
   return (

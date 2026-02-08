@@ -1736,7 +1736,7 @@ Resources:
         Variables:
           TABLE_NAME: !Ref MainTable
           CONNECTIONS_TABLE: !Ref ConnectionsTable
-          CHAT_MODEL: "us.anthropic.claude-3-sonnet-20240229-v1:0"
+          CHAT_MODEL: "us.anthropic.claude-haiku-4-5-20251001-v1:0"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ConnectionsTable
@@ -1755,8 +1755,9 @@ Resources:
               Action:
                 - bedrock:InvokeModel
               Resource:
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
                 - "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"
-                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"
                 - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
         - Statement:
             - Effect: Allow
