@@ -171,6 +171,7 @@ Globals:
         STRIPE_WEBHOOK_SECRET: !Ref StripeWebhookSecret
         STRIPE_CONNECT_CLIENT_ID: !Ref StripeConnectClientId
         STRIPE_PLATFORM_FEE_PERCENT: !Ref StripePlatformFeePercent
+        SES_CONFIGURATION_SET: !Ref SESConfigurationSet
     Layers:
       - !Ref SharedLayer
 
@@ -2598,10 +2599,32 @@ Resources:
         - Key: Stage
           Value: !Ref Stage
 
+  SESConfigurationSet:
+    Type: AWS::SES::ConfigurationSet
+    Properties:
+      Name: !Sub "complens-${Stage}-warmup"
+
+  SESConfigurationSetEventDestination:
+    Type: AWS::SES::ConfigurationSetEventDestination
+    Properties:
+      ConfigurationSetName: !Ref SESConfigurationSet
+      EventDestination:
+        Name: !Sub "complens-${Stage}-warmup-events"
+        Enabled: true
+        MatchingEventTypes:
+          - send
+          - delivery
+          - bounce
+          - complaint
+          - open
+          - click
+        SnsDestination:
+          TopicARN: !Ref SESFeedbackTopic
+
   SESFeedbackTopic:
     Type: AWS::SNS::Topic
     Properties:
-      DisplayName: "SES Bounce/Complaint Feedback"
+      DisplayName: "SES Bounce/Complaint/Engagement Feedback"
       Tags:
         - Key: Service
           Value: complens
@@ -2620,10 +2643,22 @@ Resources:
             TableName: !Ref MainTable
         - SQSSendMessagePolicy:
             QueueName: !GetAtt DeferredEmailQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:GetIdentityVerificationAttributes
+                - ses:GetIdentityDkimAttributes
+              Resource: "*"
       Environment:
         Variables:
           DEFERRED_EMAIL_QUEUE_URL: !Ref DeferredEmailQueue
       Events:
+        CheckDomainAuth:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/check-domain
+            Method: GET
         ListWarmups:
           Type: Api
           Properties:
@@ -2660,6 +2695,18 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/email-warmup/{domain}
             Method: DELETE
+        UpdateSeedList:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/seed-list
+            Method: PUT
+        GetWarmupLog:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/warmup-log
+            Method: GET
 
   WarmupDailyProcessorFunction:
     Type: AWS::Serverless::Function
@@ -2708,6 +2755,119 @@ Resources:
           Type: SNS
           Properties:
             Topic: !Ref SESFeedbackTopic
+
+  # ============================================
+  # Warmup Hourly Sender (AI-generated warmup emails)
+  # ============================================
+  WarmupHourlySenderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: warmup_hourly_sender.handler
+      CodeUri: src/handlers/workers/
+      Description: Hourly AI-generated warmup email sender
+      Timeout: 300
+      MemorySize: 512
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        HourlySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 hour)
+            Description: Send AI-generated warmup emails hourly
+            Enabled: true
+
+  # ============================================
+  # Warmup Inbound Reply Tracking
+  # ============================================
+  WarmupInboundEmailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "complens-${Stage}-warmup-inbound-${AWS::AccountId}"
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireInboundEmails
+            Status: Enabled
+            ExpirationInDays: 7
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  WarmupInboundEmailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WarmupInboundEmailBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowSESPutObject
+            Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${WarmupInboundEmailBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref "AWS::AccountId"
+
+  WarmupReplyHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: warmup_reply_handler.handler
+      CodeUri: src/handlers/workers/
+      Description: Process SES inbound replies for warmup engagement tracking
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+        - S3ReadPolicy:
+            BucketName: !Ref WarmupInboundEmailBucket
+
+  WarmupReplyHandlerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt WarmupReplyHandlerFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: ses.amazonaws.com
+      SourceAccount: !Ref "AWS::AccountId"
+
+  # NOTE: SES Receipt Rule Set must be activated manually once per account:
+  # aws ses set-active-receipt-rule-set --rule-set-name complens-${Stage}-warmup-inbound --region us-east-1
+  SESWarmupReceiptRuleSet:
+    Type: AWS::SES::ReceiptRuleSet
+    Properties:
+      RuleSetName: !Sub "complens-${Stage}-warmup-inbound"
+
+  SESWarmupReceiptRule:
+    Type: AWS::SES::ReceiptRule
+    DependsOn:
+      - WarmupReplyHandlerInvokePermission
+      - WarmupInboundEmailBucketPolicy
+    Properties:
+      RuleSetName: !Ref SESWarmupReceiptRuleSet
+      Rule:
+        Name: !Sub "complens-${Stage}-warmup-reply-tracking"
+        Enabled: true
+        ScanEnabled: true
+        Actions:
+          - S3Action:
+              BucketName: !Ref WarmupInboundEmailBucket
+              ObjectKeyPrefix: "inbound/"
+          - LambdaAction:
+              FunctionArn: !GetAtt WarmupReplyHandlerFunction.Arn
+              InvocationType: Event
 
   # ============================================
   # Step Functions - Workflow Executor

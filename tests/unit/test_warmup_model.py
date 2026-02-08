@@ -6,6 +6,7 @@ from complens.models.warmup_domain import (
     WarmupDomain,
     WarmupStatus,
     StartWarmupRequest,
+    UpdateSeedListRequest,
     WarmupStatusResponse,
 )
 from complens.models.deferred_email import DeferredEmail
@@ -23,28 +24,45 @@ class TestWarmupDomain:
         assert wd.status == "pending"  # use_enum_values stores string
         assert wd.warmup_day == 0
         assert wd.schedule == list(DEFAULT_WARMUP_SCHEDULE)
+        assert len(wd.schedule) == 42  # 6-week schedule
         assert wd.total_sent == 0
         assert wd.total_bounced == 0
         assert wd.total_complaints == 0
         assert wd.bounce_rate == 0.0
         assert wd.complaint_rate == 0.0
+        assert wd.total_delivered == 0
+        assert wd.total_opens == 0
+        assert wd.total_clicks == 0
+        assert wd.open_rate == 0.0
+        assert wd.click_rate == 0.0
+        assert wd.send_window_start == 9
+        assert wd.send_window_end == 19
+        assert wd.low_engagement_warning is False
         assert wd.max_bounce_rate == 5.0
         assert wd.max_complaint_rate == 0.1
+        assert wd.total_replies == 0
+        assert wd.reply_rate == 0.0
+        assert wd.seed_list == []
+        assert wd.auto_warmup_enabled is False
+        assert wd.from_name is None
 
     def test_daily_limit_property(self):
         """Test daily_limit returns correct value for current day."""
         wd = WarmupDomain(workspace_id="ws-1", domain="example.com", warmup_day=0)
-        assert wd.daily_limit == 50
+        assert wd.daily_limit == 10  # Day 0 of 42-day schedule
 
-        wd.warmup_day = 5
-        assert wd.daily_limit == 750
+        wd.warmup_day = 6
+        assert wd.daily_limit == 50  # End of week 1
 
         wd.warmup_day = 13
-        assert wd.daily_limit == 10000
+        assert wd.daily_limit == 200  # End of week 2
+
+        wd.warmup_day = 41
+        assert wd.daily_limit == 10000  # Last day
 
     def test_daily_limit_completed(self):
         """Test daily_limit returns -1 when past schedule length."""
-        wd = WarmupDomain(workspace_id="ws-1", domain="example.com", warmup_day=14)
+        wd = WarmupDomain(workspace_id="ws-1", domain="example.com", warmup_day=42)
         assert wd.daily_limit == -1
 
         wd.warmup_day = 100
@@ -122,6 +140,31 @@ class TestWarmupDomain:
         assert isinstance(data["schedule"], list)
 
 
+    def test_seed_list_and_auto_warmup_fields(self):
+        """Test seed_list, auto_warmup_enabled, and from_name fields."""
+        wd = WarmupDomain(
+            workspace_id="ws-1",
+            domain="example.com",
+            seed_list=["a@test.com", "b@test.com"],
+            auto_warmup_enabled=True,
+            from_name="Test Company",
+        )
+        assert wd.seed_list == ["a@test.com", "b@test.com"]
+        assert wd.auto_warmup_enabled is True
+        assert wd.from_name == "Test Company"
+
+    def test_reply_metrics(self):
+        """Test total_replies and reply_rate fields."""
+        wd = WarmupDomain(
+            workspace_id="ws-1",
+            domain="example.com",
+            total_replies=25,
+            reply_rate=5.2,
+        )
+        assert wd.total_replies == 25
+        assert wd.reply_rate == 5.2
+
+
 class TestStartWarmupRequest:
     """Tests for StartWarmupRequest validation."""
 
@@ -132,6 +175,21 @@ class TestStartWarmupRequest:
         assert req.schedule is None
         assert req.max_bounce_rate == 5.0
         assert req.max_complaint_rate == 0.1
+        assert req.seed_list == []
+        assert req.auto_warmup_enabled is False
+        assert req.from_name is None
+
+    def test_with_seed_list(self):
+        """Test with seed list and auto-warmup."""
+        req = StartWarmupRequest(
+            domain="example.com",
+            seed_list=["a@test.com", "b@test.com"],
+            auto_warmup_enabled=True,
+            from_name="My Company",
+        )
+        assert req.seed_list == ["a@test.com", "b@test.com"]
+        assert req.auto_warmup_enabled is True
+        assert req.from_name == "My Company"
 
     def test_custom_schedule(self):
         """Test with custom schedule."""
@@ -152,6 +210,31 @@ class TestStartWarmupRequest:
             StartWarmupRequest(domain="example.com", max_complaint_rate=0.0)
 
 
+class TestUpdateSeedListRequest:
+    """Tests for UpdateSeedListRequest validation."""
+
+    def test_valid_request(self):
+        """Test valid seed list request."""
+        req = UpdateSeedListRequest(
+            seed_list=["a@test.com", "b@test.com"],
+            auto_warmup_enabled=True,
+            from_name="Test Company",
+        )
+        assert len(req.seed_list) == 2
+        assert req.auto_warmup_enabled is True
+        assert req.from_name == "Test Company"
+
+    def test_empty_seed_list_rejected(self):
+        """Test that empty seed list is rejected."""
+        with pytest.raises(Exception):
+            UpdateSeedListRequest(seed_list=[], auto_warmup_enabled=True)
+
+    def test_default_auto_warmup(self):
+        """Test default auto_warmup_enabled is True."""
+        req = UpdateSeedListRequest(seed_list=["a@test.com"])
+        assert req.auto_warmup_enabled is True
+
+
 class TestWarmupStatusResponse:
     """Tests for WarmupStatusResponse."""
 
@@ -165,17 +248,43 @@ class TestWarmupStatusResponse:
             total_sent=500,
             total_bounced=3,
             bounce_rate=0.6,
+            total_delivered=480,
+            total_opens=120,
+            total_clicks=30,
+            open_rate=25.0,
+            click_rate=6.25,
+            total_replies=15,
+            reply_rate=3.125,
+            send_window_start=8,
+            send_window_end=20,
+            low_engagement_warning=False,
+            seed_list=["a@test.com"],
+            auto_warmup_enabled=True,
+            from_name="Test Co",
         )
         response = WarmupStatusResponse.from_warmup_domain(wd)
 
         assert response.domain == "example.com"
         assert response.status == "active"
         assert response.warmup_day == 5
-        assert response.daily_limit == 750
-        assert response.schedule_length == 14
+        assert response.daily_limit == 45  # Day 5 of 42-day schedule
+        assert response.schedule_length == 42
         assert response.total_sent == 500
         assert response.total_bounced == 3
         assert response.bounce_rate == 0.6
+        assert response.total_delivered == 480
+        assert response.total_opens == 120
+        assert response.total_clicks == 30
+        assert response.open_rate == 25.0
+        assert response.click_rate == 6.25
+        assert response.total_replies == 15
+        assert response.reply_rate == 3.125
+        assert response.send_window_start == 8
+        assert response.send_window_end == 20
+        assert response.low_engagement_warning is False
+        assert response.seed_list == ["a@test.com"]
+        assert response.auto_warmup_enabled is True
+        assert response.from_name == "Test Co"
 
 
 class TestDeferredEmail:

@@ -6,6 +6,7 @@ resets counters, drains deferred emails, and marks completed warm-ups.
 
 import json
 import os
+import time
 from typing import Any
 
 import boto3
@@ -66,10 +67,11 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
 
 def _drain_deferred_emails(service: WarmupService, queue_url: str) -> int:
-    """Drain deferred emails from SQS, respecting updated daily limits.
+    """Drain deferred emails from SQS, respecting updated daily and hourly limits.
 
-    Receives messages in batches, checks each domain's current limit,
-    and sends emails that fit within the new daily allowance.
+    Receives messages in small batches with delays between them to distribute
+    sends over time. Uses check_warmup_limit which enforces both daily and
+    hourly limits plus send window.
     Messages that still can't be sent are left in the queue.
 
     Args:
@@ -82,12 +84,12 @@ def _drain_deferred_emails(service: WarmupService, queue_url: str) -> int:
     sqs = boto3.client("sqs")
     email_service = EmailService()
     sent_count = 0
-    max_iterations = 50  # Safety limit
+    max_iterations = 100  # Safety limit (smaller batches = more iterations)
 
     for _ in range(max_iterations):
         response = sqs.receive_message(
             QueueUrl=queue_url,
-            MaxNumberOfMessages=10,
+            MaxNumberOfMessages=5,
             WaitTimeSeconds=1,
             VisibilityTimeout=60,
         )
@@ -110,10 +112,10 @@ def _drain_deferred_emails(service: WarmupService, queue_url: str) -> int:
                 )
                 continue
 
-            # Check if this domain now has capacity
+            # Check if this domain now has capacity (enforces hourly + daily limits)
             check = service.check_warmup_limit(deferred.from_email)
             if not check.allowed:
-                # Still over limit - leave in queue for next day
+                # Still over limit - leave in queue
                 logger.debug(
                     "Deferred email still over limit, leaving in queue",
                     domain=deferred.domain,
@@ -146,5 +148,8 @@ def _drain_deferred_emails(service: WarmupService, queue_url: str) -> int:
                     domain=deferred.domain,
                     to=deferred.to,
                 )
+
+        # Delay between batches to distribute sends
+        time.sleep(0.5)
 
     return sent_count

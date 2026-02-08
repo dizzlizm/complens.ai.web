@@ -5,6 +5,7 @@ Intercepts outbound email at the EmailService layer and enforces daily limits.
 """
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -79,6 +80,7 @@ class WarmupService:
         """Check if an outbound email is within warm-up limits.
 
         This is the hot-path method called from EmailService.send_email().
+        Enforces daily limits, hourly throttling, and send window.
         Fails open on errors (allows sending if DynamoDB is unreachable).
 
         Args:
@@ -105,8 +107,40 @@ class WarmupService:
             # Warm-up schedule complete, no limit
             return WarmupCheckResult(allowed=True, should_defer=False, domain=domain)
 
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        now = datetime.now(timezone.utc)
+        current_hour = now.hour
+        today = now.strftime("%Y-%m-%d")
 
+        # Check send window: defer if outside window
+        if not self._is_within_send_window(current_hour, warmup.send_window_start, warmup.send_window_end):
+            return WarmupCheckResult(
+                allowed=False,
+                should_defer=True,
+                domain=domain,
+                remaining=0,
+                daily_limit=daily_limit,
+            )
+
+        # Check hourly limit
+        window_hours = self._get_window_hours(warmup.send_window_start, warmup.send_window_end)
+        hourly_limit = math.ceil(daily_limit / window_hours)
+
+        try:
+            hourly_count = self.repo.increment_hourly_send(domain, today, current_hour, hourly_limit)
+        except Exception:
+            logger.warning("Hourly counter increment failed, failing open", domain=domain)
+            return WarmupCheckResult(allowed=True, should_defer=False)
+
+        if hourly_count > hourly_limit:
+            return WarmupCheckResult(
+                allowed=False,
+                should_defer=True,
+                domain=domain,
+                remaining=0,
+                daily_limit=daily_limit,
+            )
+
+        # Check daily limit
         try:
             new_count = self.repo.increment_daily_send(domain, today, daily_limit)
         except Exception:
@@ -209,8 +243,16 @@ class WarmupService:
         schedule: list[int] | None = None,
         max_bounce_rate: float = 5.0,
         max_complaint_rate: float = 0.1,
+        send_window_start: int = 9,
+        send_window_end: int = 19,
+        seed_list: list[str] | None = None,
+        auto_warmup_enabled: bool = False,
+        from_name: str | None = None,
     ) -> WarmupDomain:
         """Start a warm-up for a domain.
+
+        Verifies domain authentication (SPF/DKIM) before starting.
+        Fails open if the auth check itself errors.
 
         Args:
             workspace_id: Workspace ID.
@@ -218,13 +260,45 @@ class WarmupService:
             schedule: Custom warm-up schedule (daily limits).
             max_bounce_rate: Auto-pause bounce rate threshold.
             max_complaint_rate: Auto-pause complaint rate threshold.
+            send_window_start: Send window start hour (UTC, 0-23).
+            send_window_end: Send window end hour (UTC, 0-23).
+            seed_list: Email addresses for auto warmup sending.
+            auto_warmup_enabled: Enable automatic warmup email sending.
+            from_name: Display name for warmup from-address.
 
         Returns:
             Created WarmupDomain.
 
         Raises:
             ConflictError: If warm-up already exists for this domain.
+            ValidationError: If domain is not verified or DKIM not configured.
         """
+        # Check domain authentication (fail open on check errors)
+        try:
+            from complens.services.email_service import EmailService
+            email_service = EmailService()
+            auth_status = email_service.check_domain_auth(domain)
+
+            if "error" not in auth_status and not auth_status["ready"]:
+                from complens.utils.exceptions import ValidationError
+                errors = []
+                if not auth_status["verified"]:
+                    errors.append({"field": "domain", "msg": f"Domain '{domain}' is not verified in SES"})
+                if not auth_status["dkim_enabled"]:
+                    errors.append({"field": "domain", "msg": f"DKIM is not configured for '{domain}'"})
+                raise ValidationError(
+                    f"Domain '{domain}' is not ready for warm-up. Verify domain and enable DKIM first.",
+                    errors=errors,
+                )
+        except ImportError:
+            logger.warning("Could not import EmailService for auth check, proceeding anyway")
+        except Exception as e:
+            # Re-raise ValidationError, but fail open on other errors
+            from complens.utils.exceptions import ValidationError
+            if isinstance(e, ValidationError):
+                raise
+            logger.warning("Domain auth check failed, proceeding with warmup", domain=domain, error=str(e))
+
         warmup = WarmupDomain(
             workspace_id=workspace_id,
             domain=domain,
@@ -234,6 +308,11 @@ class WarmupService:
             started_at=datetime.now(timezone.utc).isoformat(),
             max_bounce_rate=max_bounce_rate,
             max_complaint_rate=max_complaint_rate,
+            send_window_start=send_window_start,
+            send_window_end=send_window_end,
+            seed_list=seed_list or [],
+            auto_warmup_enabled=auto_warmup_enabled,
+            from_name=from_name,
         )
 
         warmup = self.repo.create_warmup(warmup)
@@ -244,6 +323,7 @@ class WarmupService:
             workspace_id=workspace_id,
             schedule_length=len(warmup.schedule),
             daily_limit=warmup.daily_limit,
+            send_window=f"{send_window_start}:00-{send_window_end}:00 UTC",
         )
 
         return warmup
@@ -338,8 +418,8 @@ class WarmupService:
         """Advance the warm-up day for a domain.
 
         Called by the daily processor. Advances warmup_day, updates
-        reputation metrics from previous day's counters, and marks
-        complete if past the schedule length.
+        reputation and engagement metrics from previous day's counters,
+        checks for low engagement, and marks complete if past the schedule length.
 
         Args:
             domain: Email sending domain.
@@ -351,15 +431,32 @@ class WarmupService:
         if not warmup or warmup.status != WarmupStatus.ACTIVE:
             return None
 
-        # Get yesterday's counter for reputation metrics
+        # Get yesterday's counter for reputation + engagement metrics
         yesterday = self._yesterday_str()
         counter = self.repo.get_daily_counter(domain, yesterday)
         if counter:
             warmup.total_sent += counter["send_count"]
             warmup.total_bounced += counter["bounce_count"]
             warmup.total_complaints += counter["complaint_count"]
+            warmup.total_delivered += counter.get("delivery_count", 0)
+            warmup.total_opens += counter.get("open_count", 0)
+            warmup.total_clicks += counter.get("click_count", 0)
+            warmup.total_replies += counter.get("reply_count", 0)
+
             warmup.bounce_rate = self._calc_rate(warmup.total_bounced, warmup.total_sent)
             warmup.complaint_rate = self._calc_rate(warmup.total_complaints, warmup.total_sent)
+
+            # Calculate engagement rates based on delivered (not sent)
+            if warmup.total_delivered > 0:
+                warmup.open_rate = self._calc_rate(warmup.total_opens, warmup.total_delivered)
+                warmup.click_rate = self._calc_rate(warmup.total_clicks, warmup.total_delivered)
+                warmup.reply_rate = self._calc_rate(warmup.total_replies, warmup.total_delivered)
+
+        # Check low engagement warning (after day 7, with meaningful sample)
+        if warmup.warmup_day >= 7 and warmup.total_delivered > 100:
+            warmup.low_engagement_warning = warmup.open_rate < 5.0
+        else:
+            warmup.low_engagement_warning = False
 
         warmup.warmup_day += 1
 
@@ -372,6 +469,8 @@ class WarmupService:
                 domain=domain,
                 warmup_day=warmup.warmup_day,
                 new_daily_limit=warmup.daily_limit,
+                open_rate=warmup.open_rate,
+                click_rate=warmup.click_rate,
             )
 
         warmup = self.repo.update_warmup(warmup)
@@ -418,6 +517,58 @@ class WarmupService:
             return False
 
         return self._check_thresholds(domain)
+
+    # -------------------------------------------------------------------------
+    # Engagement tracking
+    # -------------------------------------------------------------------------
+
+    def record_delivery(self, domain: str) -> None:
+        """Record a delivery event.
+
+        Args:
+            domain: Email sending domain.
+        """
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        try:
+            self.repo.increment_daily_delivery(domain, today)
+        except Exception:
+            logger.warning("Failed to increment delivery counter", domain=domain)
+
+    def record_open(self, domain: str) -> None:
+        """Record an open event.
+
+        Args:
+            domain: Email sending domain.
+        """
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        try:
+            self.repo.increment_daily_open(domain, today)
+        except Exception:
+            logger.warning("Failed to increment open counter", domain=domain)
+
+    def record_click(self, domain: str) -> None:
+        """Record a click event.
+
+        Args:
+            domain: Email sending domain.
+        """
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        try:
+            self.repo.increment_daily_click(domain, today)
+        except Exception:
+            logger.warning("Failed to increment click counter", domain=domain)
+
+    def record_reply(self, domain: str) -> None:
+        """Record a reply event.
+
+        Args:
+            domain: Email sending domain.
+        """
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        try:
+            self.repo.increment_daily_reply(domain, today)
+        except Exception:
+            logger.warning("Failed to increment reply counter", domain=domain)
 
     # -------------------------------------------------------------------------
     # Private helpers
@@ -502,6 +653,40 @@ class WarmupService:
         if denominator == 0:
             return 0.0
         return round((numerator / denominator) * 100, 4)
+
+    @staticmethod
+    def _is_within_send_window(current_hour: int, window_start: int, window_end: int) -> bool:
+        """Check if the current hour is within the send window.
+
+        Args:
+            current_hour: Current UTC hour (0-23).
+            window_start: Window start hour (UTC).
+            window_end: Window end hour (UTC).
+
+        Returns:
+            True if within the send window.
+        """
+        if window_start <= window_end:
+            return window_start <= current_hour < window_end
+        # Wraps midnight (e.g., 22-6)
+        return current_hour >= window_start or current_hour < window_end
+
+    @staticmethod
+    def _get_window_hours(window_start: int, window_end: int) -> int:
+        """Get the number of hours in the send window.
+
+        Args:
+            window_start: Window start hour (UTC).
+            window_end: Window end hour (UTC).
+
+        Returns:
+            Number of hours in the window (minimum 1).
+        """
+        if window_start <= window_end:
+            hours = window_end - window_start
+        else:
+            hours = (24 - window_start) + window_end
+        return max(hours, 1)
 
     @staticmethod
     def _yesterday_str() -> str:

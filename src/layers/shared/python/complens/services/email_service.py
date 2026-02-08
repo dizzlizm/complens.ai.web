@@ -521,6 +521,50 @@ class EmailService:
                 code=error_code,
             ) from e
 
+    def check_domain_auth(self, domain: str) -> dict[str, Any]:
+        """Check domain authentication status (verification + DKIM).
+
+        Args:
+            domain: Email sending domain to check.
+
+        Returns:
+            Dict with domain, verified, dkim_enabled, dkim_status, dkim_tokens, ready.
+        """
+        result: dict[str, Any] = {
+            "domain": domain,
+            "verified": False,
+            "dkim_enabled": False,
+            "dkim_status": None,
+            "dkim_tokens": [],
+            "ready": False,
+        }
+
+        try:
+            # Check domain verification
+            verify_resp = self.client.get_identity_verification_attributes(
+                Identities=[domain]
+            )
+            attrs = verify_resp.get("VerificationAttributes", {}).get(domain, {})
+            result["verified"] = attrs.get("VerificationStatus") == "Success"
+
+            # Check DKIM status
+            dkim_resp = self.client.get_identity_dkim_attributes(
+                Identities=[domain]
+            )
+            dkim_attrs = dkim_resp.get("DkimAttributes", {}).get(domain, {})
+            result["dkim_enabled"] = dkim_attrs.get("DkimEnabled", False)
+            result["dkim_status"] = dkim_attrs.get("DkimVerificationStatus")
+            result["dkim_tokens"] = dkim_attrs.get("DkimTokens", [])
+
+            result["ready"] = result["verified"] and result["dkim_enabled"]
+
+        except ClientError as e:
+            logger.error("Failed to check domain auth", domain=domain, error=str(e))
+            # Fail open - return unknown state rather than blocking
+            result["error"] = str(e)
+
+        return result
+
     def verify_email_identity(self, email: str) -> dict[str, Any]:
         """Request verification of an email address.
 

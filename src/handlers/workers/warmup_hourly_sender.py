@@ -1,0 +1,186 @@
+"""Warmup hourly sender Lambda.
+
+Triggered hourly by EventBridge. For each active domain with auto_warmup_enabled,
+generates and sends AI-powered warmup emails to the seed list.
+"""
+
+import math
+from datetime import datetime, timezone
+from typing import Any
+
+import structlog
+
+from complens.repositories.warmup_domain import WarmupDomainRepository
+from complens.services.email_service import EmailService
+from complens.services.warmup_email_generator import WarmupEmailGenerator
+from complens.services.warmup_service import WarmupService
+
+logger = structlog.get_logger()
+
+
+def handler(event: dict[str, Any], context: Any) -> dict:
+    """Process hourly warmup email sending for all active domains.
+
+    Triggered by EventBridge rate(1 hour).
+    """
+    logger.info("Warmup hourly sender started")
+
+    repo = WarmupDomainRepository()
+    service = WarmupService(repo=repo)
+    email_service = EmailService()
+    generator = WarmupEmailGenerator()
+
+    active_domains = repo.list_active()
+    total_sent = 0
+    domains_processed = 0
+
+    for warmup in active_domains:
+        if not warmup.auto_warmup_enabled:
+            continue
+        if not warmup.seed_list:
+            logger.debug("Skipping domain with empty seed list", domain=warmup.domain)
+            continue
+
+        now = datetime.now(timezone.utc)
+        current_hour = now.hour
+
+        if not service._is_within_send_window(
+            current_hour, warmup.send_window_start, warmup.send_window_end,
+        ):
+            logger.debug(
+                "Skipping domain outside send window",
+                domain=warmup.domain,
+                hour=current_hour,
+            )
+            continue
+
+        daily_limit = warmup.daily_limit
+        if daily_limit == -1:
+            # Warmup complete, no need for auto warmup emails
+            continue
+
+        # Calculate how many emails to send this hour
+        today = now.strftime("%Y-%m-%d")
+        counter = repo.get_daily_counter(warmup.domain, today)
+        sent_today = counter["send_count"] if counter else 0
+        remaining_today = max(0, daily_limit - sent_today)
+
+        if remaining_today == 0:
+            continue
+
+        remaining_hours = _remaining_window_hours(
+            current_hour, warmup.send_window_start, warmup.send_window_end,
+        )
+        emails_this_hour = math.ceil(remaining_today / max(remaining_hours, 1))
+
+        # Cap at seed list size per hour (round-robin)
+        emails_this_hour = min(emails_this_hour, len(warmup.seed_list) * 2)
+
+        # Get recent subjects for dedup
+        recent_emails = repo.get_recent_warmup_emails(warmup.domain, today, limit=20)
+        exclude_subjects = [e["subject"] for e in recent_emails if e.get("subject")]
+
+        sent_for_domain = 0
+        for i in range(emails_this_hour):
+            recipient = warmup.seed_list[i % len(warmup.seed_list)]
+
+            try:
+                email_content = generator.generate_email(
+                    workspace_id=warmup.workspace_id,
+                    domain=warmup.domain,
+                    recipient_email=recipient,
+                    exclude_subjects=exclude_subjects,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to generate warmup email",
+                    domain=warmup.domain,
+                    recipient=recipient,
+                )
+                continue
+
+            from_name = warmup.from_name or warmup.domain
+            from_email = f"{from_name} <warmup@{warmup.domain}>"
+
+            try:
+                email_service.send_email(
+                    to=[recipient],
+                    subject=email_content["subject"],
+                    body_text=email_content.get("body_text"),
+                    body_html=email_content.get("body_html"),
+                    from_email=from_email,
+                    tags={"warmup": "true", "domain": warmup.domain},
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send warmup email",
+                    domain=warmup.domain,
+                    recipient=recipient,
+                )
+                continue
+
+            # Record for audit + subject dedup
+            try:
+                repo.record_warmup_email(
+                    domain=warmup.domain,
+                    date_str=today,
+                    email_data={
+                        "subject": email_content["subject"],
+                        "recipient": recipient,
+                        "content_type": email_content.get("content_type", ""),
+                        "sent_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to record warmup email",
+                    domain=warmup.domain,
+                )
+
+            exclude_subjects.append(email_content["subject"])
+            sent_for_domain += 1
+
+        total_sent += sent_for_domain
+        domains_processed += 1
+
+        logger.info(
+            "Warmup emails sent for domain",
+            domain=warmup.domain,
+            sent=sent_for_domain,
+            target=emails_this_hour,
+        )
+
+    logger.info(
+        "Warmup hourly sender completed",
+        domains_processed=domains_processed,
+        total_sent=total_sent,
+    )
+
+    return {
+        "status": "success",
+        "domains_processed": domains_processed,
+        "total_sent": total_sent,
+    }
+
+
+def _remaining_window_hours(
+    current_hour: int, window_start: int, window_end: int,
+) -> int:
+    """Calculate remaining hours in the send window from current hour.
+
+    Args:
+        current_hour: Current UTC hour (0-23).
+        window_start: Window start hour.
+        window_end: Window end hour.
+
+    Returns:
+        Number of remaining hours in the window (minimum 1).
+    """
+    if window_start <= window_end:
+        remaining = window_end - current_hour
+    else:
+        if current_hour >= window_start:
+            remaining = (24 - current_hour) + window_end
+        else:
+            remaining = window_end - current_hour
+    return max(remaining, 1)

@@ -3,7 +3,7 @@
 import json
 import os
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
@@ -52,8 +52,20 @@ def _seed_warmup(table, domain="example.com", status="active", warmup_day=3):
         "total_complaints": 0,
         "bounce_rate": Decimal("0.4"),
         "complaint_rate": Decimal("0.0"),
+        "total_delivered": 490,
+        "total_opens": 100,
+        "total_clicks": 25,
+        "total_replies": 10,
+        "open_rate": Decimal("20.41"),
+        "click_rate": Decimal("5.1"),
+        "reply_rate": Decimal("2.04"),
+        "send_window_start": 9,
+        "send_window_end": 19,
+        "low_engagement_warning": False,
         "max_bounce_rate": Decimal("5.0"),
         "max_complaint_rate": Decimal("0.1"),
+        "seed_list": ["seed@test.com"],
+        "auto_warmup_enabled": False,
         "version": 1,
         "created_at": "2026-01-01T00:00:00+00:00",
         "updated_at": "2026-01-01T00:00:00+00:00",
@@ -109,9 +121,18 @@ class TestListWarmups:
 class TestStartWarmup:
     """Tests for POST /workspaces/{ws}/email-warmup."""
 
-    def test_start_warmup(self, dynamodb_table, api_gateway_event):
+    @patch("complens.services.email_service.EmailService")
+    def test_start_warmup(self, mock_email_cls, dynamodb_table, api_gateway_event):
         """Test starting a warm-up for a domain."""
         from api.email_warmup import handler
+
+        # Mock domain auth check to pass
+        mock_email = MagicMock()
+        mock_email.check_domain_auth.return_value = {
+            "domain": "newdomain.com", "verified": True, "dkim_enabled": True,
+            "dkim_status": "Success", "dkim_tokens": [], "ready": True,
+        }
+        mock_email_cls.return_value = mock_email
 
         _seed_workspace(dynamodb_table)
 
@@ -128,11 +149,22 @@ class TestStartWarmup:
         assert body["domain"] == "newdomain.com"
         assert body["status"] == "active"
         assert body["warmup_day"] == 0
-        assert body["daily_limit"] == 50
+        assert body["daily_limit"] == 10  # Day 0 of 42-day schedule
+        assert body["schedule_length"] == 42
+        assert body["send_window_start"] == 9
+        assert body["send_window_end"] == 19
 
-    def test_start_warmup_custom_schedule(self, dynamodb_table, api_gateway_event):
+    @patch("complens.services.email_service.EmailService")
+    def test_start_warmup_custom_schedule(self, mock_email_cls, dynamodb_table, api_gateway_event):
         """Test starting warm-up with custom schedule."""
         from api.email_warmup import handler
+
+        mock_email = MagicMock()
+        mock_email.check_domain_auth.return_value = {
+            "domain": "custom.com", "verified": True, "dkim_enabled": True,
+            "dkim_status": "Success", "dkim_tokens": [], "ready": True,
+        }
+        mock_email_cls.return_value = mock_email
 
         _seed_workspace(dynamodb_table)
 
@@ -144,6 +176,8 @@ class TestStartWarmup:
                 "domain": "custom.com",
                 "schedule": [10, 50, 200],
                 "max_bounce_rate": 3.0,
+                "send_window_start": 6,
+                "send_window_end": 22,
             },
         )
         response = handler(event, None)
@@ -153,6 +187,8 @@ class TestStartWarmup:
         assert body["domain"] == "custom.com"
         assert body["daily_limit"] == 10
         assert body["schedule_length"] == 3
+        assert body["send_window_start"] == 6
+        assert body["send_window_end"] == 22
 
     def test_start_warmup_free_plan_blocked(self, dynamodb_table, api_gateway_event):
         """Test that free plan users can't start warm-up."""
@@ -171,11 +207,63 @@ class TestStartWarmup:
         assert response["statusCode"] == 403
 
 
+class TestCheckDomainAuth:
+    """Tests for GET /workspaces/{ws}/email-warmup/check-domain."""
+
+    @patch("api.email_warmup.EmailService")
+    def test_check_domain(self, mock_email_cls, dynamodb_table, api_gateway_event):
+        """Test checking domain auth status."""
+        from api.email_warmup import handler
+
+        mock_email = MagicMock()
+        mock_email.check_domain_auth.return_value = {
+            "domain": "example.com",
+            "verified": True,
+            "dkim_enabled": True,
+            "dkim_status": "Success",
+            "dkim_tokens": ["abc"],
+            "ready": True,
+        }
+        mock_email_cls.return_value = mock_email
+
+        _seed_workspace(dynamodb_table)
+
+        event = api_gateway_event(
+            method="GET",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/check-domain",
+            path_params={"workspace_id": WORKSPACE_ID},
+            query_params={"domain": "example.com"},
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 200
+        body = _parse_body(response)
+        assert body["domain"] == "example.com"
+        assert body["verified"] is True
+        assert body["dkim_enabled"] is True
+        assert body["ready"] is True
+
+    def test_check_domain_missing_param(self, dynamodb_table, api_gateway_event):
+        """Test check-domain without domain param."""
+        from api.email_warmup import handler
+
+        _seed_workspace(dynamodb_table)
+
+        event = api_gateway_event(
+            method="GET",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/check-domain",
+            path_params={"workspace_id": WORKSPACE_ID},
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 400
+
+
 class TestGetWarmupStatus:
     """Tests for GET /workspaces/{ws}/email-warmup/{domain}."""
 
     def test_get_status(self, dynamodb_table, api_gateway_event):
-        """Test getting warm-up status."""
+        """Test getting warm-up status with engagement fields."""
         from api.email_warmup import handler
 
         _seed_workspace(dynamodb_table)
@@ -194,6 +282,11 @@ class TestGetWarmupStatus:
         assert body["status"] == "active"
         assert body["warmup_day"] == 3
         assert body["total_sent"] == 500
+        assert body["total_delivered"] == 490
+        assert body["total_opens"] == 100
+        assert body["total_clicks"] == 25
+        assert body["send_window_start"] == 9
+        assert body["send_window_end"] == 19
 
     def test_get_status_not_found(self, dynamodb_table, api_gateway_event):
         """Test getting status for non-existent domain."""
@@ -289,6 +382,111 @@ class TestCancelWarmup:
         event = api_gateway_event(
             method="DELETE",
             path=f"/workspaces/{WORKSPACE_ID}/email-warmup/nonexistent.com",
+            path_params={"workspace_id": WORKSPACE_ID, "domain": "nonexistent.com"},
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 404
+
+
+class TestUpdateSeedList:
+    """Tests for PUT /workspaces/{ws}/email-warmup/{domain}/seed-list."""
+
+    def test_update_seed_list(self, dynamodb_table, api_gateway_event):
+        """Test updating seed list configuration."""
+        from api.email_warmup import handler
+
+        _seed_workspace(dynamodb_table)
+        _seed_warmup(dynamodb_table)
+
+        event = api_gateway_event(
+            method="PUT",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/example.com/seed-list",
+            path_params={"workspace_id": WORKSPACE_ID, "domain": "example.com"},
+            body={
+                "seed_list": ["a@test.com", "b@test.com"],
+                "auto_warmup_enabled": True,
+                "from_name": "Test Company",
+            },
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 200
+        body = _parse_body(response)
+        assert body["seed_list"] == ["a@test.com", "b@test.com"]
+        assert body["auto_warmup_enabled"] is True
+        assert body["from_name"] == "Test Company"
+
+    def test_update_seed_list_not_found(self, dynamodb_table, api_gateway_event):
+        """Test updating seed list for non-existent domain."""
+        from api.email_warmup import handler
+
+        _seed_workspace(dynamodb_table)
+
+        event = api_gateway_event(
+            method="PUT",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/nonexistent.com/seed-list",
+            path_params={"workspace_id": WORKSPACE_ID, "domain": "nonexistent.com"},
+            body={
+                "seed_list": ["a@test.com"],
+                "auto_warmup_enabled": True,
+            },
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 404
+
+    def test_update_seed_list_empty_rejected(self, dynamodb_table, api_gateway_event):
+        """Test that empty seed list is rejected."""
+        from api.email_warmup import handler
+
+        _seed_workspace(dynamodb_table)
+        _seed_warmup(dynamodb_table)
+
+        event = api_gateway_event(
+            method="PUT",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/example.com/seed-list",
+            path_params={"workspace_id": WORKSPACE_ID, "domain": "example.com"},
+            body={
+                "seed_list": [],
+                "auto_warmup_enabled": True,
+            },
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 400
+
+
+class TestGetWarmupLog:
+    """Tests for GET /workspaces/{ws}/email-warmup/{domain}/warmup-log."""
+
+    def test_warmup_log_empty(self, dynamodb_table, api_gateway_event):
+        """Test warmup log when no emails sent."""
+        from api.email_warmup import handler
+
+        _seed_workspace(dynamodb_table)
+        _seed_warmup(dynamodb_table)
+
+        event = api_gateway_event(
+            method="GET",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/example.com/warmup-log",
+            path_params={"workspace_id": WORKSPACE_ID, "domain": "example.com"},
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 200
+        body = _parse_body(response)
+        assert body["items"] == []
+
+    def test_warmup_log_not_found(self, dynamodb_table, api_gateway_event):
+        """Test warmup log for non-existent domain."""
+        from api.email_warmup import handler
+
+        _seed_workspace(dynamodb_table)
+
+        event = api_gateway_event(
+            method="GET",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/nonexistent.com/warmup-log",
             path_params={"workspace_id": WORKSPACE_ID, "domain": "nonexistent.com"},
         )
         response = handler(event, None)

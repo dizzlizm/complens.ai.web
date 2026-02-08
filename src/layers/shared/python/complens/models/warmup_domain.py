@@ -3,13 +3,27 @@
 from enum import Enum
 from typing import ClassVar
 
-from pydantic import BaseModel as PydanticBaseModel, Field
+from pydantic import BaseModel as PydanticBaseModel, EmailStr, Field, field_validator
 
 from complens.models.base import BaseModel
 
 
-# Default warm-up schedule: daily sending limits over 14 days
-DEFAULT_WARMUP_SCHEDULE = [50, 100, 200, 350, 500, 750, 1000, 1500, 2000, 3000, 4000, 5500, 7500, 10000]
+# Default warm-up schedule: daily sending limits over 42 days (6 weeks)
+# Industry best practice: start low (10-20/day), ramp gradually over 6 weeks
+DEFAULT_WARMUP_SCHEDULE = [
+    # Week 1: 10-50/day
+    10, 15, 20, 25, 35, 45, 50,
+    # Week 2: 65-200/day
+    65, 80, 100, 120, 150, 175, 200,
+    # Week 3: 250-750/day
+    250, 300, 350, 400, 500, 600, 750,
+    # Week 4: 900-2500/day
+    900, 1000, 1200, 1500, 1800, 2000, 2500,
+    # Week 5: 3000-6000/day
+    3000, 3500, 4000, 4500, 5000, 5500, 6000,
+    # Week 6: 6500-10000/day
+    6500, 7000, 7500, 8000, 8500, 9000, 10000,
+]
 
 
 class WarmupStatus(str, Enum):
@@ -56,6 +70,29 @@ class WarmupDomain(BaseModel):
     bounce_rate: float = Field(default=0.0, description="Current bounce rate percentage")
     complaint_rate: float = Field(default=0.0, description="Current complaint rate percentage")
 
+    # Engagement metrics (cumulative)
+    total_delivered: int = Field(default=0, description="Total emails delivered during warm-up")
+    total_opens: int = Field(default=0, description="Total opens during warm-up")
+    total_clicks: int = Field(default=0, description="Total clicks during warm-up")
+    open_rate: float = Field(default=0.0, description="Open rate percentage (opens/delivered)")
+    click_rate: float = Field(default=0.0, description="Click rate percentage (clicks/delivered)")
+
+    # Reply metrics (cumulative)
+    total_replies: int = Field(default=0, description="Total replies during warm-up")
+    reply_rate: float = Field(default=0.0, description="Reply rate percentage (replies/delivered)")
+
+    # AI warmup settings
+    seed_list: list[str] = Field(default_factory=list, description="Email addresses for warmup sending")
+    auto_warmup_enabled: bool = Field(default=False, description="Toggle for automatic warmup sending")
+    from_name: str | None = Field(None, max_length=100, description="Display name for warmup from-address")
+
+    # Send window (UTC hours)
+    send_window_start: int = Field(default=9, ge=0, le=23, description="Send window start hour (UTC)")
+    send_window_end: int = Field(default=19, ge=0, le=23, description="Send window end hour (UTC)")
+
+    # Engagement warning
+    low_engagement_warning: bool = Field(default=False, description="True if open rate < 5% after day 7")
+
     # Thresholds for auto-pause
     max_bounce_rate: float = Field(default=5.0, description="Max bounce rate before auto-pause (%)")
     max_complaint_rate: float = Field(default=0.1, description="Max complaint rate before auto-pause (%)")
@@ -98,10 +135,31 @@ class StartWarmupRequest(PydanticBaseModel):
     domain: str = Field(..., min_length=1, max_length=253, description="Domain to warm up")
     schedule: list[int] | None = Field(
         None,
-        description="Custom schedule (daily limits). Defaults to 14-day ramp.",
+        description="Custom schedule (daily limits). Defaults to 42-day ramp.",
     )
     max_bounce_rate: float = Field(default=5.0, ge=0.1, le=50.0)
     max_complaint_rate: float = Field(default=0.1, ge=0.01, le=5.0)
+    send_window_start: int = Field(default=9, ge=0, le=23, description="Send window start hour (UTC)")
+    send_window_end: int = Field(default=19, ge=0, le=23, description="Send window end hour (UTC)")
+    seed_list: list[str] = Field(default_factory=list, max_length=50, description="Seed email addresses")
+    auto_warmup_enabled: bool = Field(default=False, description="Enable automatic warmup sending")
+    from_name: str | None = Field(None, max_length=100, description="Display name for warmup from-address")
+
+
+class UpdateSeedListRequest(PydanticBaseModel):
+    """Request model for updating seed list configuration."""
+
+    seed_list: list[str] = Field(..., max_length=50, description="Seed email addresses (1-50)")
+    auto_warmup_enabled: bool = Field(default=True, description="Enable automatic warmup sending")
+    from_name: str | None = Field(None, max_length=100, description="Display name for warmup from-address")
+
+    @field_validator("seed_list")
+    @classmethod
+    def validate_seed_list(cls, v: list[str]) -> list[str]:
+        """Validate seed list emails are non-empty."""
+        if not v:
+            raise ValueError("seed_list must contain at least 1 email address")
+        return v
 
 
 class WarmupStatusResponse(PydanticBaseModel):
@@ -117,10 +175,23 @@ class WarmupStatusResponse(PydanticBaseModel):
     total_complaints: int
     bounce_rate: float
     complaint_rate: float
+    total_delivered: int = 0
+    total_opens: int = 0
+    total_clicks: int = 0
+    open_rate: float = 0.0
+    click_rate: float = 0.0
+    total_replies: int = 0
+    reply_rate: float = 0.0
+    send_window_start: int = 9
+    send_window_end: int = 19
+    low_engagement_warning: bool = False
     max_bounce_rate: float
     max_complaint_rate: float
     started_at: str | None = None
     pause_reason: str | None = None
+    seed_list: list[str] = []
+    auto_warmup_enabled: bool = False
+    from_name: str | None = None
 
     @classmethod
     def from_warmup_domain(cls, wd: "WarmupDomain") -> "WarmupStatusResponse":
@@ -143,8 +214,21 @@ class WarmupStatusResponse(PydanticBaseModel):
             total_complaints=wd.total_complaints,
             bounce_rate=wd.bounce_rate,
             complaint_rate=wd.complaint_rate,
+            total_delivered=wd.total_delivered,
+            total_opens=wd.total_opens,
+            total_clicks=wd.total_clicks,
+            open_rate=wd.open_rate,
+            click_rate=wd.click_rate,
+            total_replies=wd.total_replies,
+            reply_rate=wd.reply_rate,
+            send_window_start=wd.send_window_start,
+            send_window_end=wd.send_window_end,
+            low_engagement_warning=wd.low_engagement_warning,
             max_bounce_rate=wd.max_bounce_rate,
             max_complaint_rate=wd.max_complaint_rate,
             started_at=wd.started_at,
             pause_reason=wd.pause_reason,
+            seed_list=wd.seed_list,
+            auto_warmup_enabled=wd.auto_warmup_enabled,
+            from_name=wd.from_name,
         )

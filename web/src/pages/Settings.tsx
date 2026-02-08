@@ -3,9 +3,9 @@ import {
   Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle,
   ExternalLink, Search, Mail, Key, Smartphone, Monitor, LogOut, Plus, ChevronRight,
   MessageSquare, Database, BarChart3, Calendar, ShoppingCart, FileText, Megaphone,
-  Pause, Play, Trash2, AlertTriangle, TrendingUp
+  Pause, Play, Trash2, AlertTriangle, TrendingUp, X, Eye, Reply
 } from 'lucide-react';
-import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup, useCancelWarmup, getWarmupStatusInfo } from '../lib/hooks';
+import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup, useCancelWarmup, useCheckDomainAuth, getWarmupStatusInfo, useUpdateSeedList, useWarmupLog } from '../lib/hooks';
 import type { WarmupDomain } from '../lib/hooks/useEmailWarmup';
 import { useBillingStatus, useCreateCheckout, useCreatePortal } from '../lib/hooks/useBilling';
 import TwilioConfigCard from '../components/settings/TwilioConfigCard';
@@ -1057,15 +1057,33 @@ function EmailWarmupSection({ workspaceId }: { workspaceId: string | undefined }
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [newDomain, setNewDomain] = useState('');
+  const [sendWindowStart, setSendWindowStart] = useState(9);
+  const [sendWindowEnd, setSendWindowEnd] = useState(19);
   const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
+  const [initSeedInput, setInitSeedInput] = useState('');
+  const [initSeedList, setInitSeedList] = useState<string[]>([]);
+  const [initAutoWarmup, setInitAutoWarmup] = useState(false);
+
+  const { data: authStatus, isLoading: isCheckingAuth } = useCheckDomainAuth(
+    workspaceId,
+    showAddForm ? newDomain.trim().toLowerCase() : undefined,
+  );
 
   const warmups = warmupsData?.items || [];
 
   const handleStartWarmup = async () => {
     if (!newDomain.trim()) return;
     try {
-      await startWarmup.mutateAsync({ domain: newDomain.trim().toLowerCase() });
+      await startWarmup.mutateAsync({
+        domain: newDomain.trim().toLowerCase(),
+        send_window_start: sendWindowStart,
+        send_window_end: sendWindowEnd,
+        seed_list: initSeedList.length > 0 ? initSeedList : undefined,
+        auto_warmup_enabled: initAutoWarmup,
+      });
       setNewDomain('');
+      setInitSeedList([]);
+      setInitAutoWarmup(false);
       setShowAddForm(false);
     } catch {
       // Error handled by mutation state
@@ -1080,6 +1098,11 @@ function EmailWarmupSection({ workspaceId }: { workspaceId: string | undefined }
       // Error handled by mutation state
     }
   };
+
+  const hourOptions = Array.from({ length: 24 }, (_, i) => ({
+    value: i,
+    label: `${i.toString().padStart(2, '0')}:00 UTC`,
+  }));
 
   return (
     <div className="card">
@@ -1113,18 +1136,150 @@ function EmailWarmupSection({ workspaceId }: { workspaceId: string | undefined }
               placeholder="yourcompany.com"
               value={newDomain}
               onChange={(e) => setNewDomain(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleStartWarmup()}
+              onKeyDown={(e) => e.key === 'Enter' && authStatus?.ready && handleStartWarmup()}
             />
+          </div>
+
+          {/* Domain auth status */}
+          {newDomain.includes('.') && (
+            <div className="mt-3 space-y-2">
+              {isCheckingAuth ? (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Checking domain authentication...
+                </div>
+              ) : authStatus ? (
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-sm">
+                    {authStatus.verified ? (
+                      <Check className="w-4 h-4 text-green-600" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-red-500" />
+                    )}
+                    <span className={authStatus.verified ? 'text-green-700' : 'text-red-600'}>
+                      Domain verified: {authStatus.verified ? 'Yes' : 'No'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    {authStatus.dkim_enabled ? (
+                      <Check className="w-4 h-4 text-green-600" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-red-500" />
+                    )}
+                    <span className={authStatus.dkim_enabled ? 'text-green-700' : 'text-red-600'}>
+                      DKIM configured: {authStatus.dkim_enabled ? 'Yes' : 'No'}
+                    </span>
+                  </div>
+                  {!authStatus.ready && !authStatus.error && (
+                    <p className="text-xs text-red-600 mt-1">
+                      Domain must be verified and DKIM configured before starting warm-up
+                    </p>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {/* Send window */}
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Send window start (UTC)</label>
+              <select
+                className="input text-sm"
+                value={sendWindowStart}
+                onChange={(e) => setSendWindowStart(Number(e.target.value))}
+              >
+                {hourOptions.map((h) => (
+                  <option key={h.value} value={h.value}>{h.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Send window end (UTC)</label>
+              <select
+                className="input text-sm"
+                value={sendWindowEnd}
+                onChange={(e) => setSendWindowEnd(Number(e.target.value))}
+              >
+                {hourOptions.map((h) => (
+                  <option key={h.value} value={h.value}>{h.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Optional seed list */}
+          <div className="mt-3 pt-3 border-t border-gray-200">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Seed List (optional)</label>
+            <p className="text-xs text-gray-500 mb-2">Add emails to receive AI-generated warmup emails</p>
+            <div className="flex gap-2 mb-2">
+              <input
+                type="email"
+                className="input flex-1 text-sm"
+                placeholder="team@example.com"
+                value={initSeedInput}
+                onChange={(e) => setInitSeedInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const email = initSeedInput.trim().toLowerCase();
+                    if (email && email.includes('@') && !initSeedList.includes(email)) {
+                      setInitSeedList([...initSeedList, email]);
+                      setInitSeedInput('');
+                    }
+                  }
+                }}
+              />
+              <button
+                onClick={() => {
+                  const email = initSeedInput.trim().toLowerCase();
+                  if (email && email.includes('@') && !initSeedList.includes(email)) {
+                    setInitSeedList([...initSeedList, email]);
+                    setInitSeedInput('');
+                  }
+                }}
+                disabled={!initSeedInput.trim()}
+                className="btn btn-secondary btn-sm"
+              >
+                Add
+              </button>
+            </div>
+            {initSeedList.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {initSeedList.map((email) => (
+                  <span key={email} className="inline-flex items-center gap-1 text-xs bg-white border border-gray-200 rounded-full px-2.5 py-1">
+                    {email}
+                    <button onClick={() => setInitSeedList(initSeedList.filter(e => e !== email))} className="text-gray-400 hover:text-red-500">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {initSeedList.length > 0 && (
+              <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={initAutoWarmup}
+                  onChange={(e) => setInitAutoWarmup(e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                Enable auto-warmup (send AI emails hourly)
+              </label>
+            )}
+          </div>
+
+          <div className="flex gap-2 mt-3">
             <button
               onClick={handleStartWarmup}
-              disabled={!newDomain.trim() || startWarmup.isPending}
+              disabled={!newDomain.trim() || startWarmup.isPending || (authStatus && !authStatus.ready && !authStatus.error)}
               className="btn btn-primary inline-flex items-center gap-2"
             >
               {startWarmup.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-              Start
+              Start Warm-up
             </button>
             <button
-              onClick={() => { setShowAddForm(false); setNewDomain(''); }}
+              onClick={() => { setShowAddForm(false); setNewDomain(''); setInitSeedList([]); setInitAutoWarmup(false); }}
               className="btn btn-secondary"
             >
               Cancel
@@ -1137,7 +1292,7 @@ function EmailWarmupSection({ workspaceId }: { workspaceId: string | undefined }
             </p>
           )}
           <p className="text-xs text-gray-500 mt-2">
-            Emails from this domain will be gradually ramped up over 14 days (50 &rarr; 10,000/day)
+            Emails from this domain will be gradually ramped up over 6 weeks (10 &rarr; 10,000/day)
           </p>
         </div>
       )}
@@ -1168,6 +1323,7 @@ function EmailWarmupSection({ workspaceId }: { workspaceId: string | undefined }
             <WarmupDomainCard
               key={warmup.domain}
               warmup={warmup}
+              workspaceId={workspaceId || ''}
               onPause={(d) => pauseWarmup.mutate(d)}
               onResume={(d) => resumeWarmup.mutate(d)}
               onCancel={(d) => confirmCancel === d ? handleCancel(d) : setConfirmCancel(d)}
@@ -1185,6 +1341,7 @@ function EmailWarmupSection({ workspaceId }: { workspaceId: string | undefined }
 
 function WarmupDomainCard({
   warmup,
+  workspaceId,
   onPause,
   onResume,
   onCancel,
@@ -1194,6 +1351,7 @@ function WarmupDomainCard({
   isCancelling,
 }: {
   warmup: WarmupDomain;
+  workspaceId: string;
   onPause: (domain: string) => void;
   onResume: (domain: string) => void;
   onCancel: (domain: string) => void;
@@ -1207,6 +1365,44 @@ function WarmupDomainCard({
     ? Math.round((warmup.warmup_day / warmup.schedule_length) * 100)
     : 0;
 
+  const [showSeedList, setShowSeedList] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const [seedInput, setSeedInput] = useState('');
+  const [editSeedList, setEditSeedList] = useState<string[]>(warmup.seed_list || []);
+  const [editAutoWarmup, setEditAutoWarmup] = useState(warmup.auto_warmup_enabled);
+  const [editFromName, setEditFromName] = useState(warmup.from_name || '');
+
+  const updateSeedList = useUpdateSeedList(workspaceId);
+  const { data: logData, isLoading: logLoading } = useWarmupLog(
+    showLog ? workspaceId : undefined,
+    showLog ? warmup.domain : undefined,
+  );
+
+  const handleAddSeedEmail = () => {
+    const email = seedInput.trim().toLowerCase();
+    if (email && email.includes('@') && !editSeedList.includes(email)) {
+      setEditSeedList([...editSeedList, email]);
+      setSeedInput('');
+    }
+  };
+
+  const handleRemoveSeedEmail = (email: string) => {
+    setEditSeedList(editSeedList.filter((e) => e !== email));
+  };
+
+  const handleSaveSeedList = async () => {
+    try {
+      await updateSeedList.mutateAsync({
+        domain: warmup.domain,
+        seed_list: editSeedList,
+        auto_warmup_enabled: editAutoWarmup,
+        from_name: editFromName || undefined,
+      });
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
   return (
     <div className="border border-gray-200 rounded-lg p-4">
       {/* Header row */}
@@ -1217,6 +1413,11 @@ function WarmupDomainCard({
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusInfo.color} ${statusInfo.bgColor}`}>
             {statusInfo.label}
           </span>
+          {warmup.auto_warmup_enabled && (
+            <span className="text-xs px-2 py-0.5 rounded-full font-medium text-emerald-700 bg-emerald-100">
+              Auto-Warmup
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1">
           {warmup.status === 'active' && (
@@ -1267,6 +1468,19 @@ function WarmupDomainCard({
         </div>
       )}
 
+      {/* Low engagement warning */}
+      {warmup.low_engagement_warning && warmup.status === 'active' && (
+        <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg mb-3 text-sm">
+          <AlertCircle className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium text-blue-800">Low engagement detected</p>
+            <p className="text-blue-700">
+              Open rate is below 5% ({warmup.open_rate.toFixed(1)}%). Consider reviewing your email content, subject lines, and sending reputation.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Progress bar */}
       {(warmup.status === 'active' || warmup.status === 'paused') && (
         <div className="mb-3">
@@ -1293,29 +1507,214 @@ function WarmupDomainCard({
         </div>
       )}
 
-      {/* Stats row */}
-      <div className="grid grid-cols-4 gap-3 text-center">
-        <div className="bg-gray-50 rounded-lg p-2">
-          <p className="text-xs text-gray-500">Sent</p>
-          <p className="text-sm font-semibold text-gray-900">{warmup.total_sent.toLocaleString()}</p>
+      {/* Engagement stats */}
+      <div className="space-y-2">
+        <div className="grid grid-cols-5 gap-2 text-center">
+          <div className="bg-gray-50 rounded-lg p-2">
+            <p className="text-xs text-gray-500">Sent</p>
+            <p className="text-sm font-semibold text-gray-900">{warmup.total_sent.toLocaleString()}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-2">
+            <p className="text-xs text-gray-500">Delivered</p>
+            <p className="text-sm font-semibold text-gray-900">{warmup.total_delivered.toLocaleString()}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-2">
+            <p className="text-xs text-gray-500">Opens</p>
+            <p className="text-sm font-semibold text-gray-900">
+              {warmup.total_opens.toLocaleString()}
+              {warmup.total_delivered > 0 && (
+                <span className="text-xs text-gray-500 font-normal ml-1">({warmup.open_rate.toFixed(1)}%)</span>
+              )}
+            </p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-2">
+            <p className="text-xs text-gray-500">Clicks</p>
+            <p className="text-sm font-semibold text-gray-900">
+              {warmup.total_clicks.toLocaleString()}
+              {warmup.total_delivered > 0 && (
+                <span className="text-xs text-gray-500 font-normal ml-1">({warmup.click_rate.toFixed(1)}%)</span>
+              )}
+            </p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-2">
+            <p className="text-xs text-gray-500">Replies</p>
+            <p className="text-sm font-semibold text-emerald-700">
+              {warmup.total_replies.toLocaleString()}
+              {warmup.total_delivered > 0 && (
+                <span className="text-xs text-gray-500 font-normal ml-1">({warmup.reply_rate.toFixed(1)}%)</span>
+              )}
+            </p>
+          </div>
         </div>
-        <div className="bg-gray-50 rounded-lg p-2">
-          <p className="text-xs text-gray-500">Bounced</p>
-          <p className="text-sm font-semibold text-gray-900">{warmup.total_bounced.toLocaleString()}</p>
-        </div>
-        <div className="bg-gray-50 rounded-lg p-2">
-          <p className="text-xs text-gray-500">Bounce Rate</p>
-          <p className={`text-sm font-semibold ${warmup.bounce_rate > warmup.max_bounce_rate ? 'text-red-600' : 'text-gray-900'}`}>
-            {warmup.bounce_rate.toFixed(2)}%
-          </p>
-        </div>
-        <div className="bg-gray-50 rounded-lg p-2">
-          <p className="text-xs text-gray-500">Complaints</p>
-          <p className={`text-sm font-semibold ${warmup.complaint_rate > warmup.max_complaint_rate ? 'text-red-600' : 'text-gray-900'}`}>
-            {warmup.complaint_rate.toFixed(3)}%
-          </p>
+        <div className="grid grid-cols-2 gap-2 text-center">
+          <div className="bg-gray-50 rounded-lg p-2">
+            <p className="text-xs text-gray-500">Bounces</p>
+            <p className={`text-sm font-semibold ${warmup.bounce_rate > warmup.max_bounce_rate ? 'text-red-600' : 'text-gray-900'}`}>
+              {warmup.total_bounced.toLocaleString()}
+              <span className="text-xs font-normal ml-1">({warmup.bounce_rate.toFixed(2)}%)</span>
+            </p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-2">
+            <p className="text-xs text-gray-500">Complaints</p>
+            <p className={`text-sm font-semibold ${warmup.complaint_rate > warmup.max_complaint_rate ? 'text-red-600' : 'text-gray-900'}`}>
+              {warmup.total_complaints.toLocaleString()}
+              <span className="text-xs font-normal ml-1">({warmup.complaint_rate.toFixed(3)}%)</span>
+            </p>
+          </div>
         </div>
       </div>
+
+      {/* Action buttons */}
+      {(warmup.status === 'active' || warmup.status === 'paused') && (
+        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
+          <button
+            onClick={() => { setShowSeedList(!showSeedList); setShowLog(false); }}
+            className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
+              showSeedList ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            Seed List ({warmup.seed_list?.length || 0})
+          </button>
+          <button
+            onClick={() => { setShowLog(!showLog); setShowSeedList(false); }}
+            className={`text-xs px-3 py-1.5 rounded-md transition-colors inline-flex items-center gap-1 ${
+              showLog ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            <Eye className="w-3 h-3" />
+            View Log
+          </button>
+        </div>
+      )}
+
+      {/* Seed List Panel */}
+      {showSeedList && (
+        <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+          <h4 className="text-sm font-medium text-gray-700 mb-2">Seed List</h4>
+          <p className="text-xs text-gray-500 mb-3">
+            Add email addresses to receive AI-generated warmup emails
+          </p>
+
+          {/* Seed email input */}
+          <div className="flex gap-2 mb-3">
+            <input
+              type="email"
+              className="input flex-1 text-sm"
+              placeholder="team@example.com"
+              value={seedInput}
+              onChange={(e) => setSeedInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddSeedEmail()}
+            />
+            <button
+              onClick={handleAddSeedEmail}
+              disabled={!seedInput.trim() || editSeedList.length >= 50}
+              className="btn btn-secondary btn-sm"
+            >
+              Add
+            </button>
+          </div>
+
+          {/* Seed list tags */}
+          {editSeedList.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {editSeedList.map((email) => (
+                <span
+                  key={email}
+                  className="inline-flex items-center gap-1 text-xs bg-white border border-gray-200 rounded-full px-2.5 py-1"
+                >
+                  {email}
+                  <button
+                    onClick={() => handleRemoveSeedEmail(email)}
+                    className="text-gray-400 hover:text-red-500"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Auto-warmup toggle */}
+          <div className="flex items-center justify-between py-2 border-t border-gray-200">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Auto-warmup</p>
+              <p className="text-xs text-gray-500">Send AI-generated warmup emails hourly</p>
+            </div>
+            <button
+              onClick={() => setEditAutoWarmup(!editAutoWarmup)}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                editAutoWarmup ? 'bg-primary-600' : 'bg-gray-200'
+              }`}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                  editAutoWarmup ? 'translate-x-4' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* From name */}
+          <div className="py-2 border-t border-gray-200">
+            <label className="block text-xs font-medium text-gray-600 mb-1">From Name</label>
+            <input
+              type="text"
+              className="input text-sm"
+              placeholder={warmup.domain}
+              value={editFromName}
+              onChange={(e) => setEditFromName(e.target.value)}
+            />
+          </div>
+
+          {/* Save button */}
+          <div className="flex items-center gap-2 mt-3">
+            <button
+              onClick={handleSaveSeedList}
+              disabled={updateSeedList.isPending || editSeedList.length === 0}
+              className="btn btn-primary btn-sm inline-flex items-center gap-1"
+            >
+              {updateSeedList.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+              Save
+            </button>
+            {updateSeedList.isSuccess && (
+              <span className="text-xs text-green-600 flex items-center gap-1">
+                <Check className="w-3 h-3" /> Saved
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Warmup Log Panel */}
+      {showLog && (
+        <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+          <h4 className="text-sm font-medium text-gray-700 mb-2">Warmup Email Log</h4>
+          {logLoading ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+            </div>
+          ) : logData?.items && logData.items.length > 0 ? (
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {logData.items.map((entry, i) => (
+                <div key={i} className="flex items-start gap-3 py-2 border-b border-gray-100 last:border-0 text-xs">
+                  <Mail className="w-3.5 h-3.5 text-gray-400 mt-0.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-gray-800 truncate">{entry.subject}</p>
+                    <p className="text-gray-500">
+                      To: {entry.recipient} &middot; {entry.content_type}
+                      {entry.sent_at && (
+                        <> &middot; {new Date(entry.sent_at).toLocaleString()}</>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-500 py-2">No warmup emails sent yet</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

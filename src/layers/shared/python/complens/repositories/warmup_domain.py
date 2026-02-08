@@ -230,6 +230,236 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
             )
             raise
 
+    def increment_daily_delivery(self, domain: str, date_str: str) -> int:
+        """Atomically increment the daily delivery counter.
+
+        Args:
+            domain: Email sending domain.
+            date_str: Date string (YYYY-MM-DD).
+
+        Returns:
+            New delivery_count after increment.
+        """
+        try:
+            response = self.table.update_item(
+                Key={"PK": f"WARMUP#{domain}", "SK": f"DAY#{date_str}"},
+                UpdateExpression="ADD delivery_count :one",
+                ExpressionAttributeValues={":one": 1},
+                ReturnValues="ALL_NEW",
+            )
+            return int(response["Attributes"].get("delivery_count", 0))
+        except ClientError as e:
+            logger.error(
+                "Failed to increment daily delivery counter",
+                domain=domain,
+                date=date_str,
+                error=str(e),
+            )
+            raise
+
+    def increment_daily_open(self, domain: str, date_str: str) -> int:
+        """Atomically increment the daily open counter.
+
+        Args:
+            domain: Email sending domain.
+            date_str: Date string (YYYY-MM-DD).
+
+        Returns:
+            New open_count after increment.
+        """
+        try:
+            response = self.table.update_item(
+                Key={"PK": f"WARMUP#{domain}", "SK": f"DAY#{date_str}"},
+                UpdateExpression="ADD open_count :one",
+                ExpressionAttributeValues={":one": 1},
+                ReturnValues="ALL_NEW",
+            )
+            return int(response["Attributes"].get("open_count", 0))
+        except ClientError as e:
+            logger.error(
+                "Failed to increment daily open counter",
+                domain=domain,
+                date=date_str,
+                error=str(e),
+            )
+            raise
+
+    def increment_daily_click(self, domain: str, date_str: str) -> int:
+        """Atomically increment the daily click counter.
+
+        Args:
+            domain: Email sending domain.
+            date_str: Date string (YYYY-MM-DD).
+
+        Returns:
+            New click_count after increment.
+        """
+        try:
+            response = self.table.update_item(
+                Key={"PK": f"WARMUP#{domain}", "SK": f"DAY#{date_str}"},
+                UpdateExpression="ADD click_count :one",
+                ExpressionAttributeValues={":one": 1},
+                ReturnValues="ALL_NEW",
+            )
+            return int(response["Attributes"].get("click_count", 0))
+        except ClientError as e:
+            logger.error(
+                "Failed to increment daily click counter",
+                domain=domain,
+                date=date_str,
+                error=str(e),
+            )
+            raise
+
+    def increment_hourly_send(self, domain: str, date_str: str, hour: int, hourly_limit: int) -> int:
+        """Atomically increment the hourly send counter.
+
+        Creates an hourly counter item with a 48h TTL.
+
+        Args:
+            domain: Email sending domain.
+            date_str: Date string (YYYY-MM-DD).
+            hour: Hour of day (0-23).
+            hourly_limit: Current hourly limit (stored for reference).
+
+        Returns:
+            New hourly_count after increment.
+        """
+        ttl = int(time.time()) + (2 * 86400)  # 48h TTL
+
+        try:
+            response = self.table.update_item(
+                Key={
+                    "PK": f"WARMUP#{domain}",
+                    "SK": f"HOUR#{date_str}#{hour:02d}",
+                },
+                UpdateExpression=(
+                    "SET #limit = :limit, #ttl = :ttl "
+                    "ADD hourly_count :one"
+                ),
+                ExpressionAttributeNames={
+                    "#limit": "hourly_limit",
+                    "#ttl": "ttl",
+                },
+                ExpressionAttributeValues={
+                    ":one": 1,
+                    ":limit": hourly_limit,
+                    ":ttl": ttl,
+                },
+                ReturnValues="ALL_NEW",
+            )
+            return int(response["Attributes"]["hourly_count"])
+        except ClientError as e:
+            logger.error(
+                "Failed to increment hourly send counter",
+                domain=domain,
+                date=date_str,
+                hour=hour,
+                error=str(e),
+            )
+            raise
+
+    def increment_daily_reply(self, domain: str, date_str: str) -> int:
+        """Atomically increment the daily reply counter.
+
+        Args:
+            domain: Email sending domain.
+            date_str: Date string (YYYY-MM-DD).
+
+        Returns:
+            New reply_count after increment.
+        """
+        try:
+            response = self.table.update_item(
+                Key={"PK": f"WARMUP#{domain}", "SK": f"DAY#{date_str}"},
+                UpdateExpression="ADD reply_count :one",
+                ExpressionAttributeValues={":one": 1},
+                ReturnValues="ALL_NEW",
+            )
+            return int(response["Attributes"].get("reply_count", 0))
+        except ClientError as e:
+            logger.error(
+                "Failed to increment daily reply counter",
+                domain=domain,
+                date=date_str,
+                error=str(e),
+            )
+            raise
+
+    def record_warmup_email(
+        self, domain: str, date_str: str, email_data: dict[str, Any],
+    ) -> None:
+        """Store a sent warmup email record for audit and subject dedup.
+
+        Args:
+            domain: Email sending domain.
+            date_str: Date string (YYYY-MM-DD).
+            email_data: Dict with subject, recipient, content_type, etc.
+        """
+        import ulid
+
+        ttl = int(time.time()) + (30 * 86400)  # 30-day TTL
+        email_id = str(ulid.new())
+
+        try:
+            self.table.put_item(Item={
+                "PK": f"WARMUP#{domain}",
+                "SK": f"EMAIL#{date_str}#{email_id}",
+                "subject": email_data.get("subject", ""),
+                "recipient": email_data.get("recipient", ""),
+                "content_type": email_data.get("content_type", ""),
+                "sent_at": email_data.get("sent_at", ""),
+                "ttl": ttl,
+            })
+        except ClientError as e:
+            logger.error(
+                "Failed to record warmup email",
+                domain=domain,
+                date=date_str,
+                error=str(e),
+            )
+            raise
+
+    def get_recent_warmup_emails(
+        self, domain: str, date_str: str, limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Query recent warmup emails for a domain.
+
+        Args:
+            domain: Email sending domain.
+            date_str: Date string (YYYY-MM-DD) to query from (inclusive, backward).
+            limit: Maximum items to return.
+
+        Returns:
+            List of warmup email records.
+        """
+        try:
+            response = self.table.query(
+                KeyConditionExpression="PK = :pk AND begins_with(SK, :prefix)",
+                ExpressionAttributeValues={
+                    ":pk": f"WARMUP#{domain}",
+                    ":prefix": "EMAIL#",
+                },
+                ScanIndexForward=False,
+                Limit=limit,
+            )
+            return [
+                {
+                    "subject": item.get("subject", ""),
+                    "recipient": item.get("recipient", ""),
+                    "content_type": item.get("content_type", ""),
+                    "sent_at": item.get("sent_at", ""),
+                }
+                for item in response.get("Items", [])
+            ]
+        except ClientError as e:
+            logger.error(
+                "Failed to get recent warmup emails",
+                domain=domain,
+                error=str(e),
+            )
+            raise
+
     def get_daily_counter(self, domain: str, date_str: str) -> dict[str, Any] | None:
         """Get daily counter for a domain and date.
 
@@ -238,7 +468,8 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
             date_str: Date string (YYYY-MM-DD).
 
         Returns:
-            Counter dict with send_count, bounce_count, complaint_count, daily_limit,
+            Counter dict with send_count, bounce_count, complaint_count,
+            delivery_count, open_count, click_count, reply_count, daily_limit,
             or None if no counter exists.
         """
         try:
@@ -252,6 +483,10 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
                 "send_count": int(item.get("send_count", 0)),
                 "bounce_count": int(item.get("bounce_count", 0)),
                 "complaint_count": int(item.get("complaint_count", 0)),
+                "delivery_count": int(item.get("delivery_count", 0)),
+                "open_count": int(item.get("open_count", 0)),
+                "click_count": int(item.get("click_count", 0)),
+                "reply_count": int(item.get("reply_count", 0)),
                 "daily_limit": int(item.get("daily_limit", 0)),
             }
         except ClientError as e:

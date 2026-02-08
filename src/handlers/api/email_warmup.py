@@ -7,8 +7,9 @@ from typing import Any
 import structlog
 from pydantic import ValidationError as PydanticValidationError
 
-from complens.models.warmup_domain import StartWarmupRequest, WarmupStatusResponse
+from complens.models.warmup_domain import StartWarmupRequest, UpdateSeedListRequest, WarmupStatusResponse
 from complens.repositories.warmup_domain import WarmupDomainRepository
+from complens.services.email_service import EmailService
 from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
 from complens.services.warmup_service import WarmupService
 from complens.utils.auth import get_auth_context, require_workspace_access
@@ -22,12 +23,13 @@ def handler(event: dict[str, Any], context: Any) -> dict:
     """Handle email warm-up API requests.
 
     Routes:
-        GET    /workspaces/{ws}/email-warmup              List warm-up domains
-        POST   /workspaces/{ws}/email-warmup              Start warm-up
-        GET    /workspaces/{ws}/email-warmup/{domain}      Get status
-        POST   /workspaces/{ws}/email-warmup/{domain}/pause   Pause
-        POST   /workspaces/{ws}/email-warmup/{domain}/resume  Resume
-        DELETE /workspaces/{ws}/email-warmup/{domain}      Cancel
+        GET    /workspaces/{ws}/email-warmup                    List warm-up domains
+        POST   /workspaces/{ws}/email-warmup                    Start warm-up
+        GET    /workspaces/{ws}/email-warmup/check-domain       Check domain auth
+        GET    /workspaces/{ws}/email-warmup/{domain}           Get status
+        POST   /workspaces/{ws}/email-warmup/{domain}/pause     Pause
+        POST   /workspaces/{ws}/email-warmup/{domain}/resume    Resume
+        DELETE /workspaces/{ws}/email-warmup/{domain}           Cancel
     """
     try:
         http_method = event.get("httpMethod", "").upper()
@@ -43,7 +45,13 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         repo = WarmupDomainRepository()
         service = WarmupService(repo=repo)
 
-        if path.endswith("/pause") and http_method == "POST" and domain:
+        if path.endswith("/check-domain") and http_method == "GET":
+            return check_domain_auth(event)
+        elif path.endswith("/seed-list") and http_method == "PUT" and domain:
+            return update_seed_list(service, workspace_id, domain, event)
+        elif path.endswith("/warmup-log") and http_method == "GET" and domain:
+            return get_warmup_log(repo, workspace_id, domain)
+        elif path.endswith("/pause") and http_method == "POST" and domain:
             return pause_warmup(service, workspace_id, domain)
         elif path.endswith("/resume") and http_method == "POST" and domain:
             return resume_warmup(service, workspace_id, domain)
@@ -116,6 +124,11 @@ def start_warmup(service: WarmupService, workspace_id: str, event: dict) -> dict
         schedule=request.schedule,
         max_bounce_rate=request.max_bounce_rate,
         max_complaint_rate=request.max_complaint_rate,
+        send_window_start=request.send_window_start,
+        send_window_end=request.send_window_end,
+        seed_list=request.seed_list,
+        auto_warmup_enabled=request.auto_warmup_enabled,
+        from_name=request.from_name,
     )
 
     logger.info(
@@ -218,3 +231,85 @@ def cancel_warmup(service: WarmupService, workspace_id: str, domain: str) -> dic
     service.cancel_warmup(domain)
 
     return success({"deleted": True})
+
+
+def update_seed_list(
+    service: WarmupService, workspace_id: str, domain: str, event: dict,
+) -> dict:
+    """Update seed list and auto-warmup configuration.
+
+    Args:
+        service: WarmupService.
+        workspace_id: Workspace ID.
+        domain: Email sending domain.
+        event: API Gateway event.
+
+    Returns:
+        API response with updated warmup.
+    """
+    warmup = service.get_status(domain)
+    if not warmup or warmup.workspace_id != workspace_id:
+        return not_found("warmup_domain", domain)
+
+    body = json.loads(event.get("body", "{}"))
+    request = UpdateSeedListRequest.model_validate(body)
+
+    warmup.seed_list = request.seed_list
+    warmup.auto_warmup_enabled = request.auto_warmup_enabled
+    warmup.from_name = request.from_name
+    warmup = service.repo.update_warmup(warmup)
+
+    logger.info(
+        "Seed list updated",
+        domain=domain,
+        seed_count=len(request.seed_list),
+        auto_warmup=request.auto_warmup_enabled,
+    )
+
+    return success(
+        WarmupStatusResponse.from_warmup_domain(warmup).model_dump(mode="json")
+    )
+
+
+def get_warmup_log(
+    repo: WarmupDomainRepository, workspace_id: str, domain: str,
+) -> dict:
+    """Get recent warmup emails sent for a domain.
+
+    Args:
+        repo: WarmupDomainRepository.
+        workspace_id: Workspace ID.
+        domain: Email sending domain.
+
+    Returns:
+        API response with warmup email log.
+    """
+    warmup = repo.get_by_domain(domain)
+    if not warmup or warmup.workspace_id != workspace_id:
+        return not_found("warmup_domain", domain)
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    emails = repo.get_recent_warmup_emails(domain, today, limit=50)
+
+    return success({"items": emails})
+
+
+def check_domain_auth(event: dict) -> dict:
+    """Check domain authentication status (verification + DKIM).
+
+    Args:
+        event: API Gateway event.
+
+    Returns:
+        API response with domain auth status.
+    """
+    query_params = event.get("queryStringParameters", {}) or {}
+    domain = query_params.get("domain")
+
+    if not domain:
+        return error("Missing 'domain' query parameter", 400)
+
+    email_service = EmailService()
+    auth_status = email_service.check_domain_auth(domain)
+
+    return success(auth_status)

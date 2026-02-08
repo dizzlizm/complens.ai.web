@@ -3,7 +3,7 @@
 import os
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
@@ -55,19 +55,25 @@ class TestWarmupServiceCheckLimit:
             workspace_id="ws-1",
             domain="example.com",
             status=WarmupStatus.ACTIVE,
-            warmup_day=0,  # limit = 50
+            warmup_day=0,  # limit = 10
         )
         repo = MagicMock()
         repo.get_by_domain.return_value = warmup
-        repo.increment_daily_send.return_value = 25  # Under 50
+        repo.increment_hourly_send.return_value = 1  # Under hourly limit
+        repo.increment_daily_send.return_value = 5  # Under 10
 
         service = self._make_service(repo)
-        result = service.check_warmup_limit("sender@example.com")
+
+        # Mock time to be within default send window (9-19 UTC)
+        with patch("complens.services.warmup_service.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = service.check_warmup_limit("sender@example.com")
 
         assert result.allowed is True
         assert result.should_defer is False
-        assert result.remaining == 25
-        assert result.daily_limit == 50
+        assert result.remaining == 5
+        assert result.daily_limit == 10
 
     def test_over_daily_limit(self):
         """Test that emails over the daily limit are deferred."""
@@ -77,14 +83,19 @@ class TestWarmupServiceCheckLimit:
             workspace_id="ws-1",
             domain="example.com",
             status=WarmupStatus.ACTIVE,
-            warmup_day=0,  # limit = 50
+            warmup_day=0,  # limit = 10
         )
         repo = MagicMock()
         repo.get_by_domain.return_value = warmup
-        repo.increment_daily_send.return_value = 51  # Over 50
+        repo.increment_hourly_send.return_value = 1  # Under hourly limit
+        repo.increment_daily_send.return_value = 11  # Over 10
 
         service = self._make_service(repo)
-        result = service.check_warmup_limit("sender@example.com")
+
+        with patch("complens.services.warmup_service.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = service.check_warmup_limit("sender@example.com")
 
         assert result.allowed is False
         assert result.should_defer is True
@@ -98,7 +109,7 @@ class TestWarmupServiceCheckLimit:
             workspace_id="ws-1",
             domain="example.com",
             status=WarmupStatus.ACTIVE,
-            warmup_day=14,  # Past 14-day schedule
+            warmup_day=42,  # Past 42-day schedule
         )
         repo = MagicMock()
         repo.get_by_domain.return_value = warmup
@@ -108,6 +119,58 @@ class TestWarmupServiceCheckLimit:
 
         assert result.allowed is True
         assert result.should_defer is False
+
+    def test_outside_send_window_defers(self):
+        """Test that emails outside the send window are deferred."""
+        from complens.models.warmup_domain import WarmupDomain, WarmupStatus
+
+        warmup = WarmupDomain(
+            workspace_id="ws-1",
+            domain="example.com",
+            status=WarmupStatus.ACTIVE,
+            warmup_day=0,
+            send_window_start=9,
+            send_window_end=19,
+        )
+        repo = MagicMock()
+        repo.get_by_domain.return_value = warmup
+
+        service = self._make_service(repo)
+
+        # Mock time to 3am UTC (outside 9-19 window)
+        with patch("complens.services.warmup_service.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 1, 15, 3, 0, 0, tzinfo=timezone.utc)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = service.check_warmup_limit("sender@example.com")
+
+        assert result.allowed is False
+        assert result.should_defer is True
+
+    def test_over_hourly_limit_defers(self):
+        """Test that emails over the hourly limit are deferred."""
+        from complens.models.warmup_domain import WarmupDomain, WarmupStatus
+
+        warmup = WarmupDomain(
+            workspace_id="ws-1",
+            domain="example.com",
+            status=WarmupStatus.ACTIVE,
+            warmup_day=7,  # limit = 65, window = 10h, hourly = ceil(65/10) = 7
+            send_window_start=9,
+            send_window_end=19,
+        )
+        repo = MagicMock()
+        repo.get_by_domain.return_value = warmup
+        repo.increment_hourly_send.return_value = 8  # Over hourly limit of 7
+
+        service = self._make_service(repo)
+
+        with patch("complens.services.warmup_service.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = service.check_warmup_limit("sender@example.com")
+
+        assert result.allowed is False
+        assert result.should_defer is True
 
     def test_fail_open_on_repo_error(self):
         """Test that DynamoDB errors fail open (allow sending)."""
@@ -121,7 +184,7 @@ class TestWarmupServiceCheckLimit:
         assert result.should_defer is False
 
     def test_fail_open_on_counter_error(self):
-        """Test that counter increment errors fail open."""
+        """Test that daily counter increment errors fail open."""
         from complens.models.warmup_domain import WarmupDomain, WarmupStatus
 
         warmup = WarmupDomain(
@@ -132,10 +195,39 @@ class TestWarmupServiceCheckLimit:
         )
         repo = MagicMock()
         repo.get_by_domain.return_value = warmup
+        repo.increment_hourly_send.return_value = 1  # Under hourly limit
         repo.increment_daily_send.side_effect = Exception("Counter error")
 
         service = self._make_service(repo)
-        result = service.check_warmup_limit("sender@example.com")
+
+        with patch("complens.services.warmup_service.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = service.check_warmup_limit("sender@example.com")
+
+        assert result.allowed is True
+        assert result.should_defer is False
+
+    def test_fail_open_on_hourly_counter_error(self):
+        """Test that hourly counter increment errors fail open."""
+        from complens.models.warmup_domain import WarmupDomain, WarmupStatus
+
+        warmup = WarmupDomain(
+            workspace_id="ws-1",
+            domain="example.com",
+            status=WarmupStatus.ACTIVE,
+            warmup_day=0,
+        )
+        repo = MagicMock()
+        repo.get_by_domain.return_value = warmup
+        repo.increment_hourly_send.side_effect = Exception("Hourly counter error")
+
+        service = self._make_service(repo)
+
+        with patch("complens.services.warmup_service.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = service.check_warmup_limit("sender@example.com")
 
         assert result.allowed is True
         assert result.should_defer is False
@@ -183,6 +275,23 @@ class TestWarmupServiceLifecycle:
 
         assert result.schedule == [10, 50, 100]
         assert result.daily_limit == 10
+
+    def test_start_warmup_with_seed_list(self):
+        """Test starting warm-up with seed list and auto-warmup."""
+        repo = MagicMock()
+        repo.create_warmup.side_effect = lambda w: w
+        service = self._make_service(repo)
+
+        result = service.start_warmup(
+            "ws-1", "example.com",
+            seed_list=["a@test.com", "b@test.com"],
+            auto_warmup_enabled=True,
+            from_name="Test Corp",
+        )
+
+        assert result.seed_list == ["a@test.com", "b@test.com"]
+        assert result.auto_warmup_enabled is True
+        assert result.from_name == "Test Corp"
 
     def test_pause_warmup(self):
         """Test pausing a warm-up."""
@@ -297,6 +406,40 @@ class TestWarmupServiceAdvanceDay:
         assert result.total_bounced == 1
         assert result.status == "active"
 
+    def test_advance_day_with_engagement(self):
+        """Test that advance_day rolls up engagement metrics including replies."""
+        from complens.models.warmup_domain import WarmupDomain, WarmupStatus
+
+        warmup = WarmupDomain(
+            workspace_id="ws-1",
+            domain="example.com",
+            status=WarmupStatus.ACTIVE,
+            warmup_day=2,
+        )
+        repo = MagicMock()
+        repo.get_by_domain.return_value = warmup
+        repo.get_daily_counter.return_value = {
+            "send_count": 150,
+            "bounce_count": 1,
+            "complaint_count": 0,
+            "delivery_count": 145,
+            "open_count": 40,
+            "click_count": 10,
+            "reply_count": 5,
+        }
+        repo.update_warmup.side_effect = lambda w: w
+
+        service = self._make_service(repo)
+        result = service.advance_day("example.com")
+
+        assert result.total_delivered == 145
+        assert result.total_opens == 40
+        assert result.total_clicks == 10
+        assert result.total_replies == 5
+        assert result.open_rate > 0
+        assert result.click_rate > 0
+        assert result.reply_rate > 0
+
     def test_advance_day_completes(self):
         """Test warm-up completion when past schedule."""
         from complens.models.warmup_domain import WarmupDomain, WarmupStatus
@@ -305,7 +448,7 @@ class TestWarmupServiceAdvanceDay:
             workspace_id="ws-1",
             domain="example.com",
             status=WarmupStatus.ACTIVE,
-            warmup_day=13,  # Last day of 14-day schedule
+            warmup_day=41,  # Last day of 42-day schedule
         )
         repo = MagicMock()
         repo.get_by_domain.return_value = warmup
@@ -315,8 +458,39 @@ class TestWarmupServiceAdvanceDay:
         service = self._make_service(repo)
         result = service.advance_day("example.com")
 
-        assert result.warmup_day == 14
+        assert result.warmup_day == 42
         assert result.status == "completed"
+
+    def test_advance_day_low_engagement_warning(self):
+        """Test that low engagement triggers warning after day 7."""
+        from complens.models.warmup_domain import WarmupDomain, WarmupStatus
+
+        warmup = WarmupDomain(
+            workspace_id="ws-1",
+            domain="example.com",
+            status=WarmupStatus.ACTIVE,
+            warmup_day=8,
+            total_delivered=200,
+            total_opens=5,  # 2.5% open rate < 5%
+        )
+        repo = MagicMock()
+        repo.get_by_domain.return_value = warmup
+        repo.get_daily_counter.return_value = {
+            "send_count": 100,
+            "bounce_count": 0,
+            "complaint_count": 0,
+            "delivery_count": 95,
+            "open_count": 2,
+            "click_count": 0,
+        }
+        repo.update_warmup.side_effect = lambda w: w
+
+        service = self._make_service(repo)
+        result = service.advance_day("example.com")
+
+        # total_delivered = 200 + 95 = 295, total_opens = 5 + 2 = 7
+        # open_rate = (7 / 295) * 100 ~= 2.37% < 5%
+        assert result.low_engagement_warning is True
 
     def test_advance_day_not_active(self):
         """Test advance_day skips non-active warmups."""
@@ -418,6 +592,188 @@ class TestWarmupServiceReputation:
         auto_paused = service.record_bounce("example.com")
 
         assert auto_paused is False
+
+
+class TestWarmupServiceEngagement:
+    """Tests for engagement recording methods."""
+
+    def _make_service(self, repo=None):
+        from complens.services.warmup_service import WarmupService
+        return WarmupService(repo=repo or MagicMock(), deferred_queue_url="https://sqs/test")
+
+    def test_record_delivery(self):
+        """Test recording a delivery event."""
+        repo = MagicMock()
+        service = self._make_service(repo)
+
+        service.record_delivery("example.com")
+
+        repo.increment_daily_delivery.assert_called_once()
+
+    def test_record_open(self):
+        """Test recording an open event."""
+        repo = MagicMock()
+        service = self._make_service(repo)
+
+        service.record_open("example.com")
+
+        repo.increment_daily_open.assert_called_once()
+
+    def test_record_click(self):
+        """Test recording a click event."""
+        repo = MagicMock()
+        service = self._make_service(repo)
+
+        service.record_click("example.com")
+
+        repo.increment_daily_click.assert_called_once()
+
+    def test_record_reply(self):
+        """Test recording a reply event."""
+        repo = MagicMock()
+        service = self._make_service(repo)
+
+        service.record_reply("example.com")
+
+        repo.increment_daily_reply.assert_called_once()
+
+    def test_record_delivery_error_swallowed(self):
+        """Test that delivery recording errors don't propagate."""
+        repo = MagicMock()
+        repo.increment_daily_delivery.side_effect = Exception("DB error")
+        service = self._make_service(repo)
+
+        # Should not raise
+        service.record_delivery("example.com")
+
+    def test_record_reply_error_swallowed(self):
+        """Test that reply recording errors don't propagate."""
+        repo = MagicMock()
+        repo.increment_daily_reply.side_effect = Exception("DB error")
+        service = self._make_service(repo)
+
+        # Should not raise
+        service.record_reply("example.com")
+
+
+class TestWarmupServiceStartWithAuth:
+    """Tests for start_warmup with domain auth check."""
+
+    def _make_service(self, repo=None):
+        from complens.services.warmup_service import WarmupService
+        return WarmupService(repo=repo or MagicMock(), deferred_queue_url="https://sqs/test")
+
+    @patch("complens.services.email_service.EmailService")
+    def test_start_rejects_unverified_domain(self, mock_email_cls):
+        """Test that starting warmup rejects unverified domain."""
+        from complens.utils.exceptions import ValidationError
+
+        mock_email = MagicMock()
+        mock_email.check_domain_auth.return_value = {
+            "domain": "bad.com",
+            "verified": False,
+            "dkim_enabled": False,
+            "dkim_status": None,
+            "dkim_tokens": [],
+            "ready": False,
+        }
+        mock_email_cls.return_value = mock_email
+
+        repo = MagicMock()
+        service = self._make_service(repo)
+
+        with pytest.raises(ValidationError):
+            service.start_warmup("ws-1", "bad.com")
+
+    @patch("complens.services.email_service.EmailService")
+    def test_start_allows_verified_domain(self, mock_email_cls):
+        """Test that starting warmup allows verified domain."""
+        mock_email = MagicMock()
+        mock_email.check_domain_auth.return_value = {
+            "domain": "good.com",
+            "verified": True,
+            "dkim_enabled": True,
+            "dkim_status": "Success",
+            "dkim_tokens": ["abc"],
+            "ready": True,
+        }
+        mock_email_cls.return_value = mock_email
+
+        repo = MagicMock()
+        repo.create_warmup.side_effect = lambda w: w
+        service = self._make_service(repo)
+
+        result = service.start_warmup("ws-1", "good.com")
+
+        assert result.domain == "good.com"
+        assert result.status == "active"
+
+    @patch("complens.services.email_service.EmailService")
+    def test_start_passes_send_window(self, mock_email_cls):
+        """Test that start_warmup stores send window params."""
+        mock_email = MagicMock()
+        mock_email.check_domain_auth.return_value = {
+            "domain": "good.com", "verified": True, "dkim_enabled": True,
+            "dkim_status": "Success", "dkim_tokens": [], "ready": True,
+        }
+        mock_email_cls.return_value = mock_email
+
+        repo = MagicMock()
+        repo.create_warmup.side_effect = lambda w: w
+        service = self._make_service(repo)
+
+        result = service.start_warmup("ws-1", "good.com", send_window_start=6, send_window_end=22)
+
+        assert result.send_window_start == 6
+        assert result.send_window_end == 22
+
+    @patch("complens.services.email_service.EmailService")
+    def test_start_fails_open_on_auth_check_error(self, mock_email_cls):
+        """Test that auth check errors don't block warmup start."""
+        mock_email = MagicMock()
+        mock_email.check_domain_auth.side_effect = Exception("SES unavailable")
+        mock_email_cls.return_value = mock_email
+
+        repo = MagicMock()
+        repo.create_warmup.side_effect = lambda w: w
+        service = self._make_service(repo)
+
+        # Should not raise - fails open
+        result = service.start_warmup("ws-1", "flaky.com")
+        assert result.domain == "flaky.com"
+        assert result.status == "active"
+
+
+class TestSendWindowHelpers:
+    """Tests for send window helper methods."""
+
+    def test_within_normal_window(self):
+        from complens.services.warmup_service import WarmupService
+        assert WarmupService._is_within_send_window(12, 9, 19) is True
+        assert WarmupService._is_within_send_window(9, 9, 19) is True
+        assert WarmupService._is_within_send_window(18, 9, 19) is True
+
+    def test_outside_normal_window(self):
+        from complens.services.warmup_service import WarmupService
+        assert WarmupService._is_within_send_window(19, 9, 19) is False
+        assert WarmupService._is_within_send_window(3, 9, 19) is False
+        assert WarmupService._is_within_send_window(8, 9, 19) is False
+
+    def test_midnight_wrapping_window(self):
+        from complens.services.warmup_service import WarmupService
+        # Window 22:00 - 06:00
+        assert WarmupService._is_within_send_window(23, 22, 6) is True
+        assert WarmupService._is_within_send_window(0, 22, 6) is True
+        assert WarmupService._is_within_send_window(5, 22, 6) is True
+        assert WarmupService._is_within_send_window(6, 22, 6) is False
+        assert WarmupService._is_within_send_window(12, 22, 6) is False
+
+    def test_window_hours(self):
+        from complens.services.warmup_service import WarmupService
+        assert WarmupService._get_window_hours(9, 19) == 10
+        assert WarmupService._get_window_hours(22, 6) == 8
+        assert WarmupService._get_window_hours(0, 24) == 24
+        assert WarmupService._get_window_hours(0, 0) == 1  # Minimum 1
 
 
 class TestWarmupServiceDeferEmail:

@@ -1,8 +1,8 @@
-"""SES bounce/complaint feedback handler.
+"""SES bounce/complaint/engagement feedback handler.
 
-Processes SES feedback notifications (bounces and complaints) delivered
-via SNS topic. Updates warm-up daily counters and auto-pauses domains
-that exceed reputation thresholds.
+Processes SES feedback notifications (bounces, complaints, deliveries,
+opens, and clicks) delivered via SNS topic. Updates warm-up daily counters
+and auto-pauses domains that exceed reputation thresholds.
 """
 
 import json
@@ -16,10 +16,12 @@ logger = structlog.get_logger()
 
 
 def handler(event: dict[str, Any], context: Any) -> dict:
-    """Process SES bounce/complaint notifications from SNS.
+    """Process SES notifications from SNS.
 
     SNS delivers messages as a batch of records.
-    Each record contains an SES notification with bounce or complaint details.
+    Each record contains an SES notification.
+    Supports both standard SES notifications (notificationType) and
+    SES Configuration Set event format (eventType).
     """
     service = WarmupService()
     processed = 0
@@ -32,12 +34,25 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             logger.warning("Invalid SNS message format", record_id=record.get("EventSubscriptionArn"))
             continue
 
-        notification_type = sns_message.get("notificationType")
+        # Support both standard SES notifications and Configuration Set events
+        notification_type = sns_message.get("notificationType") or sns_message.get("eventType")
 
         if notification_type == "Bounce":
             result = _process_bounce(service, sns_message)
         elif notification_type == "Complaint":
             result = _process_complaint(service, sns_message)
+        elif notification_type == "Delivery":
+            _process_delivery(service, sns_message)
+            result = False
+        elif notification_type == "Open":
+            _process_open(service, sns_message)
+            result = False
+        elif notification_type == "Click":
+            _process_click(service, sns_message)
+            result = False
+        elif notification_type == "Send":
+            # Send events are informational; daily send counter is already incremented at send time
+            result = False
         else:
             logger.debug("Ignoring notification type", notification_type=notification_type)
             continue
@@ -114,6 +129,54 @@ def _process_complaint(service: WarmupService, notification: dict) -> bool:
     )
 
     return service.record_complaint(domain)
+
+
+def _process_delivery(service: WarmupService, notification: dict) -> None:
+    """Process a delivery notification.
+
+    Args:
+        service: WarmupService instance.
+        notification: SES delivery notification.
+    """
+    source = notification.get("mail", {}).get("source", "")
+    domain = _extract_domain(source)
+    if not domain:
+        return
+
+    logger.debug("Processing delivery", domain=domain)
+    service.record_delivery(domain)
+
+
+def _process_open(service: WarmupService, notification: dict) -> None:
+    """Process an open notification.
+
+    Args:
+        service: WarmupService instance.
+        notification: SES open notification.
+    """
+    source = notification.get("mail", {}).get("source", "")
+    domain = _extract_domain(source)
+    if not domain:
+        return
+
+    logger.debug("Processing open", domain=domain)
+    service.record_open(domain)
+
+
+def _process_click(service: WarmupService, notification: dict) -> None:
+    """Process a click notification.
+
+    Args:
+        service: WarmupService instance.
+        notification: SES click notification.
+    """
+    source = notification.get("mail", {}).get("source", "")
+    domain = _extract_domain(source)
+    if not domain:
+        return
+
+    logger.debug("Processing click", domain=domain)
+    service.record_click(domain)
 
 
 def _extract_domain(email: str) -> str | None:
