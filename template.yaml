@@ -1653,6 +1653,22 @@ Resources:
             Method: OPTIONS
             Auth:
               Authorizer: NONE
+        GetChatConfig:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/chat-config/{page_id}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        GetChatConfigOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/chat-config/{page_id}
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
         GetPageByDomain:
           Type: Api
           Properties:

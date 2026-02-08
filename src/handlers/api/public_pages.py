@@ -92,6 +92,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
     Routes:
         GET  /public/pages/{slug}?ws={workspace_id}  - Get page by slug
         GET  /public/forms/{form_id}?ws={workspace_id}  - Get form by ID
+        GET  /public/chat-config/{page_id}?ws={workspace_id}  - Get chat widget config
         GET  /public/domain/{domain}  - Get rendered page by custom domain
         GET  /public/subdomain/{subdomain}  - Get rendered page by subdomain
         POST /public/submit/page/{page_id}  - Submit form from page
@@ -111,12 +112,14 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         subdomain = path_params.get("subdomain")
         workspace_id = query_params.get("ws")
 
-        # Handle OPTIONS preflight for public submit endpoints (custom domain CORS)
-        if http_method == "OPTIONS" and "/public/submit/" in path:
+        # Handle OPTIONS preflight for public endpoints (custom domain / embed CORS)
+        if http_method == "OPTIONS" and ("/public/submit/" in path or "/public/chat-config/" in path):
             return handle_options_preflight(event)
 
         # Route to appropriate handler
-        if "/public/submit/page/" in path and http_method == "POST":
+        if "/public/chat-config/" in path and http_method == "GET":
+            return get_chat_config(page_id, workspace_id, event)
+        elif "/public/submit/page/" in path and http_method == "POST":
             return submit_page_form(page_id, event)
         elif "/public/subdomain/" in path and http_method == "GET":
             return get_page_by_subdomain(subdomain)
@@ -180,6 +183,72 @@ def get_public_page(slug: str, workspace_id: str | None) -> dict:
         page_data.pop(field, None)
 
     return success(page_data)
+
+
+def get_chat_config(page_id: str, workspace_id: str | None, event: dict) -> dict:
+    """Get chat widget configuration for embedding on external sites.
+
+    Returns only the fields needed to render the chat widget.
+    """
+    origin = _get_origin(event)
+
+    if not workspace_id:
+        return public_error("Workspace ID (ws) query parameter is required", origin, 400)
+
+    if not page_id:
+        return public_error("Page ID is required", origin, 400)
+
+    repo = PageRepository()
+    page = repo.get_by_id(workspace_id, page_id)
+
+    if not page:
+        return public_error("Page not found", origin, 404, "NOT_FOUND")
+
+    # Only return config for published pages
+    status_value = page.status.value if hasattr(page.status, 'value') else page.status
+    if status_value != "published":
+        return public_error("Page not found", origin, 404, "NOT_FOUND")
+
+    # Extract chat config
+    chat_config = page.chat_config
+    if not chat_config:
+        return public_error("Chat is not configured for this page", origin, 404, "NOT_FOUND")
+
+    # Handle both Pydantic model and dict
+    if hasattr(chat_config, 'model_dump'):
+        config_data = chat_config.model_dump(mode="json")
+    elif hasattr(chat_config, 'enabled'):
+        config_data = {
+            "enabled": chat_config.enabled,
+            "position": chat_config.position,
+            "initial_message": chat_config.initial_message,
+        }
+    else:
+        config_data = {
+            "enabled": chat_config.get("enabled", False),
+            "position": chat_config.get("position", "bottom-right"),
+            "initial_message": chat_config.get("initial_message"),
+        }
+
+    if not config_data.get("enabled"):
+        return public_error("Chat is not enabled for this page", origin, 404, "NOT_FOUND")
+
+    # Remove sensitive fields - don't expose ai_persona or business_context to the client
+    config_data.pop("ai_persona", None)
+    config_data.pop("business_context", None)
+
+    # Derive WebSocket URL from domain name (same pattern as render_page_html)
+    domain_name = os.environ.get("DOMAIN_NAME", "dev.complens.ai")
+    ws_url = f"wss://ws.{domain_name}"
+
+    return public_success({
+        "page_id": page.id,
+        "workspace_id": workspace_id,
+        "chat_config": config_data,
+        "primary_color": page.primary_color or "#6366f1",
+        "page_name": page.name,
+        "ws_url": ws_url,
+    }, origin)
 
 
 def get_page_by_subdomain(subdomain: str) -> dict:
