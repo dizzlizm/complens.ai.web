@@ -240,11 +240,13 @@ def _fire_chat_event(
         events = boto3.client("events")
 
         # Fire chat_message event (workflows can filter by keyword)
+        event_bus_name = os.environ.get("EVENT_BUS_NAME", "default")
         events.put_events(
             Entries=[
                 {
                     "Source": "complens.chat",
                     "DetailType": "chat_message",
+                    "EventBusName": event_bus_name,
                     "Detail": json.dumps({
                         "workspace_id": workspace_id,
                         "trigger_type": "trigger_chat_message",

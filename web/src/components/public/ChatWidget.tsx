@@ -61,7 +61,12 @@ export default function ChatWidget({
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Connect to WebSocket when chat opens
+  // Track whether initial message has been shown
+  const initialMessageShown = useRef(false);
+
+  // Connect to WebSocket when chat opens.
+  // IMPORTANT: Do NOT include messages.length in deps — that would close and
+  // reopen the connection on every sent message, causing "Connection is gone".
   useEffect(() => {
     if (!isOpen || !WS_URL) return;
 
@@ -71,8 +76,9 @@ export default function ChatWidget({
     ws.current.onopen = () => {
       setIsConnected(true);
 
-      // Add initial message if configured
-      if (config.initial_message && messages.length === 0) {
+      // Add initial message if configured (only once)
+      if (config.initial_message && !initialMessageShown.current) {
+        initialMessageShown.current = true;
         setMessages([
           {
             id: 'initial',
@@ -115,7 +121,7 @@ export default function ChatWidget({
     return () => {
       ws.current?.close();
     };
-  }, [isOpen, pageId, workspaceId, config.initial_message, messages.length]);
+  }, [isOpen, pageId, workspaceId, config.initial_message]);
 
   const sendMessage = () => {
     if (!inputValue.trim() || !ws.current || !isConnected) return;
