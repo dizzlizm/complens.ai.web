@@ -290,6 +290,145 @@ Generate the blocks as a JSON array. Use the business context to personalize all
     return blocks if isinstance(blocks, list) else []
 
 
+def suggest_next_workflow_step(
+    workspace_id: str,
+    nodes: list[dict],
+    edges: list[dict],
+    source_node_id: str,
+    page_id: str | None = None,
+    forms: list[dict] | None = None,
+    pages: list[dict] | None = None,
+    domains: list[str] | None = None,
+) -> list[dict]:
+    """Suggest the next workflow step based on current workflow context.
+
+    Args:
+        workspace_id: The workspace ID for business context.
+        nodes: Simplified list of current nodes [{id, type, label, config}].
+        edges: List of current edges [{source, target}].
+        source_node_id: The node ID to build from.
+        page_id: Optional page ID for page-specific profile.
+        forms: Available forms [{id, name}].
+        pages: Available pages [{id, name}].
+        domains: Verified domain names.
+
+    Returns:
+        List of suggestion dicts with node_type, label, config, description.
+    """
+    # Build workflow summary
+    source_node = next((n for n in nodes if n.get("id") == source_node_id), None)
+    workflow_lines = []
+    for n in nodes:
+        connections = [e["target"] for e in edges if e["source"] == n["id"]]
+        conn_str = f" -> {', '.join(connections)}" if connections else " -> (no outgoing)"
+        workflow_lines.append(f"  - [{n.get('type', '?')}] \"{n.get('label', '?')}\" (id: {n['id']}){conn_str}")
+
+    workflow_summary = "\n".join(workflow_lines) if workflow_lines else "  (empty workflow)"
+
+    # Build resources context
+    resources_parts = []
+    if forms:
+        resources_parts.append(f"Available forms: {json.dumps(forms)}")
+    if pages:
+        resources_parts.append(f"Available pages: {json.dumps(pages)}")
+    if domains:
+        resources_parts.append(f"Verified domains: {json.dumps(domains)}")
+    resources_ctx = "\n".join(resources_parts) if resources_parts else "No workspace resources available yet."
+
+    system = f"""You are an expert marketing automation architect.
+Given a workflow-in-progress, suggest 3-4 logical next nodes to connect after a specific node.
+
+## Available node types and their config schemas
+
+### Actions
+- action_send_email:
+    email_to: "{{{{contact.email}}}}" (default)
+    email_subject: "Subject line" (REQUIRED)
+    email_body: "Email body with {{{{contact.first_name}}}} variables" (REQUIRED)
+    email_from: "noreply@domain.com" (optional, use verified domain if available)
+
+- action_send_sms:
+    sms_to: "{{{{contact.phone}}}}"
+    sms_message: "SMS text" (REQUIRED)
+
+- action_ai_respond:
+    ai_prompt: "Instruction for AI" (REQUIRED)
+    ai_respond_via: "email" | "sms" | "same_channel"
+
+- action_update_contact:
+    add_tags: ["tag1", "tag2"]
+    remove_tags: ["tag3"]
+    update_fields: {{"field_name": "value"}}
+
+- action_wait:
+    wait_duration: 300 (integer seconds: 300=5min, 3600=1hr, 86400=1day)
+
+- action_webhook:
+    webhook_url: "https://..." (REQUIRED)
+    webhook_method: "POST"
+    webhook_headers: {{}}
+    webhook_body: {{}}
+
+### Logic
+- logic_branch:
+    conditions: [{{"field": "contact.tags", "operator": "contains", "value": "vip", "output_handle": "yes"}}, {{"output_handle": "no"}}]
+    default_output: "no"
+
+- logic_filter:
+    filter_conditions: [{{"field": "contact.email", "operator": "exists"}}]
+    filter_operator: "and"
+
+### AI Nodes
+- ai_decision: config with ai_prompt describing the decision
+- ai_generate: config with ai_prompt describing what to generate
+- ai_analyze: config with ai_prompt describing what to analyze
+
+## Template variables
+{{{{contact.email}}}}, {{{{contact.first_name}}}}, {{{{contact.last_name}}}}, {{{{contact.phone}}}},
+{{{{contact.custom_fields.company}}}}, {{{{trigger_data.form_data.message}}}},
+{{{{workspace.notification_email}}}}, {{{{owner.email}}}}
+
+## Rules
+- Return exactly 3-4 suggestions ranked by relevance
+- Each suggestion must have complete, ready-to-use config
+- Use real business context (name, domain, voice) in email copy
+- Use real form/page IDs when referencing workspace resources
+- Don't suggest node types that are already downstream of the source node
+- Tailor suggestions to what makes sense after the source node's type
+- Write real email subjects/bodies, not placeholders
+
+Return ONLY valid JSON array. No markdown, no explanation."""
+
+    source_desc = "unknown node"
+    if source_node:
+        source_desc = f"[{source_node.get('type', '?')}] \"{source_node.get('label', '?')}\""
+
+    prompt = f"""Current workflow:
+{workflow_summary}
+
+Building from node: {source_desc} (id: {source_node_id})
+
+{resources_ctx}
+
+Suggest 3-4 logical next nodes to connect after this node.
+Return a JSON array where each element has:
+- "node_type": the node type string
+- "label": short display name
+- "description": one-line explanation of why this step is useful
+- "config": complete config object ready to use"""
+
+    result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+
+    # Normalize: accept both array and {"suggestions": [...]}
+    if isinstance(result, dict) and "suggestions" in result:
+        result = result["suggestions"]
+
+    if not isinstance(result, list):
+        return []
+
+    return result[:4]
+
+
 def generate_workflow_from_description(
     workspace_id: str,
     description: str,

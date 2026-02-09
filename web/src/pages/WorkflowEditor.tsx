@@ -390,6 +390,7 @@ export default function WorkflowEditor() {
           <WorkflowCanvas
             ref={canvasRef}
             workflowId={id}
+            workspaceId={workspaceId || undefined}
             onChange={handleCanvasChange}
             onNodeSelect={handleNodeSelect}
           />

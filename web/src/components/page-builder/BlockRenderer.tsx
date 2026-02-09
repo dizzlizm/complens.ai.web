@@ -63,62 +63,77 @@ export default function BlockRenderer({
     workspaceId,
   };
 
-  // Wrapper for compact mode - scales down content
-  const CompactWrapper = ({ children }: { children: React.ReactNode }) => {
-    if (!compact) return <>{children}</>;
+  let content: React.ReactNode;
+
+  switch (block.type) {
+    case 'hero':
+      content = <HeroBlock {...props} />;
+      break;
+    case 'features':
+      content = <FeaturesBlock {...props} />;
+      break;
+    case 'cta':
+      content = <CtaBlock {...props} />;
+      break;
+    case 'form':
+      content = <FormBlock {...props} forms={forms} />;
+      break;
+    case 'testimonials':
+      content = <TestimonialsBlock {...props} />;
+      break;
+    case 'faq':
+      content = <FaqBlock {...props} />;
+      break;
+    case 'text':
+      content = <TextBlock {...props} />;
+      break;
+    case 'image':
+      content = <ImageBlock {...props} />;
+      break;
+    case 'stats':
+      content = <StatsBlock {...props} />;
+      break;
+    case 'divider':
+      content = <DividerBlock config={block.config as unknown as DividerConfig} />;
+      break;
+    case 'pricing':
+      content = <PricingBlock {...props} />;
+      break;
+    case 'video':
+      content = <VideoBlock {...props} />;
+      break;
+    case 'chat':
+      content = <ChatBlock {...props} />;
+      break;
+    case 'gallery':
+      content = <GalleryBlock {...props} />;
+      break;
+    case 'slider':
+      content = <SliderBlock {...props} />;
+      break;
+    case 'logo-cloud':
+      content = <LogoCloudBlock {...props} />;
+      break;
+    case 'placeholder':
+      content = null;
+      break;
+    default:
+      content = (
+        <div className="p-8 bg-gray-100 text-gray-500 text-center">
+          Unknown block type: {block.type}
+        </div>
+      );
+  }
+
+  if (compact) {
     return (
       <div className="transform scale-[0.6] origin-top-left w-[166.67%]">
-        {children}
+        {content}
       </div>
     );
-  };
+  }
 
-  const renderContent = () => {
-    switch (block.type) {
-      case 'hero':
-        return <HeroBlock {...props} />;
-      case 'features':
-        return <FeaturesBlock {...props} />;
-      case 'cta':
-        return <CtaBlock {...props} />;
-      case 'form':
-        return <FormBlock {...props} forms={forms} />;
-      case 'testimonials':
-        return <TestimonialsBlock {...props} />;
-      case 'faq':
-        return <FaqBlock {...props} />;
-      case 'text':
-        return <TextBlock {...props} />;
-      case 'image':
-        return <ImageBlock {...props} />;
-      case 'stats':
-        return <StatsBlock {...props} />;
-      case 'divider':
-        return <DividerBlock config={block.config as unknown as DividerConfig} />;
-      case 'pricing':
-        return <PricingBlock {...props} />;
-      case 'video':
-        return <VideoBlock {...props} />;
-      case 'chat':
-        return <ChatBlock {...props} />;
-      case 'gallery':
-        return <GalleryBlock {...props} />;
-      case 'slider':
-        return <SliderBlock {...props} />;
-      case 'logo-cloud':
-        return <LogoCloudBlock {...props} />;
-      case 'placeholder':
-        return null; // Placeholder has no content to render
-      default:
-        return (
-          <div className="p-8 bg-gray-100 text-gray-500 text-center">
-            Unknown block type: {block.type}
-          </div>
-        );
-    }
-  };
-
-  return <CompactWrapper>{renderContent()}</CompactWrapper>;
+  return <>{content}</>;
 }
 
 /**

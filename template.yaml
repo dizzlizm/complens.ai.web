@@ -1436,6 +1436,12 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/ai/generate-image
             Method: POST
+        SuggestWorkflowStep:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/suggest-workflow-step
+            Method: POST
         GenerateWorkflow:
           Type: Api
           Properties:
