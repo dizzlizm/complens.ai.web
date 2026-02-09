@@ -429,6 +429,195 @@ Return a JSON array where each element has:
     return result[:4]
 
 
+def generate_page_workflow(
+    workspace_id: str,
+    page_id: str,
+    page: dict,
+    forms: list[dict],
+    domains: list[str] | None = None,
+) -> dict:
+    """Generate a complete workflow for a landing page.
+
+    Looks at the page's content, forms, business profile, and verified
+    domains to produce a ready-to-use multi-node workflow with all
+    configs pre-filled.
+
+    Args:
+        workspace_id: The workspace ID.
+        page_id: The page ID (used for profile lookup).
+        page: Page data dict with headline, blocks, etc.
+        forms: List of form dicts with id, name, fields.
+        domains: Verified domain names for email from-addresses.
+
+    Returns:
+        Dict with name, description, trigger_type, nodes[], edges[].
+    """
+    # Build page content summary
+    page_name = page.get("name") or page.get("headline") or "Untitled Page"
+    headline = page.get("headline", "")
+    subheadline = page.get("subheadline", "")
+    blocks = page.get("blocks", [])
+
+    block_summary_lines = []
+    for b in blocks:
+        btype = b.get("type", "unknown")
+        bconfig = b.get("config", {})
+        if btype == "hero":
+            block_summary_lines.append(f"  - Hero: \"{bconfig.get('headline', '')}\"")
+        elif btype == "features":
+            items = bconfig.get("items", [])
+            block_summary_lines.append(f"  - Features: {len(items)} items")
+        elif btype == "form":
+            block_summary_lines.append(f"  - Form block (formId: {bconfig.get('formId', 'none')})")
+        elif btype == "cta":
+            block_summary_lines.append(f"  - CTA: \"{bconfig.get('headline', '')}\"")
+        elif btype == "testimonials":
+            items = bconfig.get("items", [])
+            block_summary_lines.append(f"  - Testimonials: {len(items)} quotes")
+        elif btype == "faq":
+            items = bconfig.get("items", [])
+            block_summary_lines.append(f"  - FAQ: {len(items)} questions")
+        elif btype == "pricing":
+            items = bconfig.get("items", [])
+            block_summary_lines.append(f"  - Pricing: {len(items)} tiers")
+        elif btype == "chat":
+            block_summary_lines.append("  - AI Chat widget")
+        else:
+            block_summary_lines.append(f"  - {btype}")
+
+    block_summary = "\n".join(block_summary_lines) if block_summary_lines else "  (no blocks)"
+
+    # Build form details
+    form_details_lines = []
+    for f in forms:
+        fields = f.get("fields", [])
+        field_names = [fld.get("label") or fld.get("name", "?") for fld in fields]
+        tags = f.get("add_tags", [])
+        form_details_lines.append(
+            f"  - Form \"{f.get('name', 'Unnamed')}\" (id: {f.get('id', '?')})\n"
+            f"    Fields: {', '.join(field_names) if field_names else 'none'}\n"
+            f"    Auto-tags: {', '.join(tags) if tags else 'none'}"
+        )
+    form_details = "\n".join(form_details_lines) if form_details_lines else "  (no forms on this page)"
+
+    # Domain for from-address
+    from_domain = domains[0] if domains else None
+    domain_ctx = f"Verified domains: {', '.join(domains)}" if domains else "No verified domains (omit email_from field)"
+
+    system = f"""You are an expert marketing automation architect.
+Given a landing page with its content, forms, and business profile, generate a complete
+end-to-end workflow that handles everything a business needs when someone interacts with this page.
+
+## Available node types and config schemas
+
+### Triggers (exactly one per workflow, always the first node)
+- trigger_form_submitted:
+    form_id: "the-form-id" (REQUIRED - use the real form ID from the page)
+
+### Actions
+- action_send_email:
+    email_to: "{{{{contact.email}}}}" (default recipient)
+    email_subject: "Subject line" (REQUIRED)
+    email_body: "Email body with {{{{contact.first_name}}}} variables" (REQUIRED)
+    email_from: "noreply@domain.com" (use verified domain if available)
+
+- action_send_sms:
+    sms_to: "{{{{contact.phone}}}}"
+    sms_message: "SMS text" (REQUIRED)
+
+- action_ai_respond:
+    ai_prompt: "Instruction for AI" (REQUIRED)
+    ai_respond_via: "email" | "sms" | "same_channel"
+
+- action_update_contact:
+    add_tags: ["tag1", "tag2"]
+    remove_tags: ["tag3"]
+    update_fields: {{"field_name": "value"}}
+
+- action_wait:
+    wait_duration: integer seconds (300=5min, 3600=1hr, 86400=1day)
+
+- action_webhook:
+    webhook_url: "https://..." (REQUIRED)
+    webhook_method: "POST"
+    webhook_headers: {{}}
+    webhook_body: {{}}
+
+### Logic
+- logic_branch:
+    conditions: [{{"field": "contact.tags", "operator": "contains", "value": "vip", "output_handle": "yes"}}, {{"output_handle": "no"}}]
+    default_output: "no"
+
+- logic_filter:
+    filter_conditions: [{{"field": "contact.email", "operator": "exists"}}]
+    filter_operator: "and"
+
+### AI Nodes
+- ai_decision: ai_prompt describing the decision
+- ai_generate: ai_prompt describing what to generate
+- ai_analyze: ai_prompt describing what to analyze
+
+## Template variables
+{{{{contact.email}}}}, {{{{contact.first_name}}}}, {{{{contact.last_name}}}}, {{{{contact.phone}}}},
+{{{{contact.custom_fields.company}}}}, {{{{trigger_data.form_data.message}}}},
+{{{{workspace.notification_email}}}}, {{{{owner.email}}}}
+
+## Node structure
+Each node must have: id (string), type (React Flow category: "trigger", "action", "logic", or "ai"),
+position ({{x, y}}), data ({{label: "Display Name", nodeType: "the_node_type", config: {{...}}}}).
+
+Position nodes vertically: trigger at y=50, each subsequent node +150 y. For branches, offset x.
+
+## Rules
+- Start with exactly ONE trigger node (trigger_form_submitted using the real form ID)
+- Build a realistic 4-8 node workflow with a natural progression
+- A typical flow: trigger → tag contact → send welcome email → wait → follow-up email → notify owner
+- Write REAL email copy that matches the business's brand voice and page content
+- Use the actual verified domain for email_from (if available)
+- Use real form IDs from the page
+- Include meaningful tag names based on the page's purpose
+- Wait nodes should use realistic durations (e.g., 1 day = 86400 for follow-ups)
+- Make the workflow complete and useful — the user should be able to save and activate immediately
+
+## Output format
+Return JSON with:
+- name: workflow name (related to the page purpose)
+- description: one-line description of what this workflow does
+- trigger_type: "trigger_form_submitted"
+- nodes: array of node objects
+- edges: array of {{id: "e-source-target", source: "node-id", target: "node-id"}} objects"""
+
+    prompt = f"""Page: "{page_name}"
+Headline: "{headline}"
+Subheadline: "{subheadline}"
+
+Page blocks:
+{block_summary}
+
+Forms:
+{form_details}
+
+{domain_ctx}
+
+Generate a complete, ready-to-use workflow for this landing page.
+Every config field must be filled with real content matching this page's purpose.
+Return ONLY valid JSON."""
+
+    result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+
+    if not isinstance(result, dict) or "nodes" not in result:
+        logger.warning("generate_page_workflow: unexpected result format", result_type=type(result).__name__)
+        return {
+            "name": f"Workflow for {page_name}",
+            "description": "Auto-generated workflow",
+            "trigger_type": "trigger_form_submitted",
+            "nodes": [],
+            "edges": [],
+        }
+
+    return result
+
+
 def generate_workflow_from_description(
     workspace_id: str,
     description: str,

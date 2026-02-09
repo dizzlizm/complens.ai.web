@@ -539,6 +539,44 @@ export function useGenerateWorkflow(workspaceId: string) {
   });
 }
 
+// Generate a complete workflow for a landing page
+export interface GeneratePageWorkflowInput {
+  page_id: string;
+}
+
+export interface GeneratedPageWorkflowResult {
+  name: string;
+  description: string;
+  trigger_type: string;
+  nodes: Array<{
+    id: string;
+    type: string;
+    position: { x: number; y: number };
+    data: {
+      label: string;
+      nodeType: string;
+      config: Record<string, unknown>;
+    };
+  }>;
+  edges: Array<{
+    id: string;
+    source: string;
+    target: string;
+  }>;
+}
+
+export function useGeneratePageWorkflow(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: GeneratePageWorkflowInput) => {
+      const { data } = await api.post<{ workflow: GeneratedPageWorkflowResult }>(
+        `/workspaces/${workspaceId}/ai/generate-page-workflow`,
+        input
+      );
+      return data.workflow;
+    },
+  });
+}
+
 // Suggest next workflow step using AI
 export function useSuggestNextStep(workspaceId: string) {
   return useMutation({

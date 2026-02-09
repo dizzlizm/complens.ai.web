@@ -16,7 +16,7 @@ import {
   type Workflow,
   type CreateWorkflowInput,
 } from '../lib/hooks';
-import { useGenerateWorkflow } from '../lib/hooks/useAI';
+import { useGenerateWorkflow, useGeneratePageWorkflow } from '../lib/hooks/useAI';
 import api from '../lib/api';
 import { useToast } from '../components/Toast';
 
@@ -52,6 +52,7 @@ export default function WorkflowEditor() {
   const [aiDescription, setAiDescription] = useState('');
   const generateWorkflow = useGenerateWorkflow(workspaceId || '');
 
+  const generatePageWorkflow = useGeneratePageWorkflow(workspaceId || '');
   const createWorkspace = useCreateWorkspace();
 
   // Load workflow data when available
@@ -283,6 +284,41 @@ export default function WorkflowEditor() {
     }
   };
 
+  // Generate a complete workflow from page context
+  const handleGeneratePageWorkflow = async () => {
+    if (!pageId || !workspaceId) return;
+
+    try {
+      const result = await generatePageWorkflow.mutateAsync({ page_id: pageId });
+
+      if (result && canvasRef.current) {
+        const rfNodes: Node[] = result.nodes.map((n) => ({
+          id: n.id,
+          type: n.type,
+          position: n.position,
+          data: n.data,
+        }));
+
+        const rfEdges: Edge[] = result.edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          animated: true,
+        }));
+
+        canvasRef.current.setNodes(rfNodes);
+        canvasRef.current.setEdges(rfEdges);
+        if (result.name) {
+          setName(result.name);
+        }
+        setHasChanges(true);
+        toast.success('Complete workflow generated from your page! Review and save.');
+      }
+    } catch (err) {
+      toast.error(`Generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  };
+
   // Test workflow execution
   const handleTest = async () => {
     if (isNew || !workspaceId) {
@@ -344,6 +380,20 @@ export default function WorkflowEditor() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {pageId && isNew && (
+            <button
+              onClick={handleGeneratePageWorkflow}
+              disabled={generatePageWorkflow.isPending}
+              className="btn bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-700 hover:to-purple-700 inline-flex items-center gap-2 disabled:opacity-50 shadow-md"
+            >
+              {generatePageWorkflow.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              <span>{generatePageWorkflow.isPending ? 'Generating...' : 'Auto-Generate from Page'}</span>
+            </button>
+          )}
           <button
             onClick={() => setShowAIModal(true)}
             disabled={generateWorkflow.isPending}
