@@ -61,7 +61,7 @@ class WarmupDomain(BaseModel):
         default_factory=lambda: list(DEFAULT_WARMUP_SCHEDULE),
         description="Daily sending limits",
     )
-    started_at: datetime | str | None = Field(None, description="ISO timestamp when warm-up was started")
+    started_at: str | None = Field(None, description="ISO timestamp when warm-up was started")
     pause_reason: str | None = Field(None, description="Reason for pause (if paused)")
 
     # Reputation metrics (cumulative)
@@ -100,7 +100,7 @@ class WarmupDomain(BaseModel):
 
     # Cached domain health check
     health_check_result: dict | None = Field(None, description="Cached domain health check JSON")
-    health_check_at: datetime | str | None = Field(None, description="ISO timestamp of last health check")
+    health_check_at: str | None = Field(None, description="ISO timestamp of last health check")
 
     @field_validator("started_at", "health_check_at", mode="before")
     @classmethod
@@ -158,6 +158,13 @@ class StartWarmupRequest(PydanticBaseModel):
     auto_warmup_enabled: bool = Field(default=False, description="Enable automatic warmup sending")
     from_name: str | None = Field(None, max_length=100, description="Display name for warmup from-address")
 
+    @model_validator(mode="after")
+    def validate_send_window(self) -> "StartWarmupRequest":
+        """Ensure send window has at least 1 hour."""
+        if self.send_window_start == self.send_window_end:
+            raise ValueError("Send window start and end must differ (need at least 1 hour)")
+        return self
+
 
 class UpdateSeedListRequest(PydanticBaseModel):
     """Request model for updating seed list configuration."""
@@ -183,6 +190,14 @@ class UpdateWarmupSettingsRequest(PydanticBaseModel):
     max_bounce_rate: float | None = Field(None, ge=0.1, le=50.0)
     max_complaint_rate: float | None = Field(None, ge=0.01, le=5.0)
     schedule: list[int] | None = Field(None, description="Remaining schedule from current day onward")
+
+    @model_validator(mode="after")
+    def validate_send_window(self) -> "UpdateWarmupSettingsRequest":
+        """Ensure send window has at least 1 hour when both are provided."""
+        if self.send_window_start is not None and self.send_window_end is not None:
+            if self.send_window_start == self.send_window_end:
+                raise ValueError("Send window start and end must differ (need at least 1 hour)")
+        return self
 
 
 class WarmupStatusResponse(PydanticBaseModel):

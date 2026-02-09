@@ -342,10 +342,13 @@ export default function SynthesisPopup({
       if (block.type === 'hero' && !block.config.backgroundImage) {
         setImageProgress(`Generating hero background...`);
         try {
+          const heroHeadline = (block.config.headline as string) || '';
+          const heroSub = (block.config.subheadline as string) || '';
+          const heroContext = [businessName, heroHeadline, heroSub].filter(Boolean).join(' — ');
           const result = await generateImage.mutateAsync({
-            context: businessName,
-            prompt: `Abstract gradient background, ${styleDesc}, subtle geometric shapes, smooth lighting, no text, no people, high quality digital art`,
+            context: `Hero banner for: ${heroContext}. Style: ${styleDesc}. Abstract background, no text, no people.`,
             style: designStyle === 'playful' ? 'vibrant' : 'professional',
+            colors: colors ? { primary: colors.primary, secondary: colors.secondary, accent: colors.accent } : undefined,
           });
           updatedBlocks[i] = {
             ...block,
@@ -361,19 +364,13 @@ export default function SynthesisPopup({
         const items = allItems.slice(0, 3);
         const updatedItems = [];
 
-        const avatarStyles = [
-          'abstract geometric avatar icon, circular, warm colors, simple flat design',
-          'abstract geometric avatar icon, circular, cool colors, simple flat design',
-          'abstract geometric avatar icon, circular, neutral earth tones, simple flat design',
-        ];
-
         for (let j = 0; j < items.length; j++) {
           const item = items[j];
           if (!item.avatar) {
             setImageProgress(`Generating avatar ${j + 1}/${items.length}...`);
             try {
               const result = await generateImage.mutateAsync({
-                prompt: `${avatarStyles[j % avatarStyles.length]}, no text, high quality, white background`,
+                context: `Professional headshot portrait of ${item.author || 'a professional'}${item.company ? ` from ${item.company}` : ''}. Photorealistic corporate photography, clean background, well-lit, friendly expression.`,
                 style: 'professional',
                 width: 512,
                 height: 512,
@@ -397,11 +394,13 @@ export default function SynthesisPopup({
       if (block.type === 'image' && !(block.config as { url?: string }).url) {
         setImageProgress(`Generating image...`);
         try {
-          const colorHint = colors ? `using ${colors.primary} tones` : '';
+          const caption = (block.config as { caption?: string }).caption || '';
+          const alt = (block.config as { alt?: string }).alt || '';
+          const imageContext = [businessName, caption, alt].filter(Boolean).join(' — ') || businessName;
           const result = await generateImage.mutateAsync({
-            context: businessName,
-            prompt: `Professional stock photo style image, ${styleDesc}, ${colorHint}, modern workspace or abstract concept, no text, high quality photography`.trim(),
+            context: `Image for ${imageContext}. Style: ${styleDesc}. No text.`,
             style: designStyle === 'playful' ? 'vibrant' : 'professional',
+            colors: colors ? { primary: colors.primary, secondary: colors.secondary, accent: colors.accent } : undefined,
           });
           updatedBlocks[i] = {
             ...block,

@@ -11,6 +11,8 @@ import {
   useExecuteWorkflow,
   useCurrentWorkspace,
   useCreateWorkspace,
+  useContacts,
+  useCreateContact,
   type WorkflowNode,
   type WorkflowEdge,
   type Workflow,
@@ -54,6 +56,12 @@ export default function WorkflowEditor() {
 
   const generatePageWorkflow = useGeneratePageWorkflow(workspaceId || '');
   const createWorkspace = useCreateWorkspace();
+
+  // Test modal state
+  const [showTestModal, setShowTestModal] = useState(false);
+  const [testEmail, setTestEmail] = useState('');
+  const { data: contactsData } = useContacts(workspaceId || '', { limit: 10 });
+  const createContact = useCreateContact(workspaceId || '');
 
   // Load workflow data when available
   useEffect(() => {
@@ -331,14 +339,46 @@ export default function WorkflowEditor() {
       await handleSave();
     }
 
+    setShowTestModal(true);
+  };
+
+  const handleTestExecute = async (contactId: string) => {
+    setShowTestModal(false);
     setIsTesting(true);
     try {
-      const result = await executeWorkflow.mutateAsync(undefined);
+      const result = await executeWorkflow.mutateAsync(contactId);
       toast.success(`Workflow executed! Run ID: ${result.run_id || 'N/A'}`);
     } catch (error) {
       toast.error(`Execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsTesting(false);
+    }
+  };
+
+  const handleTestWithEmail = async () => {
+    if (!testEmail.trim() || !workspaceId) return;
+
+    // Check if contact already exists in the loaded list
+    const existing = contactsData?.contacts?.find(
+      (c) => c.email?.toLowerCase() === testEmail.trim().toLowerCase()
+    );
+    if (existing) {
+      await handleTestExecute(existing.id);
+      return;
+    }
+
+    // Create a new test contact
+    try {
+      const contact = await createContact.mutateAsync({
+        email: testEmail.trim(),
+        first_name: 'Test',
+        last_name: 'Contact',
+        tags: ['test'],
+        source: 'workflow-test',
+      });
+      await handleTestExecute(contact.id);
+    } catch (error) {
+      toast.error(`Failed to create test contact: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -516,6 +556,92 @@ export default function WorkflowEditor() {
                     Generate Workflow
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Test Workflow Modal */}
+      {showTestModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div className="flex items-center gap-2">
+                <Play className="w-5 h-5 text-green-600" />
+                <h3 className="font-semibold text-gray-900">Test Workflow</h3>
+              </div>
+              <button
+                onClick={() => setShowTestModal(false)}
+                className="p-1 text-gray-400 hover:text-gray-600 rounded"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-sm text-gray-600">
+                Choose a contact to run this workflow against, or enter an email to create a test contact.
+              </p>
+
+              {/* Existing contacts */}
+              {contactsData?.contacts && contactsData.contacts.length > 0 && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Existing Contacts</label>
+                  <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                    {contactsData.contacts.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => handleTestExecute(c.id)}
+                        className="w-full px-3 py-2 text-left hover:bg-gray-50 flex items-center justify-between"
+                      >
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">
+                            {c.first_name || c.last_name ? `${c.first_name || ''} ${c.last_name || ''}`.trim() : 'No name'}
+                          </div>
+                          <div className="text-xs text-gray-500">{c.email || c.phone || 'No email'}</div>
+                        </div>
+                        <Play className="w-3 h-3 text-gray-400" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Or create new */}
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  {contactsData?.contacts?.length ? 'Or enter an email' : 'Enter a test email'}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={testEmail}
+                    onChange={(e) => setTestEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleTestWithEmail()}
+                    placeholder="test@example.com"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm"
+                  />
+                  <button
+                    onClick={handleTestWithEmail}
+                    disabled={!testEmail.trim() || createContact.isPending}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm inline-flex items-center gap-1"
+                  >
+                    {createContact.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4" />
+                    )}
+                    Run
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end p-4 border-t bg-gray-50 rounded-b-xl">
+              <button
+                onClick={() => setShowTestModal(false)}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm"
+              >
+                Cancel
               </button>
             </div>
           </div>

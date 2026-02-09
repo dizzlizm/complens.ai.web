@@ -620,6 +620,7 @@ def generate_page_workflow(workspace_id: str, event: dict) -> dict:
     from complens.repositories.page import PageRepository
     from complens.repositories.form import FormRepository
     from complens.repositories.domain import DomainRepository
+    from complens.repositories.workspace import WorkspaceRepository
 
     # Fetch page
     page_repo = PageRepository()
@@ -659,6 +660,18 @@ def generate_page_workflow(workspace_id: str, event: dict) -> dict:
     except Exception:
         pass
 
+    # Resolve from_email and owner_email from workspace settings
+    from_email = None
+    owner_email = None
+    try:
+        ws_repo = WorkspaceRepository()
+        workspace = ws_repo.get_by_id(workspace_id)
+        if workspace:
+            from_email = workspace.from_email if hasattr(workspace, "from_email") else None
+            owner_email = workspace.notification_email if hasattr(workspace, "notification_email") else None
+    except Exception:
+        pass
+
     try:
         result = ai_service.generate_page_workflow(
             workspace_id=workspace_id,
@@ -666,6 +679,8 @@ def generate_page_workflow(workspace_id: str, event: dict) -> dict:
             page=page_data,
             forms=forms_data,
             domains=domains_data if domains_data else None,
+            from_email=from_email,
+            owner_email=owner_email,
         )
 
         logger.info(

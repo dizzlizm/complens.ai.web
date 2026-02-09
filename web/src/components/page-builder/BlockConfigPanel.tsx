@@ -647,7 +647,7 @@ export function TestimonialsConfigFields({
   const handleGenerateAvatar = async (index: number) => {
     if (!workspaceId) return;
     const item = items[index];
-    const prompt = `Abstract geometric avatar icon, single centered shape, soft gradient, ${item.author || 'person'}, ${item.company || 'professional'}, minimal flat design, solid pastel background, no text, no face, no person`;
+    const prompt = `Professional headshot portrait of ${item.author || 'a professional'}${item.company ? ` from ${item.company}` : ''}, corporate photography, clean background, well-lit, friendly expression, photorealistic`;
 
     setGeneratingIndex(index);
     try {

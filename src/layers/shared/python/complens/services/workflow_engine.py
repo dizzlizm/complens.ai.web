@@ -123,8 +123,9 @@ class WorkflowEngine:
         )
 
         # Validate workflow is active
-        if workflow.status.value != "active":
-            raise ValueError(f"Workflow is not active (status: {workflow.status})")
+        status_value = workflow.status.value if hasattr(workflow.status, "value") else workflow.status
+        if status_value != "active":
+            raise ValueError(f"Workflow is not active (status: {status_value})")
 
         # Validate workflow graph
         errors = workflow.validate_graph()

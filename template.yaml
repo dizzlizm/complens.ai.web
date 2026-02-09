@@ -1101,6 +1101,9 @@ Resources:
       CodeUri: src/handlers/api/
       Description: Workflows CRUD and execution
       Timeout: 60
+      Environment:
+        Variables:
+          WORKFLOW_STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
