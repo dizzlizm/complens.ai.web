@@ -427,5 +427,5 @@ class TestWarmupDomainHealthFields:
 
         restored = WarmupDomain.from_dynamodb(db_item)
         assert restored.health_check_result == {"score": 85, "status": "good"}
-        # DynamoDB deserializer converts ISO strings to datetime objects
-        assert restored.health_check_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
+        # Validator coerces datetime back to ISO string for consistent storage
+        assert restored.health_check_at == "2026-01-01T00:00:00+00:00"

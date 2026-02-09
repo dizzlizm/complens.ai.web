@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import ClassVar
 
-from pydantic import BaseModel as PydanticBaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel as PydanticBaseModel, EmailStr, Field, field_validator, model_validator
 
 from complens.models.base import BaseModel
 
@@ -101,6 +101,14 @@ class WarmupDomain(BaseModel):
     # Cached domain health check
     health_check_result: dict | None = Field(None, description="Cached domain health check JSON")
     health_check_at: datetime | str | None = Field(None, description="ISO timestamp of last health check")
+
+    @field_validator("started_at", "health_check_at", mode="before")
+    @classmethod
+    def coerce_datetime_to_str(cls, v: datetime | str | None) -> str | None:
+        """Coerce datetime objects to ISO strings for consistent storage."""
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return v
 
     @property
     def daily_limit(self) -> int:

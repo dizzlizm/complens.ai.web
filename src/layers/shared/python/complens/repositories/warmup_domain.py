@@ -396,10 +396,10 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
             date_str: Date string (YYYY-MM-DD).
             email_data: Dict with subject, recipient, content_type, etc.
         """
-        import ulid
+        from ulid import ULID
 
         ttl = int(time.time()) + (30 * 86400)  # 30-day TTL
-        email_id = str(ulid.new())
+        email_id = str(ULID())
 
         try:
             self.table.put_item(Item={
