@@ -565,6 +565,103 @@ class EmailService:
 
         return result
 
+    def setup_domain(self, domain: str) -> dict[str, Any]:
+        """Set up a domain for SES sending: verify identity + enable DKIM.
+
+        Returns DNS records the user needs to add, plus current verification status.
+        Idempotent — SES returns the same tokens on repeated calls.
+
+        Args:
+            domain: The sending domain to set up.
+
+        Returns:
+            Dict with domain, verification_token, dkim_tokens, dns_records, and status fields.
+
+        Raises:
+            EmailError: If SES API calls fail.
+        """
+        try:
+            # Initiate domain verification
+            verify_resp = self.client.verify_domain_identity(Domain=domain)
+            verification_token = verify_resp["VerificationToken"]
+
+            # Initiate DKIM verification
+            dkim_resp = self.client.verify_domain_dkim(Domain=domain)
+            dkim_tokens = dkim_resp["DkimTokens"]
+
+            # Build DNS records list
+            dns_records: list[dict[str, Any]] = []
+
+            # Domain verification TXT record
+            dns_records.append({
+                "type": "TXT",
+                "name": f"_amazonses.{domain}",
+                "value": verification_token,
+                "purpose": "domain_verification",
+            })
+
+            # DKIM CNAME records (3)
+            for token in dkim_tokens:
+                dns_records.append({
+                    "type": "CNAME",
+                    "name": f"{token}._domainkey.{domain}",
+                    "value": f"{token}.dkim.amazonses.com",
+                    "purpose": "dkim",
+                })
+
+            # SPF recommendation
+            dns_records.append({
+                "type": "TXT",
+                "name": domain,
+                "value": "v=spf1 include:amazonses.com ~all",
+                "purpose": "spf",
+                "recommended": True,
+            })
+
+            # DMARC recommendation
+            dns_records.append({
+                "type": "TXT",
+                "name": f"_dmarc.{domain}",
+                "value": "v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}".format(domain=domain),
+                "purpose": "dmarc",
+                "recommended": True,
+            })
+
+            # Get current verification status
+            auth_status = self.check_domain_auth(domain)
+
+            logger.info(
+                "Domain setup initiated",
+                domain=domain,
+                dkim_token_count=len(dkim_tokens),
+            )
+
+            return {
+                "domain": domain,
+                "verification_token": verification_token,
+                "dkim_tokens": dkim_tokens,
+                "dns_records": dns_records,
+                "verified": auth_status["verified"],
+                "dkim_enabled": auth_status["dkim_enabled"],
+                "dkim_status": auth_status["dkim_status"],
+                "ready": auth_status["ready"],
+            }
+
+        except ClientError as e:
+            error_code = e.response["Error"]["Code"]
+            error_message = e.response["Error"]["Message"]
+            logger.error(
+                "Domain setup failed",
+                domain=domain,
+                error_code=error_code,
+                error_message=error_message,
+            )
+            raise EmailError(
+                f"Failed to set up domain: {error_message}",
+                code=error_code,
+                details={"domain": domain},
+            ) from e
+
     def verify_email_identity(self, email: str) -> dict[str, Any]:
         """Request verification of an email address.
 

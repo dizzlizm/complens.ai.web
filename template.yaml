@@ -2648,11 +2648,25 @@ Resources:
               Action:
                 - ses:GetIdentityVerificationAttributes
                 - ses:GetIdentityDkimAttributes
+                - ses:VerifyDomainIdentity
+                - ses:VerifyDomainDkim
               Resource: "*"
       Environment:
         Variables:
           DEFERRED_EMAIL_QUEUE_URL: !Ref DeferredEmailQueue
       Events:
+        SetupDomain:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/setup-domain
+            Method: POST
+        ListDomains:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/domains
+            Method: GET
         CheckDomainAuth:
           Type: Api
           Properties:
@@ -2713,6 +2727,18 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/email-warmup/{domain}/domain-health
             Method: GET
+        UpdateWarmupSettings:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/settings
+            Method: PUT
+        DeleteDomain:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/domains/{domain}
+            Method: DELETE
 
   WarmupDailyProcessorFunction:
     Type: AWS::Serverless::Function

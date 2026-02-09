@@ -61,7 +61,7 @@ class WarmupDomain(BaseModel):
         default_factory=lambda: list(DEFAULT_WARMUP_SCHEDULE),
         description="Daily sending limits",
     )
-    started_at: str | None = Field(None, description="ISO timestamp when warm-up was started")
+    started_at: datetime | str | None = Field(None, description="ISO timestamp when warm-up was started")
     pause_reason: str | None = Field(None, description="Reason for pause (if paused)")
 
     # Reputation metrics (cumulative)
@@ -167,6 +167,16 @@ class UpdateSeedListRequest(PydanticBaseModel):
         return v
 
 
+class UpdateWarmupSettingsRequest(PydanticBaseModel):
+    """Request model for updating warmup settings (schedule, thresholds, send window)."""
+
+    send_window_start: int | None = Field(None, ge=0, le=23)
+    send_window_end: int | None = Field(None, ge=0, le=23)
+    max_bounce_rate: float | None = Field(None, ge=0.1, le=50.0)
+    max_complaint_rate: float | None = Field(None, ge=0.01, le=5.0)
+    schedule: list[int] | None = Field(None, description="Remaining schedule from current day onward")
+
+
 class WarmupStatusResponse(PydanticBaseModel):
     """Response model for warm-up domain status."""
 
@@ -175,6 +185,7 @@ class WarmupStatusResponse(PydanticBaseModel):
     warmup_day: int
     daily_limit: int
     schedule_length: int
+    schedule: list[int] = Field(default_factory=list)
     total_sent: int
     total_bounced: int
     total_complaints: int
@@ -192,7 +203,7 @@ class WarmupStatusResponse(PydanticBaseModel):
     low_engagement_warning: bool = False
     max_bounce_rate: float
     max_complaint_rate: float
-    started_at: str | None = None
+    started_at: datetime | str | None = None
     pause_reason: str | None = None
     seed_list: list[str] = []
     auto_warmup_enabled: bool = False
@@ -214,6 +225,7 @@ class WarmupStatusResponse(PydanticBaseModel):
             warmup_day=wd.warmup_day,
             daily_limit=wd.daily_limit,
             schedule_length=len(wd.schedule),
+            schedule=wd.schedule,
             total_sent=wd.total_sent,
             total_bounced=wd.total_bounced,
             total_complaints=wd.total_complaints,

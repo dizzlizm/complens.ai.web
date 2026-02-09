@@ -207,6 +207,128 @@ class TestStartWarmup:
         assert response["statusCode"] == 403
 
 
+class TestSetupDomain:
+    """Tests for POST /workspaces/{ws}/email-warmup/setup-domain."""
+
+    @patch("api.email_warmup.EmailService")
+    def test_setup_domain_success(self, mock_email_cls, dynamodb_table, api_gateway_event):
+        """Test setting up a domain returns DNS records."""
+        from api.email_warmup import handler
+
+        mock_email = MagicMock()
+        mock_email.setup_domain.return_value = {
+            "domain": "example.com",
+            "verification_token": "abc123token",
+            "dkim_tokens": ["tok1", "tok2", "tok3"],
+            "dns_records": [
+                {"type": "TXT", "name": "_amazonses.example.com", "value": "abc123token", "purpose": "domain_verification"},
+                {"type": "CNAME", "name": "tok1._domainkey.example.com", "value": "tok1.dkim.amazonses.com", "purpose": "dkim"},
+                {"type": "CNAME", "name": "tok2._domainkey.example.com", "value": "tok2.dkim.amazonses.com", "purpose": "dkim"},
+                {"type": "CNAME", "name": "tok3._domainkey.example.com", "value": "tok3.dkim.amazonses.com", "purpose": "dkim"},
+                {"type": "TXT", "name": "example.com", "value": "v=spf1 include:amazonses.com ~all", "purpose": "spf", "recommended": True},
+                {"type": "TXT", "name": "_dmarc.example.com", "value": "v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com", "purpose": "dmarc", "recommended": True},
+            ],
+            "verified": False,
+            "dkim_enabled": False,
+            "dkim_status": None,
+            "ready": False,
+        }
+        mock_email_cls.return_value = mock_email
+
+        _seed_workspace(dynamodb_table)
+
+        event = api_gateway_event(
+            method="POST",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/setup-domain",
+            path_params={"workspace_id": WORKSPACE_ID},
+            body={"domain": "example.com"},
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 200
+        body = _parse_body(response)
+        assert body["domain"] == "example.com"
+        assert body["verification_token"] == "abc123token"
+        assert len(body["dkim_tokens"]) == 3
+        assert len(body["dns_records"]) == 6
+        # Check record types
+        purposes = [r["purpose"] for r in body["dns_records"]]
+        assert purposes.count("domain_verification") == 1
+        assert purposes.count("dkim") == 3
+        assert purposes.count("spf") == 1
+        assert purposes.count("dmarc") == 1
+
+    def test_setup_domain_missing_domain(self, dynamodb_table, api_gateway_event):
+        """Test setup-domain without domain in body returns 400."""
+        from api.email_warmup import handler
+
+        _seed_workspace(dynamodb_table)
+
+        event = api_gateway_event(
+            method="POST",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/setup-domain",
+            path_params={"workspace_id": WORKSPACE_ID},
+            body={},
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 400
+
+    def test_setup_domain_invalid_domain(self, dynamodb_table, api_gateway_event):
+        """Test setup-domain with invalid domain (no dot) returns 400."""
+        from api.email_warmup import handler
+
+        _seed_workspace(dynamodb_table)
+
+        event = api_gateway_event(
+            method="POST",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/setup-domain",
+            path_params={"workspace_id": WORKSPACE_ID},
+            body={"domain": "notadomain"},
+        )
+        response = handler(event, None)
+
+        assert response["statusCode"] == 400
+
+    @patch("api.email_warmup.EmailService")
+    def test_setup_domain_idempotent(self, mock_email_cls, dynamodb_table, api_gateway_event):
+        """Test that calling setup-domain twice returns same tokens."""
+        from api.email_warmup import handler
+
+        result = {
+            "domain": "example.com",
+            "verification_token": "same-token",
+            "dkim_tokens": ["t1", "t2", "t3"],
+            "dns_records": [
+                {"type": "TXT", "name": "_amazonses.example.com", "value": "same-token", "purpose": "domain_verification"},
+            ],
+            "verified": False,
+            "dkim_enabled": False,
+            "dkim_status": None,
+            "ready": False,
+        }
+        mock_email = MagicMock()
+        mock_email.setup_domain.return_value = result
+        mock_email_cls.return_value = mock_email
+
+        _seed_workspace(dynamodb_table)
+
+        event = api_gateway_event(
+            method="POST",
+            path=f"/workspaces/{WORKSPACE_ID}/email-warmup/setup-domain",
+            path_params={"workspace_id": WORKSPACE_ID},
+            body={"domain": "example.com"},
+        )
+
+        response1 = handler(event, None)
+        response2 = handler(event, None)
+
+        body1 = _parse_body(response1)
+        body2 = _parse_body(response2)
+        assert body1["verification_token"] == body2["verification_token"]
+        assert body1["verification_token"] == "same-token"
+
+
 class TestCheckDomainAuth:
     """Tests for GET /workspaces/{ws}/email-warmup/check-domain."""
 

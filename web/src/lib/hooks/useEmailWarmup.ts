@@ -9,6 +9,7 @@ export interface WarmupDomain {
   warmup_day: number;
   daily_limit: number;
   schedule_length: number;
+  schedule: number[];
   total_sent: number;
   total_bounced: number;
   total_complaints: number;
@@ -65,6 +66,14 @@ export interface UpdateSeedListRequest {
   from_name?: string;
 }
 
+export interface UpdateWarmupSettingsRequest {
+  send_window_start?: number;
+  send_window_end?: number;
+  max_bounce_rate?: number;
+  max_complaint_rate?: number;
+  schedule?: number[];
+}
+
 export interface WarmupLogEntry {
   subject: string;
   recipient: string;
@@ -84,6 +93,33 @@ export interface DomainAuthStatus {
   dkim_tokens: string[];
   ready: boolean;
   error?: string;
+}
+
+export interface DnsRecord {
+  type: 'TXT' | 'CNAME';
+  name: string;
+  value: string;
+  purpose: 'domain_verification' | 'dkim' | 'spf' | 'dmarc';
+  status?: 'verified' | 'pending';
+  recommended?: boolean;
+}
+
+export interface DomainSetupResult {
+  domain: string;
+  verification_token: string;
+  dkim_tokens: string[];
+  dns_records: DnsRecord[];
+  verified: boolean;
+  dkim_enabled: boolean;
+  dkim_status: string | null;
+  spf_valid?: boolean;
+  dmarc_valid?: boolean;
+  ready: boolean;
+  created_at?: string;
+}
+
+export interface SavedDomainsResponse {
+  items: DomainSetupResult[];
 }
 
 export interface DomainHealthResult {
@@ -215,6 +251,38 @@ export function useUpdateSeedList(workspaceId: string) {
   });
 }
 
+// Update warmup settings (send window, thresholds, remaining schedule)
+export function useUpdateWarmupSettings(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ domain, ...input }: UpdateWarmupSettingsRequest & { domain: string }) => {
+      const { data } = await api.put<WarmupDomain>(
+        `/workspaces/${workspaceId}/email-warmup/${domain}/settings`,
+        input
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['warmups', workspaceId] });
+    },
+  });
+}
+
+// Delete a saved domain (email warmup setup)
+export function useDeleteSavedDomain(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (domain: string) => {
+      await api.delete(`/workspaces/${workspaceId}/email-warmup/domains/${domain}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['saved-domains', workspaceId] });
+    },
+  });
+}
+
 // Get warmup email log
 export function useWarmupLog(workspaceId: string | undefined, domain: string | undefined) {
   return useQuery({
@@ -243,6 +311,40 @@ export function useCheckDomainAuth(workspaceId: string | undefined, domain: stri
     },
     enabled: !!workspaceId && !!domain && domain.includes('.'),
     staleTime: 30000, // Cache for 30s
+  });
+}
+
+// List all configured/saved domains for a workspace
+export function useListDomains(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: ['saved-domains', workspaceId],
+    queryFn: async () => {
+      const { data } = await api.get<SavedDomainsResponse>(
+        `/workspaces/${workspaceId}/email-warmup/domains`
+      );
+      return data;
+    },
+    enabled: !!workspaceId,
+    staleTime: 30000,
+  });
+}
+
+// Set up a domain for SES sending (verify identity + DKIM)
+export function useSetupDomain(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (domain: string) => {
+      const { data } = await api.post<DomainSetupResult>(
+        `/workspaces/${workspaceId}/email-warmup/setup-domain`,
+        { domain }
+      );
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['domain-auth', workspaceId, data.domain] });
+      queryClient.invalidateQueries({ queryKey: ['saved-domains', workspaceId] });
+    },
   });
 }
 
