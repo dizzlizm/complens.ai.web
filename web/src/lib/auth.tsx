@@ -6,6 +6,7 @@ import {
   confirmSignUp,
   resetPassword,
   confirmResetPassword,
+  updatePassword,
   getCurrentUser,
   fetchUserAttributes,
   type SignInInput,
@@ -31,6 +32,8 @@ interface AuthContextType {
   logout: () => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
   confirmForgotPassword: (email: string, code: string, newPassword: string) => Promise<void>;
+  changePassword: (oldPassword: string, newPassword: string) => Promise<void>;
+  globalSignOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
 
@@ -144,6 +147,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  const changePassword = async (oldPassword: string, newPassword: string) => {
+    await updatePassword({ oldPassword, newPassword });
+  };
+
+  const globalSignOut = async () => {
+    await signOut({ global: true });
+    setUser(null);
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -156,6 +168,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         forgotPassword,
         confirmForgotPassword,
+        changePassword,
+        globalSignOut,
         refreshUser,
       }}
     >

@@ -1,7 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../lib/auth';
 import {
   Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle,
-  ExternalLink, Search, Mail, Key, Smartphone, Monitor, LogOut, Plus, ChevronRight, ChevronDown,
+  ExternalLink, Search, Mail, Smartphone, Monitor, LogOut, Plus, ChevronRight, ChevronDown,
   MessageSquare, Database, BarChart3, Calendar, ShoppingCart, FileText, Megaphone,
   Pause, Play, Trash2, AlertTriangle, TrendingUp, X, Eye, Copy, Clock, RefreshCw, SlidersHorizontal
 } from 'lucide-react';
@@ -843,53 +845,165 @@ function BillingSettings() {
 }
 
 function SecuritySettings() {
+  const { changePassword, globalSignOut } = useAuth();
+  const navigate = useNavigate();
+
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordStatus, setPasswordStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [passwordError, setPasswordError] = useState('');
+
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
+  const [signOutStatus, setSignOutStatus] = useState<'idle' | 'signing-out'>('idle');
+
+  const handleChangePassword = useCallback(async () => {
+    setPasswordError('');
+
+    if (newPassword.length < 8) {
+      setPasswordError('Password must be at least 8 characters');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match');
+      return;
+    }
+
+    setPasswordStatus('saving');
+    try {
+      await changePassword(currentPassword, newPassword);
+      setPasswordStatus('saved');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => {
+        setPasswordStatus('idle');
+        setShowPasswordForm(false);
+      }, 2000);
+    } catch (err: unknown) {
+      setPasswordStatus('error');
+      if (err instanceof Error) {
+        if (err.name === 'NotAuthorizedException') {
+          setPasswordError('Current password is incorrect');
+        } else if (err.name === 'InvalidPasswordException') {
+          setPasswordError('New password does not meet requirements. Use a mix of uppercase, lowercase, numbers, and symbols.');
+        } else if (err.name === 'LimitExceededException') {
+          setPasswordError('Too many attempts. Please try again later.');
+        } else {
+          setPasswordError(err.message || 'Failed to change password');
+        }
+      } else {
+        setPasswordError('Failed to change password');
+      }
+    }
+  }, [changePassword, currentPassword, newPassword, confirmPassword]);
+
+  const handleGlobalSignOut = useCallback(async () => {
+    setSignOutStatus('signing-out');
+    try {
+      await globalSignOut();
+      navigate('/login');
+    } catch {
+      setSignOutStatus('idle');
+      setShowSignOutConfirm(false);
+    }
+  }, [globalSignOut, navigate]);
+
   return (
     <div className="space-y-6">
-      {/* Social Connections */}
+      {/* Password */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-2">Social Connections</h2>
-        <p className="text-sm text-gray-500 mb-4">Connect social accounts for easier sign-in</p>
-        <div className="space-y-3">
-          {[
-            { name: 'Google', icon: '🔵', connected: false, description: 'Sign in with Google' },
-            { name: 'Microsoft', icon: '🟦', connected: false, description: 'Sign in with Microsoft 365' },
-            { name: 'GitHub', icon: '⚫', connected: false, description: 'Sign in with GitHub' },
-          ].map((provider) => (
-            <div key={provider.name} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">{provider.icon}</span>
-                <div>
-                  <p className="font-medium text-gray-900">{provider.name}</p>
-                  <p className="text-sm text-gray-500">{provider.description}</p>
-                </div>
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">Password</h2>
+        <p className="text-sm text-gray-500 mb-4">Change your password to keep your account secure</p>
+
+        {!showPasswordForm ? (
+          <button
+            className="btn btn-secondary"
+            onClick={() => setShowPasswordForm(true)}
+          >
+            Change Password
+          </button>
+        ) : (
+          <div className="space-y-4 max-w-md">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
+              <input
+                type="password"
+                className="input"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                autoComplete="current-password"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+              <input
+                type="password"
+                className="input"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+              <p className="text-xs text-gray-500 mt-1">Minimum 8 characters</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
+              <input
+                type="password"
+                className="input"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+
+            {passwordError && (
+              <div className="flex items-center gap-2 text-sm text-red-600">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                {passwordError}
               </div>
-              <button className="btn btn-secondary btn-sm" disabled>
-                Connect
+            )}
+
+            {passwordStatus === 'saved' && (
+              <div className="flex items-center gap-2 text-sm text-green-600">
+                <Check className="w-4 h-4" />
+                Password changed successfully
+              </div>
+            )}
+
+            <div className="flex items-center gap-3">
+              <button
+                className="btn btn-primary"
+                onClick={handleChangePassword}
+                disabled={passwordStatus === 'saving' || !currentPassword || !newPassword || !confirmPassword}
+              >
+                {passwordStatus === 'saving' ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Changing...
+                  </>
+                ) : (
+                  'Update Password'
+                )}
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  setShowPasswordForm(false);
+                  setCurrentPassword('');
+                  setNewPassword('');
+                  setConfirmPassword('');
+                  setPasswordError('');
+                  setPasswordStatus('idle');
+                }}
+                disabled={passwordStatus === 'saving'}
+              >
+                Cancel
               </button>
             </div>
-          ))}
-        </div>
-        <p className="text-xs text-gray-500 mt-3">Social sign-in coming soon</p>
-      </div>
-
-      {/* SAML SSO */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold text-gray-900">SAML Single Sign-On</h2>
-          <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-medium">Business</span>
-        </div>
-        <p className="text-sm text-gray-500 mb-4">
-          Configure SAML 2.0 SSO for enterprise identity providers like Okta, Azure AD, or OneLogin
-        </p>
-        <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-          <div className="flex items-center gap-3">
-            <Key className="w-8 h-8 text-gray-400" />
-            <div>
-              <p className="font-medium text-gray-700">Enterprise SSO</p>
-              <p className="text-sm text-gray-500">Available on Business plan</p>
-            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Two-Factor Authentication */}
@@ -907,9 +1021,7 @@ function SecuritySettings() {
                 <p className="text-sm text-gray-500">Use Google Authenticator or Authy</p>
               </div>
             </div>
-            <button className="btn btn-primary btn-sm" disabled>
-              Enable
-            </button>
+            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full font-medium">Coming Soon</span>
           </div>
           <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
             <div className="flex items-center gap-3">
@@ -926,7 +1038,6 @@ function SecuritySettings() {
             </span>
           </div>
         </div>
-        <p className="text-xs text-gray-500 mt-3">Additional 2FA methods coming soon</p>
       </div>
 
       {/* Active Sessions */}
@@ -946,17 +1057,45 @@ function SecuritySettings() {
             <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-medium">Current</span>
           </div>
         </div>
-        <button className="mt-4 text-sm text-red-600 hover:text-red-700 flex items-center gap-1">
-          <LogOut className="w-4 h-4" />
-          Sign out of all other sessions
-        </button>
-      </div>
 
-      {/* Password */}
-      <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-2">Password</h2>
-        <p className="text-sm text-gray-500 mb-4">Change your password to keep your account secure</p>
-        <button className="btn btn-secondary">Change Password</button>
+        {!showSignOutConfirm ? (
+          <button
+            className="mt-4 text-sm text-red-600 hover:text-red-700 flex items-center gap-1"
+            onClick={() => setShowSignOutConfirm(true)}
+          >
+            <LogOut className="w-4 h-4" />
+            Sign out of all other sessions
+          </button>
+        ) : (
+          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-sm text-red-800 mb-3">
+              This will sign you out on all devices including this one. You will need to log in again.
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                className="btn bg-red-600 text-white hover:bg-red-700 text-sm px-3 py-1.5"
+                onClick={handleGlobalSignOut}
+                disabled={signOutStatus === 'signing-out'}
+              >
+                {signOutStatus === 'signing-out' ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Signing out...
+                  </>
+                ) : (
+                  'Yes, sign out everywhere'
+                )}
+              </button>
+              <button
+                className="btn btn-secondary text-sm px-3 py-1.5"
+                onClick={() => setShowSignOutConfirm(false)}
+                disabled={signOutStatus === 'signing-out'}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
