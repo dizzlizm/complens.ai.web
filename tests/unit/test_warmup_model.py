@@ -33,16 +33,12 @@ class TestWarmupDomain:
         assert wd.complaint_rate == 0.0
         assert wd.total_delivered == 0
         assert wd.total_opens == 0
-        assert wd.total_clicks == 0
         assert wd.open_rate == 0.0
-        assert wd.click_rate == 0.0
         assert wd.send_window_start == 9
         assert wd.send_window_end == 19
         assert wd.low_engagement_warning is False
         assert wd.max_bounce_rate == 5.0
         assert wd.max_complaint_rate == 0.1
-        assert wd.total_replies == 0
-        assert wd.reply_rate == 0.0
         assert wd.seed_list == []
         assert wd.auto_warmup_enabled is False
         assert wd.from_name is None
@@ -154,16 +150,6 @@ class TestWarmupDomain:
         assert wd.auto_warmup_enabled is True
         assert wd.from_name == "Test Company"
 
-    def test_reply_metrics(self):
-        """Test total_replies and reply_rate fields."""
-        wd = WarmupDomain(
-            workspace_id="ws-1",
-            domain="example.com",
-            total_replies=25,
-            reply_rate=5.2,
-        )
-        assert wd.total_replies == 25
-        assert wd.reply_rate == 5.2
 
 
 class TestStartWarmupRequest:
@@ -251,11 +237,7 @@ class TestWarmupStatusResponse:
             bounce_rate=0.6,
             total_delivered=480,
             total_opens=120,
-            total_clicks=30,
             open_rate=25.0,
-            click_rate=6.25,
-            total_replies=15,
-            reply_rate=3.125,
             send_window_start=8,
             send_window_end=20,
             low_engagement_warning=False,
@@ -275,11 +257,7 @@ class TestWarmupStatusResponse:
         assert response.bounce_rate == 0.6
         assert response.total_delivered == 480
         assert response.total_opens == 120
-        assert response.total_clicks == 30
         assert response.open_rate == 25.0
-        assert response.click_rate == 6.25
-        assert response.total_replies == 15
-        assert response.reply_rate == 3.125
         assert response.send_window_start == 8
         assert response.send_window_end == 20
         assert response.low_engagement_warning is False
@@ -363,8 +341,6 @@ class TestDomainHealthResponse:
             bounce_rate=0.5,
             complaint_rate=0.01,
             open_rate=25.0,
-            click_rate=5.0,
-            reply_rate=2.0,
             score_breakdown={"spf": 15, "dkim": 15, "dmarc": 10},
             checked_at="2026-01-01T00:00:00+00:00",
             cached=False,

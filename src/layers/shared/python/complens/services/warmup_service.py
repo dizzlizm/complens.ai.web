@@ -440,8 +440,6 @@ class WarmupService:
             warmup.total_complaints += counter["complaint_count"]
             warmup.total_delivered += counter.get("delivery_count", 0)
             warmup.total_opens += counter.get("open_count", 0)
-            warmup.total_clicks += counter.get("click_count", 0)
-            warmup.total_replies += counter.get("reply_count", 0)
 
             warmup.bounce_rate = self._calc_rate(warmup.total_bounced, warmup.total_sent)
             warmup.complaint_rate = self._calc_rate(warmup.total_complaints, warmup.total_sent)
@@ -449,8 +447,6 @@ class WarmupService:
             # Calculate engagement rates based on delivered (not sent)
             if warmup.total_delivered > 0:
                 warmup.open_rate = self._calc_rate(warmup.total_opens, warmup.total_delivered)
-                warmup.click_rate = self._calc_rate(warmup.total_clicks, warmup.total_delivered)
-                warmup.reply_rate = self._calc_rate(warmup.total_replies, warmup.total_delivered)
 
         # Check low engagement warning (after day 7, with meaningful sample)
         if warmup.warmup_day >= 7 and warmup.total_delivered > 100:
@@ -470,7 +466,6 @@ class WarmupService:
                 warmup_day=warmup.warmup_day,
                 new_daily_limit=warmup.daily_limit,
                 open_rate=warmup.open_rate,
-                click_rate=warmup.click_rate,
             )
 
         warmup = self.repo.update_warmup(warmup)
@@ -546,29 +541,6 @@ class WarmupService:
         except Exception:
             logger.warning("Failed to increment open counter", domain=domain)
 
-    def record_click(self, domain: str) -> None:
-        """Record a click event.
-
-        Args:
-            domain: Email sending domain.
-        """
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        try:
-            self.repo.increment_daily_click(domain, today)
-        except Exception:
-            logger.warning("Failed to increment click counter", domain=domain)
-
-    def record_reply(self, domain: str) -> None:
-        """Record a reply event.
-
-        Args:
-            domain: Email sending domain.
-        """
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        try:
-            self.repo.increment_daily_reply(domain, today)
-        except Exception:
-            logger.warning("Failed to increment reply counter", domain=domain)
 
     # -------------------------------------------------------------------------
     # Private helpers

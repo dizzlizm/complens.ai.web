@@ -655,8 +655,6 @@ def get_domain_health(service: WarmupService, workspace_id: str, domain: str) ->
         bounce_rate=warmup.bounce_rate,
         complaint_rate=warmup.complaint_rate,
         open_rate=warmup.open_rate,
-        click_rate=warmup.click_rate,
-        reply_rate=warmup.reply_rate,
         score_breakdown=breakdown,
         checked_at=checked_at_str,
         cached=False,

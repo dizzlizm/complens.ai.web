@@ -1963,7 +1963,7 @@ function WarmupDomainCard({
 
           {/* Engagement stats */}
           <div className="space-y-2 mt-3">
-            <div className="grid grid-cols-5 gap-2 text-center">
+            <div className="grid grid-cols-3 gap-2 text-center">
               <div className="bg-gray-50 rounded-lg p-2">
                 <p className="text-xs text-gray-500">Sent</p>
                 <p className="text-sm font-semibold text-gray-900">{warmup.total_sent.toLocaleString()}</p>
@@ -1978,24 +1978,6 @@ function WarmupDomainCard({
                   {warmup.total_opens.toLocaleString()}
                   {warmup.total_delivered > 0 && (
                     <span className="text-xs text-gray-500 font-normal ml-1">({warmup.open_rate.toFixed(1)}%)</span>
-                  )}
-                </p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-2">
-                <p className="text-xs text-gray-500">Clicks</p>
-                <p className="text-sm font-semibold text-gray-900">
-                  {warmup.total_clicks.toLocaleString()}
-                  {warmup.total_delivered > 0 && (
-                    <span className="text-xs text-gray-500 font-normal ml-1">({warmup.click_rate.toFixed(1)}%)</span>
-                  )}
-                </p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-2">
-                <p className="text-xs text-gray-500">Replies</p>
-                <p className="text-sm font-semibold text-emerald-700">
-                  {warmup.total_replies.toLocaleString()}
-                  {warmup.total_delivered > 0 && (
-                    <span className="text-xs text-gray-500 font-normal ml-1">({warmup.reply_rate.toFixed(1)}%)</span>
                   )}
                 </p>
               </div>

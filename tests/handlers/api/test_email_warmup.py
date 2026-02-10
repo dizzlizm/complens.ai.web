@@ -54,11 +54,7 @@ def _seed_warmup(table, domain="example.com", status="active", warmup_day=3):
         "complaint_rate": Decimal("0.0"),
         "total_delivered": 490,
         "total_opens": 100,
-        "total_clicks": 25,
-        "total_replies": 10,
         "open_rate": Decimal("20.41"),
-        "click_rate": Decimal("5.1"),
-        "reply_rate": Decimal("2.04"),
         "send_window_start": 9,
         "send_window_end": 19,
         "low_engagement_warning": False,
@@ -406,7 +402,6 @@ class TestGetWarmupStatus:
         assert body["total_sent"] == 500
         assert body["total_delivered"] == 490
         assert body["total_opens"] == 100
-        assert body["total_clicks"] == 25
         assert body["send_window_start"] == 9
         assert body["send_window_end"] == 19
 
@@ -737,8 +732,6 @@ class TestDomainHealth:
             "bounce_rate": Decimal("0.4"),
             "complaint_rate": Decimal("0.0"),
             "open_rate": Decimal("20.41"),
-            "click_rate": Decimal("5.1"),
-            "reply_rate": Decimal("2.04"),
             "score_breakdown": {"spf": 15, "dkim": 15},
             "checked_at": now,
             "cached": False,

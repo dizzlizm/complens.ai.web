@@ -76,31 +76,31 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         # Cap at seed list size per hour (round-robin)
         emails_this_hour = min(emails_this_hour, len(warmup.seed_list) * 2)
 
-        # Get recent subjects for dedup
+        # Generate one email per domain per day — reuse for all recipients
         recent_emails = repo.get_recent_warmup_emails(warmup.domain, today, limit=20)
         exclude_subjects = [e["subject"] for e in recent_emails if e.get("subject")]
+
+        first_recipient = warmup.seed_list[0]
+        try:
+            email_content = generator.generate_email(
+                workspace_id=warmup.workspace_id,
+                domain=warmup.domain,
+                recipient_email=first_recipient,
+                exclude_subjects=exclude_subjects,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to generate warmup email",
+                domain=warmup.domain,
+            )
+            continue
+
+        from_name = warmup.from_name or warmup.domain
+        from_email = f"{from_name} <warmup@{warmup.domain}>"
 
         sent_for_domain = 0
         for i in range(emails_this_hour):
             recipient = warmup.seed_list[i % len(warmup.seed_list)]
-
-            try:
-                email_content = generator.generate_email(
-                    workspace_id=warmup.workspace_id,
-                    domain=warmup.domain,
-                    recipient_email=recipient,
-                    exclude_subjects=exclude_subjects,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to generate warmup email",
-                    domain=warmup.domain,
-                    recipient=recipient,
-                )
-                continue
-
-            from_name = warmup.from_name or warmup.domain
-            from_email = f"{from_name} <warmup@{warmup.domain}>"
 
             try:
                 email_service.send_email(
@@ -119,14 +119,17 @@ def handler(event: dict[str, Any], context: Any) -> dict:
                 )
                 continue
 
-            # Record for audit + subject dedup
+            sent_for_domain += 1
+
+        # Record once for audit + subject dedup
+        if sent_for_domain > 0:
             try:
                 repo.record_warmup_email(
                     domain=warmup.domain,
                     date_str=today,
                     email_data={
                         "subject": email_content["subject"],
-                        "recipient": recipient,
+                        "recipient": f"{sent_for_domain} recipients",
                         "content_type": email_content.get("content_type", ""),
                         "sent_at": datetime.now(timezone.utc).isoformat(),
                     },
@@ -136,9 +139,6 @@ def handler(event: dict[str, Any], context: Any) -> dict:
                     "Failed to record warmup email",
                     domain=warmup.domain,
                 )
-
-            exclude_subjects.append(email_content["subject"])
-            sent_for_domain += 1
 
         total_sent += sent_for_domain
         domains_processed += 1

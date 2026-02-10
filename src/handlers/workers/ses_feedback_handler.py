@@ -1,7 +1,7 @@
 """SES bounce/complaint/engagement feedback handler.
 
 Processes SES feedback notifications (bounces, complaints, deliveries,
-opens, and clicks) delivered via SNS topic. Updates warm-up daily counters
+and opens) delivered via SNS topic. Updates warm-up daily counters
 and auto-pauses domains that exceed reputation thresholds.
 """
 
@@ -46,9 +46,6 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             result = False
         elif notification_type == "Open":
             _process_open(service, sns_message)
-            result = False
-        elif notification_type == "Click":
-            _process_click(service, sns_message)
             result = False
         elif notification_type == "Send":
             # Send events are informational; daily send counter is already incremented at send time
@@ -161,22 +158,6 @@ def _process_open(service: WarmupService, notification: dict) -> None:
 
     logger.debug("Processing open", domain=domain)
     service.record_open(domain)
-
-
-def _process_click(service: WarmupService, notification: dict) -> None:
-    """Process a click notification.
-
-    Args:
-        service: WarmupService instance.
-        notification: SES click notification.
-    """
-    source = notification.get("mail", {}).get("source", "")
-    domain = _extract_domain(source)
-    if not domain:
-        return
-
-    logger.debug("Processing click", domain=domain)
-    service.record_click(domain)
 
 
 def _extract_domain(email: str) -> str | None:

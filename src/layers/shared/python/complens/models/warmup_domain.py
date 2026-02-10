@@ -74,13 +74,7 @@ class WarmupDomain(BaseModel):
     # Engagement metrics (cumulative)
     total_delivered: int = Field(default=0, description="Total emails delivered during warm-up")
     total_opens: int = Field(default=0, description="Total opens during warm-up")
-    total_clicks: int = Field(default=0, description="Total clicks during warm-up")
     open_rate: float = Field(default=0.0, description="Open rate percentage (opens/delivered)")
-    click_rate: float = Field(default=0.0, description="Click rate percentage (clicks/delivered)")
-
-    # Reply metrics (cumulative)
-    total_replies: int = Field(default=0, description="Total replies during warm-up")
-    reply_rate: float = Field(default=0.0, description="Reply rate percentage (replies/delivered)")
 
     # AI warmup settings
     seed_list: list[str] = Field(default_factory=list, description="Email addresses for warmup sending")
@@ -216,11 +210,7 @@ class WarmupStatusResponse(PydanticBaseModel):
     complaint_rate: float
     total_delivered: int = 0
     total_opens: int = 0
-    total_clicks: int = 0
     open_rate: float = 0.0
-    click_rate: float = 0.0
-    total_replies: int = 0
-    reply_rate: float = 0.0
     send_window_start: int = 9
     send_window_end: int = 19
     low_engagement_warning: bool = False
@@ -256,11 +246,7 @@ class WarmupStatusResponse(PydanticBaseModel):
             complaint_rate=wd.complaint_rate,
             total_delivered=wd.total_delivered,
             total_opens=wd.total_opens,
-            total_clicks=wd.total_clicks,
             open_rate=wd.open_rate,
-            click_rate=wd.click_rate,
-            total_replies=wd.total_replies,
-            reply_rate=wd.reply_rate,
             send_window_start=wd.send_window_start,
             send_window_end=wd.send_window_end,
             low_engagement_warning=wd.low_engagement_warning,
@@ -301,8 +287,6 @@ class DomainHealthResponse(PydanticBaseModel):
     bounce_rate: float = 0.0
     complaint_rate: float = 0.0
     open_rate: float = 0.0
-    click_rate: float = 0.0
-    reply_rate: float = 0.0
 
     # Metadata
     score_breakdown: dict[str, int] = Field(default_factory=dict)

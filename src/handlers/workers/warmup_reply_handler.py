@@ -66,12 +66,10 @@ def handler(event: dict[str, Any], context: Any) -> dict:
                 )
                 continue
 
-            # Record the reply
-            service.record_reply(domain)
+            # Log the reply (not tracked as a metric — seed list replies are not meaningful)
             replies_recorded += 1
-
             logger.info(
-                "Warmup reply recorded",
+                "Warmup reply detected",
                 domain=domain,
                 sender=sender,
                 recipient=recipient,

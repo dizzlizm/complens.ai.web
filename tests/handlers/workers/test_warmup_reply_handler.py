@@ -51,7 +51,6 @@ class TestWarmupReplyHandler:
         result = handler(event, None)
 
         assert result["replies_recorded"] == 1
-        mock_svc.record_reply.assert_called_once_with("example.com")
 
     @patch("warmup_reply_handler.WarmupService")
     @patch("warmup_reply_handler.WarmupDomainRepository")
@@ -67,7 +66,6 @@ class TestWarmupReplyHandler:
         result = handler(event, None)
 
         assert result["replies_recorded"] == 0
-        mock_svc.record_reply.assert_not_called()
 
     @patch("warmup_reply_handler.WarmupService")
     @patch("warmup_reply_handler.WarmupDomainRepository")
@@ -90,7 +88,6 @@ class TestWarmupReplyHandler:
         result = handler(event, None)
 
         assert result["replies_recorded"] == 0
-        mock_svc.record_reply.assert_not_called()
 
     @patch("warmup_reply_handler.WarmupService")
     @patch("warmup_reply_handler.WarmupDomainRepository")

@@ -407,7 +407,7 @@ class TestWarmupServiceAdvanceDay:
         assert result.status == "active"
 
     def test_advance_day_with_engagement(self):
-        """Test that advance_day rolls up engagement metrics including replies."""
+        """Test that advance_day rolls up engagement metrics."""
         from complens.models.warmup_domain import WarmupDomain, WarmupStatus
 
         warmup = WarmupDomain(
@@ -424,8 +424,6 @@ class TestWarmupServiceAdvanceDay:
             "complaint_count": 0,
             "delivery_count": 145,
             "open_count": 40,
-            "click_count": 10,
-            "reply_count": 5,
         }
         repo.update_warmup.side_effect = lambda w: w
 
@@ -434,11 +432,7 @@ class TestWarmupServiceAdvanceDay:
 
         assert result.total_delivered == 145
         assert result.total_opens == 40
-        assert result.total_clicks == 10
-        assert result.total_replies == 5
         assert result.open_rate > 0
-        assert result.click_rate > 0
-        assert result.reply_rate > 0
 
     def test_advance_day_completes(self):
         """Test warm-up completion when past schedule."""
@@ -481,7 +475,6 @@ class TestWarmupServiceAdvanceDay:
             "complaint_count": 0,
             "delivery_count": 95,
             "open_count": 2,
-            "click_count": 0,
         }
         repo.update_warmup.side_effect = lambda w: w
 
@@ -619,24 +612,6 @@ class TestWarmupServiceEngagement:
 
         repo.increment_daily_open.assert_called_once()
 
-    def test_record_click(self):
-        """Test recording a click event."""
-        repo = MagicMock()
-        service = self._make_service(repo)
-
-        service.record_click("example.com")
-
-        repo.increment_daily_click.assert_called_once()
-
-    def test_record_reply(self):
-        """Test recording a reply event."""
-        repo = MagicMock()
-        service = self._make_service(repo)
-
-        service.record_reply("example.com")
-
-        repo.increment_daily_reply.assert_called_once()
-
     def test_record_delivery_error_swallowed(self):
         """Test that delivery recording errors don't propagate."""
         repo = MagicMock()
@@ -646,14 +621,6 @@ class TestWarmupServiceEngagement:
         # Should not raise
         service.record_delivery("example.com")
 
-    def test_record_reply_error_swallowed(self):
-        """Test that reply recording errors don't propagate."""
-        repo = MagicMock()
-        repo.increment_daily_reply.side_effect = Exception("DB error")
-        service = self._make_service(repo)
-
-        # Should not raise
-        service.record_reply("example.com")
 
 
 class TestWarmupServiceStartWithAuth:

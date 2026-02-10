@@ -17,11 +17,7 @@ export interface WarmupDomain {
   complaint_rate: number;
   total_delivered: number;
   total_opens: number;
-  total_clicks: number;
   open_rate: number;
-  click_rate: number;
-  total_replies: number;
-  reply_rate: number;
   send_window_start: number;
   send_window_end: number;
   low_engagement_warning: boolean;
@@ -38,8 +34,6 @@ export interface WarmupDomain {
     complaint_count: number;
     delivery_count: number;
     open_count: number;
-    click_count: number;
-    reply_count: number;
     daily_limit: number;
   };
 }
@@ -139,8 +133,6 @@ export interface DomainHealthResult {
   bounce_rate: number;
   complaint_rate: number;
   open_rate: number;
-  click_rate: number;
-  reply_rate: number;
   score_breakdown: Record<string, number>;
   checked_at: string | null;
   cached: boolean;
