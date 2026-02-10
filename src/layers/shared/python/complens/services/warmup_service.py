@@ -629,15 +629,21 @@ class WarmupService:
     def _extract_domain(email: str) -> str | None:
         """Extract domain from an email address.
 
+        Handles both plain addresses and RFC 5322 display name format
+        (e.g. "Display Name <user@domain.com>").
+
         Args:
-            email: Email address.
+            email: Email address (plain or with display name).
 
         Returns:
             Domain string, or None if invalid.
         """
-        if "@" not in email:
+        from email.utils import parseaddr
+
+        _, addr = parseaddr(email)
+        if not addr or "@" not in addr:
             return None
-        return email.rsplit("@", 1)[1].lower()
+        return addr.rsplit("@", 1)[1].lower()
 
     @staticmethod
     def _calc_rate(numerator: int, denominator: int) -> float:
