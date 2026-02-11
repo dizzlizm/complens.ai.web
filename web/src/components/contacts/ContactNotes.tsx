@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { StickyNote, Trash2, Pin, Loader2, Send } from 'lucide-react';
 import type { ContactNote } from '../../lib/hooks/useContacts';
+import { useFormatDate } from '../../lib/hooks/useFormatDate';
 
 interface ContactNotesProps {
   notes: ContactNote[];
@@ -10,16 +11,6 @@ interface ContactNotesProps {
   isCreating: boolean;
 }
 
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
 export default function ContactNotes({
   notes,
   isLoading,
@@ -27,6 +18,7 @@ export default function ContactNotes({
   onDeleteNote,
   isCreating,
 }: ContactNotesProps) {
+  const { formatDateTime } = useFormatDate();
   const [newNote, setNewNote] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -129,7 +121,7 @@ export default function ContactNotes({
           <div className="mt-2 flex items-center gap-2 text-xs text-gray-400">
             <span>{note.author_name}</span>
             <span>&middot;</span>
-            <span>{formatDate(note.created_at)}</span>
+            <span>{formatDateTime(note.created_at, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
           </div>
         </div>
       ))}

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useWorkflowRuns, type WorkflowRun } from '../lib/hooks/useWorkflows';
 import { formatDistanceToNow } from 'date-fns';
+import { useFormatDate } from '../lib/hooks/useFormatDate';
 
 interface WorkflowRunsProps {
   workspaceId: string;
@@ -26,6 +27,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function RunDetails({ run }: { run: WorkflowRun }) {
+  const { formatDateTime } = useFormatDate();
   return (
     <div className="mt-4 pt-4 border-t border-gray-100 space-y-4">
       {/* Timeline */}
@@ -33,13 +35,13 @@ function RunDetails({ run }: { run: WorkflowRun }) {
         <div>
           <dt className="text-gray-500">Started</dt>
           <dd className="text-gray-900">
-            {run.started_at ? new Date(run.started_at).toLocaleString() : '-'}
+            {run.started_at ? formatDateTime(run.started_at) : '-'}
           </dd>
         </div>
         <div>
           <dt className="text-gray-500">Completed</dt>
           <dd className="text-gray-900">
-            {run.completed_at ? new Date(run.completed_at).toLocaleString() : '-'}
+            {run.completed_at ? formatDateTime(run.completed_at) : '-'}
           </dd>
         </div>
         <div>

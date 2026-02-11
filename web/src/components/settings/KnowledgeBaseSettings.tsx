@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { BookOpen, Upload, Trash2, RefreshCw, FileText, Loader2, CheckCircle, AlertCircle, Clock, Eye } from 'lucide-react';
 import { useKBDocuments, useKBStatus, useCreateKBDocument, useConfirmKBUpload, useDeleteKBDocument, useSyncKB } from '../../lib/hooks/useKnowledgeBase';
+import { useFormatDate } from '../../lib/hooks/useFormatDate';
 import DocumentContentModal from './DocumentContentModal';
 
 interface KnowledgeBaseSettingsProps {
@@ -21,9 +22,10 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-export default function KnowledgeBaseSettings({ workspaceId }: KnowledgeBaseSettingsProps) {
-  const { data: documents = [], isLoading: loadingDocs } = useKBDocuments(workspaceId || undefined);
-  const { data: status } = useKBStatus(workspaceId || undefined);
+export default function KnowledgeBaseSettings({ workspaceId, siteId }: KnowledgeBaseSettingsProps) {
+  const { data: documents = [], isLoading: loadingDocs } = useKBDocuments(workspaceId || undefined, siteId);
+  const { data: status } = useKBStatus(workspaceId || undefined, siteId);
+  const { formatDate } = useFormatDate();
   const createDocument = useCreateKBDocument(workspaceId);
   const confirmUpload = useConfirmKBUpload(workspaceId);
   const deleteDocument = useDeleteKBDocument(workspaceId);
@@ -170,7 +172,7 @@ export default function KnowledgeBaseSettings({ workspaceId }: KnowledgeBaseSett
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
                   <p className="text-xs text-gray-400">
-                    {formatFileSize(doc.file_size)} &middot; {new Date(doc.created_at).toLocaleDateString()}
+                    {formatFileSize(doc.file_size)} &middot; {formatDate(doc.created_at)}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">

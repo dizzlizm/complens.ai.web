@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useFormSubmissions, type FormField } from '../lib/hooks/useForms';
 import { formatDistanceToNow } from 'date-fns';
+import { useFormatDate } from '../lib/hooks/useFormatDate';
 
 interface FormSubmissionsProps {
   workspaceId: string;
@@ -10,6 +11,7 @@ interface FormSubmissionsProps {
 
 export default function FormSubmissions({ workspaceId, formId, fields }: FormSubmissionsProps) {
   const { data: submissions, isLoading, error } = useFormSubmissions(workspaceId, formId);
+  const { formatDateTime } = useFormatDate();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const exportToCSV = () => {
@@ -25,7 +27,7 @@ export default function FormSubmissions({ workspaceId, formId, fields }: FormSub
     // Build CSV content
     const headers = ['Submitted At', 'Contact ID', ...fieldNames, 'Workflow Triggered'];
     const rows = submissions.map(sub => [
-      new Date(sub.created_at).toLocaleString(),
+      formatDateTime(sub.created_at),
       sub.contact_id || '',
       ...fieldNames.map(name => sub.data[name] || ''),
       sub.workflow_triggered ? 'Yes' : 'No',
@@ -153,7 +155,7 @@ export default function FormSubmissions({ workspaceId, formId, fields }: FormSub
 
                 {/* Metadata */}
                 <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-500 space-y-1">
-                  <p><span className="font-medium">Submitted:</span> {new Date(submission.created_at).toLocaleString()}</p>
+                  <p><span className="font-medium">Submitted:</span> {formatDateTime(submission.created_at)}</p>
                   {submission.visitor_ip && <p><span className="font-medium">IP:</span> {submission.visitor_ip}</p>}
                   {submission.referrer && <p><span className="font-medium">Referrer:</span> {submission.referrer}</p>}
                   {submission.contact_id && (

@@ -4,6 +4,7 @@ import {
   ChevronDown, ChevronRight, Loader2,
 } from 'lucide-react';
 import type { ActivityItem } from '../../lib/hooks/useContacts';
+import { useFormatDate } from '../../lib/hooks/useFormatDate';
 
 interface ContactActivityTimelineProps {
   activities: ActivityItem[];
@@ -24,25 +25,26 @@ const typeLabels: Record<string, string> = {
   note: 'Note',
 };
 
-function formatRelativeTime(timestamp: string): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
 function ActivityItemCard({ activity }: { activity: ActivityItem }) {
   const [expanded, setExpanded] = useState(false);
+  const { formatDate } = useFormatDate();
   const config = typeConfig[activity.type] || typeConfig.note;
   const Icon = config.icon;
+
+  const formatRelativeTime = (timestamp: string): string => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return formatDate(date, { month: 'short', day: 'numeric' });
+  };
 
   return (
     <div className="relative flex gap-3 pb-6 last:pb-0">

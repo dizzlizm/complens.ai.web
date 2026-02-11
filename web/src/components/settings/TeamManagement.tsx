@@ -6,22 +6,16 @@ import {
   useRemoveMember,
   useRevokeInvitation,
 } from '../../lib/hooks/useTeam';
+import { useFormatDate } from '../../lib/hooks/useFormatDate';
 import InviteModal from './InviteModal';
 
 interface TeamManagementProps {
   workspaceId: string;
 }
 
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
-
 export default function TeamManagement({ workspaceId }: TeamManagementProps) {
   const { data: teamData, isLoading } = useTeamMembers(workspaceId || undefined);
+  const { formatDate } = useFormatDate();
   const updateRole = useUpdateRole(workspaceId);
   const removeMember = useRemoveMember(workspaceId);
   const revokeInvitation = useRevokeInvitation(workspaceId);
@@ -132,7 +126,7 @@ export default function TeamManagement({ workspaceId }: TeamManagementProps) {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-500">
-                      {formatDate(member.created_at)}
+                      {formatDate(member.created_at, { month: 'short', day: 'numeric', year: 'numeric' })}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {member.role !== 'owner' && (
@@ -188,7 +182,7 @@ export default function TeamManagement({ workspaceId }: TeamManagementProps) {
                       <span className="capitalize">{invitation.role}</span>
                       <span className="text-gray-300">|</span>
                       <Clock className="w-3 h-3" />
-                      <span>Expires {formatDate(invitation.expires_at)}</span>
+                      <span>Expires {formatDate(invitation.expires_at, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                     </div>
                   </div>
                 </div>

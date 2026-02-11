@@ -4,6 +4,7 @@ import {
   Check, X, Tag, Edit2, Shield,
 } from 'lucide-react';
 import type { Contact } from '../../lib/hooks/useContacts';
+import { useFormatDate } from '../../lib/hooks/useFormatDate';
 
 interface ContactProfileCardProps {
   contact: Contact;
@@ -35,17 +36,14 @@ const statusColors: Record<string, string> = {
   bounced: 'bg-yellow-100 text-yellow-800',
 };
 
-function formatDate(dateString?: string): string {
-  if (!dateString) return 'Never';
-  return new Date(dateString).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
-
 export default function ContactProfileCard({ contact, onEditTags }: ContactProfileCardProps) {
+  const { formatDate: fmtDate } = useFormatDate();
   const [tagInput, setTagInput] = useState('');
+
+  const formatDate = (dateString?: string): string => {
+    if (!dateString) return 'Never';
+    return fmtDate(dateString, { month: 'short', day: 'numeric', year: 'numeric' });
+  };
   const [isEditingTags, setIsEditingTags] = useState(false);
 
   const handleAddTag = () => {

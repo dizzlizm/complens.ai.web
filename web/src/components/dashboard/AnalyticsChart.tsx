@@ -10,6 +10,7 @@ import {
   Tooltip,
   Legend,
 } from 'recharts';
+import { useFormatDate } from '../../lib/hooks/useFormatDate';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ChartDataPoint = Record<string, any>;
@@ -27,12 +28,6 @@ interface AnalyticsChartProps {
   stacked?: boolean;
 }
 
-function formatDate(dateStr: unknown): string {
-  if (typeof dateStr !== 'string') return '';
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
 export default function AnalyticsChart({
   type,
   data,
@@ -41,6 +36,12 @@ export default function AnalyticsChart({
   height = 300,
   stacked = false,
 }: AnalyticsChartProps) {
+  const { formatDate } = useFormatDate();
+  const tickFormatDate = (dateStr: unknown): string => {
+    if (typeof dateStr !== 'string') return '';
+    return formatDate(dateStr, { month: 'short', day: 'numeric' });
+  };
+
   if (!data || data.length === 0) {
     return (
       <div className="flex items-center justify-center text-gray-400 text-sm" style={{ height }}>
@@ -69,7 +70,7 @@ export default function AnalyticsChart({
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
           <XAxis
             dataKey={xAxisKey}
-            tickFormatter={formatDate}
+            tickFormatter={tickFormatDate}
             tick={{ fontSize: 12, fill: '#9ca3af' }}
             tickLine={false}
             axisLine={{ stroke: '#e5e7eb' }}
@@ -80,7 +81,7 @@ export default function AnalyticsChart({
             axisLine={false}
           />
           <Tooltip
-            labelFormatter={formatDate}
+            labelFormatter={tickFormatDate}
             contentStyle={{
               borderRadius: 8,
               border: '1px solid #e5e7eb',
@@ -105,7 +106,7 @@ export default function AnalyticsChart({
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
           <XAxis
             dataKey={xAxisKey}
-            tickFormatter={formatDate}
+            tickFormatter={tickFormatDate}
             tick={{ fontSize: 12, fill: '#9ca3af' }}
             tickLine={false}
             axisLine={{ stroke: '#e5e7eb' }}
@@ -116,7 +117,7 @@ export default function AnalyticsChart({
             axisLine={false}
           />
           <Tooltip
-            labelFormatter={formatDate}
+            labelFormatter={tickFormatDate}
             contentStyle={{
               borderRadius: 8,
               border: '1px solid #e5e7eb',

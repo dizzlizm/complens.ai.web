@@ -57,10 +57,10 @@ export default function SiteAISettings() {
             </h3>
             <p className="text-sm text-gray-500 mt-1">
               Upload documents to give your AI chat widget relevant context about your business.
-              Documents are shared across your entire workspace.
+              Documents are scoped to this site and used by its AI chat widgets.
             </p>
           </div>
-          <KnowledgeBaseSettings workspaceId={workspaceId} />
+          <KnowledgeBaseSettings workspaceId={workspaceId} siteId={siteId} />
         </div>
       )}
 
