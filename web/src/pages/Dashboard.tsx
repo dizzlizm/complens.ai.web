@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { GitBranch, Users, MessageSquare, CheckCircle, BarChart3 } from 'lucide-react';
+import { GitBranch, Users, MessageSquare, CheckCircle } from 'lucide-react';
 import { useCurrentWorkspace } from '../lib/hooks';
 import { useAnalytics } from '../lib/hooks/useAnalytics';
 import StatCard from '../components/dashboard/StatCard';
@@ -93,96 +93,92 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Charts */}
-      {!isLoading && analytics && (
+      {/* Charts - only show when there's data */}
+      {!isLoading && analytics && (analytics.contact_growth?.length > 0 || analytics.workflow_runs?.length > 0) && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* Contact growth */}
-          <div className="card">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Contact Growth</h2>
-            <AnalyticsChart
-              type="area"
-              data={analytics.contact_growth}
-              dataKeys={[
-                { key: 'count', color: '#6366f1', name: 'New Contacts' },
-              ]}
-            />
-          </div>
-
-          {/* Workflow runs */}
-          <div className="card">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Workflow Runs</h2>
-            <AnalyticsChart
-              type="bar"
-              data={analytics.workflow_runs}
-              dataKeys={[
-                { key: 'success', color: '#22c55e', name: 'Successful' },
-                { key: 'failed', color: '#ef4444', name: 'Failed' },
-              ]}
-              stacked
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Page & Form Analytics */}
-      {!isLoading && analytics && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {analytics.page_analytics && (
-            <PageAnalytics data={analytics.page_analytics} />
+          {analytics.contact_growth?.length > 0 && (
+            <div className="card">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Contact Growth</h2>
+              <AnalyticsChart
+                type="area"
+                data={analytics.contact_growth}
+                dataKeys={[
+                  { key: 'count', color: '#6366f1', name: 'New Contacts' },
+                ]}
+              />
+            </div>
           )}
-          {analytics.form_analytics && (
-            <FormAnalytics data={analytics.form_analytics} />
+          {analytics.workflow_runs?.length > 0 && (
+            <div className="card">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Workflow Runs</h2>
+              <AnalyticsChart
+                type="bar"
+                data={analytics.workflow_runs}
+                dataKeys={[
+                  { key: 'success', color: '#22c55e', name: 'Successful' },
+                  { key: 'failed', color: '#ef4444', name: 'Failed' },
+                ]}
+                stacked
+              />
+            </div>
           )}
         </div>
       )}
 
-      {/* Top workflows + Recent activity */}
-      {!isLoading && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* Top performing workflows */}
-          <div className="card">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Top Workflows</h2>
-            {analytics?.top_workflows && analytics.top_workflows.length > 0 ? (
-              <div className="space-y-3">
-                {analytics.top_workflows.map((wf, index) => (
-                  <div key={wf.name} className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-gray-400 w-6">#{index + 1}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">{wf.name}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
-                          <div
-                            className="bg-green-500 h-full rounded-full"
-                            style={{ width: `${wf.success_rate}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-gray-500 flex-shrink-0">{wf.success_rate}%</span>
-                      </div>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className="text-sm font-semibold text-gray-900">{wf.total}</p>
-                      <p className="text-xs text-gray-500">runs</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <BarChart3 className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500">No workflow data yet</p>
-                <p className="text-sm text-gray-400 mt-1">
-                  Create a workflow to see performance stats
-                </p>
-              </div>
+      {/* Page & Form Analytics - only show when there's data */}
+      {!isLoading && analytics && (
+        ((analytics.page_analytics?.total_page_views ?? 0) > 0 || (analytics.form_analytics?.total_submissions ?? 0) > 0) && (
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            {analytics.page_analytics && analytics.page_analytics.total_page_views > 0 && (
+              <PageAnalytics data={analytics.page_analytics} />
+            )}
+            {analytics.form_analytics && analytics.form_analytics.total_submissions > 0 && (
+              <FormAnalytics data={analytics.form_analytics} />
             )}
           </div>
+        )
+      )}
 
-          {/* Recent Activity */}
-          <RecentActivity
-            activities={analytics?.recent_activity || []}
-            isLoading={isLoadingAnalytics}
-          />
-        </div>
+      {/* Top workflows + Recent activity - only show when there's data */}
+      {!isLoading && (
+        ((analytics?.top_workflows?.length ?? 0) > 0 || (analytics?.recent_activity?.length ?? 0) > 0) && (
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            {analytics?.top_workflows && analytics.top_workflows.length > 0 && (
+              <div className="card">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">Top Workflows</h2>
+                <div className="space-y-3">
+                  {analytics.top_workflows.map((wf, index) => (
+                    <div key={wf.name} className="flex items-center gap-3">
+                      <span className="text-sm font-medium text-gray-400 w-6">#{index + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{wf.name}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                            <div
+                              className="bg-green-500 h-full rounded-full"
+                              style={{ width: `${wf.success_rate}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-gray-500 flex-shrink-0">{wf.success_rate}%</span>
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-sm font-semibold text-gray-900">{wf.total}</p>
+                        <p className="text-xs text-gray-500">runs</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {analytics?.recent_activity && analytics.recent_activity.length > 0 && (
+              <RecentActivity
+                activities={analytics.recent_activity}
+                isLoading={isLoadingAnalytics}
+              />
+            )}
+          </div>
+        )
       )}
 
       {/* Quick actions */}
