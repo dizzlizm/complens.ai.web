@@ -21,9 +21,9 @@ import Contacts from './pages/Contacts';
 import ContactDetail from './pages/ContactDetail';
 import Pages from './pages/Pages';
 import PageEditor from './pages/PageEditor';
-import BusinessProfile from './pages/BusinessProfile';
 // Forms removed - now managed inside Page Editor
 import Settings from './pages/Settings';
+import EmailWarmup from './pages/EmailWarmup';
 import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
 
@@ -76,7 +76,7 @@ function App() {
             <Route path="/pages" element={<Pages />} />
             <Route path="/pages/:id" element={<PageEditor />} />
             {/* Forms routes removed - forms are now managed inside Page Editor */}
-            <Route path="/business-profile" element={<BusinessProfile />} />
+            <Route path="/email-warmup" element={<EmailWarmup />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/profile" element={<Profile />} />
           </Route>

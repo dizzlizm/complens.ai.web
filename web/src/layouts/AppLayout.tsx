@@ -6,6 +6,7 @@ import {
   GitBranch,
   Users,
   FileText,
+  Flame,
   Settings,
   User,
   LogOut,
@@ -25,6 +26,7 @@ const navigation = [
   { name: 'Workflows', href: '/workflows', icon: GitBranch },
   { name: 'Contacts', href: '/contacts', icon: Users },
   { name: 'Pages', href: '/pages', icon: FileText },
+  { name: 'Email Warmup', href: '/email-warmup', icon: Flame },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 

@@ -69,8 +69,7 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
     def list_active(self, limit: int = 500) -> list[WarmupDomain]:
         """List all active warm-up domains across all workspaces.
 
-        Uses a scan with filter since there's no GSI for global status queries.
-        Expected volume is small (dozens of domains at most).
+        Uses GSI4 (WARMUP_ACTIVE partition) with scan fallback for pre-GSI4 items.
 
         Args:
             limit: Maximum items to return.
@@ -78,6 +77,19 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
         Returns:
             List of active WarmupDomain records.
         """
+        # Try GSI4 first (efficient)
+        try:
+            items, _ = self.query(
+                pk="WARMUP_ACTIVE",
+                index_name="GSI4",
+                limit=limit,
+            )
+            if items:
+                return items
+        except Exception:
+            pass
+
+        # Fallback scan for pre-GSI4 data
         try:
             response = self.table.scan(
                 FilterExpression="SK = :sk AND #s = :status",
@@ -93,6 +105,14 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
             logger.error("Failed to list active warmup domains", error=str(e))
             raise
 
+    def _get_all_gsi_keys(self, warmup: WarmupDomain) -> dict[str, str]:
+        """Get all GSI keys for a warmup domain."""
+        keys = warmup.get_gsi1_keys()
+        gsi4_keys = warmup.get_gsi4_keys()
+        if gsi4_keys:
+            keys.update(gsi4_keys)
+        return keys
+
     def create_warmup(self, warmup: WarmupDomain) -> WarmupDomain:
         """Create a new warm-up domain record.
 
@@ -102,8 +122,7 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
         Returns:
             Created WarmupDomain.
         """
-        gsi_keys = warmup.get_gsi1_keys()
-        return self.create(warmup, gsi_keys=gsi_keys)
+        return self.create(warmup, gsi_keys=self._get_all_gsi_keys(warmup))
 
     def update_warmup(self, warmup: WarmupDomain) -> WarmupDomain:
         """Update a warm-up domain record.
@@ -114,8 +133,7 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
         Returns:
             Updated WarmupDomain.
         """
-        gsi_keys = warmup.get_gsi1_keys()
-        return self.update(warmup, gsi_keys=gsi_keys)
+        return self.update(warmup, gsi_keys=self._get_all_gsi_keys(warmup))
 
     def delete_warmup(self, domain: str) -> bool:
         """Delete a warm-up domain record.

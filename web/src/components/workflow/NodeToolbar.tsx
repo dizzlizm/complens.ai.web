@@ -27,18 +27,15 @@ const actions: NodeDefinition[] = [
   { type: 'action', nodeType: 'action_webhook', label: 'Call Webhook', icon: <Webhook className="w-4 h-4" />, description: 'Call external API' },
   { type: 'action', nodeType: 'action_update_contact', label: 'Update Contact', icon: <Tag className="w-4 h-4" />, description: 'Update contact fields' },
   { type: 'action', nodeType: 'action_run_workflow', label: 'Run Workflow', icon: <PlayCircle className="w-4 h-4" />, description: 'Trigger another workflow' },
+  { type: 'ai', nodeType: 'ai_respond', label: 'AI Respond', icon: <Sparkles className="w-4 h-4" />, description: 'AI generates and sends a reply' },
+  { type: 'ai', nodeType: 'ai_generate', label: 'AI Generate', icon: <Sparkles className="w-4 h-4" />, description: 'AI creates content (email, text)' },
 ];
 
 const logic: NodeDefinition[] = [
   { type: 'logic', nodeType: 'logic_branch', label: 'If/Else', icon: <GitBranch className="w-4 h-4" />, description: 'Branch based on condition' },
   { type: 'logic', nodeType: 'logic_filter', label: 'Filter', icon: <Filter className="w-4 h-4" />, description: 'Continue if condition met' },
   { type: 'logic', nodeType: 'logic_goal', label: 'Goal', icon: <Target className="w-4 h-4" />, description: 'End when goal achieved' },
-];
-
-const ai: NodeDefinition[] = [
-  { type: 'ai', nodeType: 'ai_respond', label: 'AI Respond', icon: <Sparkles className="w-4 h-4" />, description: 'AI generates response' },
-  { type: 'ai', nodeType: 'ai_decision', label: 'AI Decision', icon: <Sparkles className="w-4 h-4" />, description: 'AI chooses next path' },
-  { type: 'ai', nodeType: 'ai_generate', label: 'AI Generate', icon: <Sparkles className="w-4 h-4" />, description: 'AI creates content' },
+  { type: 'ai', nodeType: 'ai_decision', label: 'AI Decision', icon: <Sparkles className="w-4 h-4" />, description: 'AI picks the next path' },
 ];
 
 function DraggableNode({ node }: { node: NodeDefinition }) {
@@ -102,7 +99,6 @@ export default function NodeToolbar() {
       <NodeSection title="Triggers" nodes={triggers} color="text-green-600" />
       <NodeSection title="Actions" nodes={actions} color="text-blue-600" />
       <NodeSection title="Logic" nodes={logic} color="text-amber-600" />
-      <NodeSection title="AI" nodes={ai} color="text-violet-600" />
     </div>
   );
 }

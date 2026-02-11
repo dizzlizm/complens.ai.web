@@ -51,7 +51,7 @@ class ProviderRepository(BaseRepository[Provider]):
         Returns:
             Created provider.
         """
-        return self.create(provider)
+        return self.create(provider, gsi_keys=provider.get_gsi4_keys())
 
     def update_provider(self, provider: Provider) -> Provider:
         """Update an existing provider.
@@ -62,7 +62,7 @@ class ProviderRepository(BaseRepository[Provider]):
         Returns:
             Updated provider.
         """
-        return self.update(provider)
+        return self.update(provider, gsi_keys=provider.get_gsi4_keys())
 
     def delete_provider(self, provider_id: str) -> bool:
         """Delete a provider.
@@ -84,7 +84,7 @@ class ProviderRepository(BaseRepository[Provider]):
     ) -> list[Provider]:
         """List all providers.
 
-        Note: This performs a scan, which is expensive. Use sparingly.
+        Uses GSI4 (PROVIDERS partition) with scan fallback for pre-GSI4 items.
 
         Args:
             category: Optional category filter.
@@ -93,37 +93,61 @@ class ProviderRepository(BaseRepository[Provider]):
         Returns:
             List of providers.
         """
+        # Try GSI4 first (efficient)
         try:
-            # Build filter expression
+            sk_prefix = f"{category}#" if category else None
+            filter_expr = None
+            expr_values = None
+            expr_names = None
+
+            if status:
+                filter_expr = "#status = :status"
+                expr_values = {":status": status}
+                expr_names = {"#status": "status"}
+
+            items, _ = self.query(
+                pk="PROVIDERS",
+                sk_begins_with=sk_prefix,
+                index_name="GSI4",
+                filter_expression=filter_expr,
+                expression_values=expr_values,
+                expression_names=expr_names,
+            )
+            if items:
+                return items
+        except Exception:
+            pass
+
+        # Fallback to scan for pre-GSI4 data
+        try:
             filter_parts = ["begins_with(PK, :pk_prefix)"]
-            expr_values: dict[str, Any] = {":pk_prefix": "PROVIDER#"}
+            expr_values_scan: dict[str, Any] = {":pk_prefix": "PROVIDER#"}
 
             if category:
                 filter_parts.append("category = :category")
-                expr_values[":category"] = category
+                expr_values_scan[":category"] = category
 
             if status:
                 filter_parts.append("#status = :status")
-                expr_values[":status"] = status
+                expr_values_scan[":status"] = status
 
             kwargs: dict[str, Any] = {
                 "FilterExpression": " AND ".join(filter_parts),
-                "ExpressionAttributeValues": expr_values,
+                "ExpressionAttributeValues": expr_values_scan,
             }
 
             if status:
                 kwargs["ExpressionAttributeNames"] = {"#status": "status"}
 
             response = self.table.scan(**kwargs)
-            items = response.get("Items", [])
+            items_raw = response.get("Items", [])
 
-            # Handle pagination
             while "LastEvaluatedKey" in response:
                 kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
                 response = self.table.scan(**kwargs)
-                items.extend(response.get("Items", []))
+                items_raw.extend(response.get("Items", []))
 
-            return [Provider.from_dynamodb(item) for item in items]
+            return [Provider.from_dynamodb(item) for item in items_raw]
 
         except ClientError as e:
             self.logger.error("Failed to list providers", error=str(e))

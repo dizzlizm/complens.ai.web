@@ -141,11 +141,11 @@ def handle_identify(workspace_id: str, data: dict) -> dict:
 
     # First try by email
     if email:
-        contact = contact_repo.find_by_email(workspace_id, email)
+        contact = contact_repo.get_by_email(workspace_id, email)
 
     # Then try by phone
     if not contact and phone:
-        contact = contact_repo.find_by_phone(workspace_id, phone)
+        contact = contact_repo.get_by_phone(workspace_id, phone)
 
     # Then try by external ID (Segment userId)
     if not contact and user_id:
@@ -186,6 +186,9 @@ def handle_identify(workspace_id: str, data: dict) -> dict:
 
         if updated:
             contact = contact_repo.update_contact(contact)
+            # Update inverted index for external ID lookup
+            if user_id:
+                _put_segment_ext_index(workspace_id, user_id, contact.id)
             logger.info("Contact updated from Segment", contact_id=contact.id)
 
         return _json_response(200, {
@@ -226,6 +229,9 @@ def handle_identify(workspace_id: str, data: dict) -> dict:
         )
 
         contact = contact_repo.create_contact(contact)
+        # Write inverted index for external ID lookup
+        if user_id:
+            _put_segment_ext_index(workspace_id, user_id, contact.id)
         logger.info("Contact created from Segment", contact_id=contact.id)
 
         return _json_response(201, {
@@ -263,7 +269,7 @@ def handle_track(workspace_id: str, data: dict) -> dict:
         # Try to find by email in properties
         email = properties.get("email")
         if email:
-            contact = contact_repo.find_by_email(workspace_id, email)
+            contact = contact_repo.get_by_email(workspace_id, email)
 
     if not contact:
         logger.info(
@@ -430,6 +436,10 @@ def handle_alias(workspace_id: str, data: dict) -> dict:
     contact.custom_fields["segment_previous_id"] = previous_id
     contact = contact_repo.update_contact(contact)
 
+    # Update inverted index: remove old ID, add new ID
+    _delete_segment_ext_index(workspace_id, previous_id)
+    _put_segment_ext_index(workspace_id, user_id, contact.id)
+
     logger.info(
         "Contact aliased from Segment",
         contact_id=contact.id,
@@ -495,6 +505,8 @@ def _find_by_external_id(
 ) -> Contact | None:
     """Find contact by external ID (e.g., Segment userId).
 
+    Uses inverted index items for O(1) lookup instead of scanning contacts.
+
     Args:
         workspace_id: Workspace ID.
         source: Source system (e.g., "segment").
@@ -503,24 +515,78 @@ def _find_by_external_id(
     Returns:
         Contact or None.
     """
-    # Query contacts where custom_fields.segment_user_id matches
-    # This requires a scan with filter - not ideal for large datasets
-    # In production, consider adding a GSI for external IDs
     contact_repo = ContactRepository()
 
-    # For now, do a limited scan with filter
-    # TODO: Add GSI for external ID lookups
+    # Try inverted index first (2 point reads instead of 1000-item scan)
+    try:
+        response = contact_repo.table.get_item(
+            Key={
+                "PK": f"WS#{workspace_id}#SEGMENT_EXT",
+                "SK": f"EXT#{external_id}",
+            }
+        )
+        item = response.get("Item")
+        if item:
+            contact_id = item.get("contact_id")
+            if contact_id:
+                return contact_repo.get_by_id(workspace_id, contact_id)
+    except Exception:
+        pass
+
+    # Fallback: scan contacts for pre-index items
     contacts, _ = contact_repo.query(
         pk=f"WS#{workspace_id}",
         sk_begins_with="CONTACT#",
-        limit=1000,  # Limit scan
+        limit=1000,
     )
 
     for contact in contacts:
         if contact.custom_fields.get(f"{source}_user_id") == external_id:
+            # Backfill the inverted index for this contact
+            _put_segment_ext_index(workspace_id, external_id, contact.id)
             return contact
 
     return None
+
+
+def _put_segment_ext_index(workspace_id: str, external_id: str, contact_id: str) -> None:
+    """Write an inverted index item for Segment external ID -> contact mapping.
+
+    Args:
+        workspace_id: Workspace ID.
+        external_id: Segment userId.
+        contact_id: Contact ID.
+    """
+    try:
+        contact_repo = ContactRepository()
+        contact_repo.table.put_item(
+            Item={
+                "PK": f"WS#{workspace_id}#SEGMENT_EXT",
+                "SK": f"EXT#{external_id}",
+                "contact_id": contact_id,
+            }
+        )
+    except Exception as e:
+        logger.warning("Failed to write segment ext index", error=str(e))
+
+
+def _delete_segment_ext_index(workspace_id: str, external_id: str) -> None:
+    """Delete an inverted index item for Segment external ID.
+
+    Args:
+        workspace_id: Workspace ID.
+        external_id: Segment userId.
+    """
+    try:
+        contact_repo = ContactRepository()
+        contact_repo.table.delete_item(
+            Key={
+                "PK": f"WS#{workspace_id}#SEGMENT_EXT",
+                "SK": f"EXT#{external_id}",
+            }
+        )
+    except Exception as e:
+        logger.warning("Failed to delete segment ext index", error=str(e))
 
 
 def _trigger_segment_workflows(

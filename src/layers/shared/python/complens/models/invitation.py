@@ -54,6 +54,13 @@ class Invitation(BaseModel):
             "GSI1SK": f"WS#{self.workspace_id}",
         }
 
+    def get_gsi4_keys(self) -> dict[str, str]:
+        """Get GSI4 keys for token lookup."""
+        return {
+            "GSI4PK": f"INVITE_TOKEN#{self.token}",
+            "GSI4SK": "META",
+        }
+
     @property
     def is_expired(self) -> bool:
         """Check if the invitation has expired."""

@@ -34,9 +34,23 @@ class ConversationRepository(BaseRepository[Conversation]):
             workspace_id = conversation_id_or_workspace_id
             return self.get(pk=f"WS#{workspace_id}", sk=f"CONV#{conversation_id}")
 
-        # Single-arg form: get_by_id(conversation_id) - need to scan
-        # This is used when we don't know the workspace (e.g., for access control)
+        # Single-arg form: get_by_id(conversation_id) - use GSI4 for efficient lookup
         conv_id = conversation_id_or_workspace_id
+
+        # Try GSI4 first (efficient)
+        try:
+            items, _ = self.query(
+                pk=f"CONV#{conv_id}",
+                sk_begins_with="META",
+                index_name="GSI4",
+                limit=1,
+            )
+            if items:
+                return items[0]
+        except Exception:
+            pass
+
+        # Fallback scan for pre-GSI4 items
         response = self.table.scan(
             FilterExpression="SK = :sk",
             ExpressionAttributeValues={":sk": f"CONV#{conv_id}"},
@@ -127,6 +141,12 @@ class ConversationRepository(BaseRepository[Conversation]):
         conversations = self.list_by_contact(contact_id, limit=1, scan_forward=False)
         return conversations[0] if conversations else None
 
+    def _get_all_gsi_keys(self, conversation: Conversation) -> dict[str, str]:
+        """Get all GSI keys for a conversation."""
+        keys = conversation.get_gsi1_keys()
+        keys.update(conversation.get_gsi4_keys())
+        return keys
+
     def create_conversation(self, conversation: Conversation) -> Conversation:
         """Create a new conversation.
 
@@ -136,7 +156,7 @@ class ConversationRepository(BaseRepository[Conversation]):
         Returns:
             The created conversation.
         """
-        return self.create(conversation, gsi_keys=conversation.get_gsi1_keys())
+        return self.create(conversation, gsi_keys=self._get_all_gsi_keys(conversation))
 
     def update_conversation(self, conversation: Conversation) -> Conversation:
         """Update an existing conversation.
@@ -147,7 +167,7 @@ class ConversationRepository(BaseRepository[Conversation]):
         Returns:
             The updated conversation.
         """
-        return self.update(conversation, gsi_keys=conversation.get_gsi1_keys())
+        return self.update(conversation, gsi_keys=self._get_all_gsi_keys(conversation))
 
     def update_last_message(
         self,

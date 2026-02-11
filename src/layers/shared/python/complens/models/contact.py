@@ -2,7 +2,7 @@
 
 from typing import ClassVar
 
-from pydantic import BaseModel as PydanticBaseModel, EmailStr, Field
+from pydantic import BaseModel as PydanticBaseModel, EmailStr, Field, field_validator
 
 from complens.models.base import BaseModel
 
@@ -24,6 +24,14 @@ class Contact(BaseModel):
 
     # Core contact fields
     email: str | None = Field(None, description="Email address")
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str | None) -> str | None:
+        """Normalize email to lowercase for consistent lookups."""
+        if v is not None:
+            return v.strip().lower()
+        return v
     phone: str | None = Field(None, description="Phone number (E.164 format)")
     first_name: str | None = Field(None, max_length=100, description="First name")
     last_name: str | None = Field(None, max_length=100, description="Last name")
@@ -60,6 +68,15 @@ class Contact(BaseModel):
             return {
                 "GSI1PK": f"WS#{self.workspace_id}#EMAIL",
                 "GSI1SK": self.email.lower(),
+            }
+        return None
+
+    def get_gsi4_keys(self) -> dict[str, str] | None:
+        """Get GSI4 keys for phone lookup (if phone exists)."""
+        if self.phone:
+            return {
+                "GSI4PK": f"WS#{self.workspace_id}#PHONE",
+                "GSI4SK": self.phone,
             }
         return None
 

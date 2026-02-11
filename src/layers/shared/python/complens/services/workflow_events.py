@@ -365,24 +365,8 @@ def _broadcast_to_workspace(
             items.extend(response.get("Items", []))
 
     except Exception as e:
-        # Fallback to scan if GSI doesn't exist yet (during deployment transition)
-        logger.warning("GSI query failed, falling back to scan", error=str(e))
-        try:
-            response = table.scan(
-                FilterExpression="contains(workspaceIds, :ws)",
-                ExpressionAttributeValues={":ws": workspace_id},
-            )
-            items = response.get("Items", [])
-
-            while "LastEvaluatedKey" in response:
-                response = table.scan(
-                    FilterExpression="contains(workspaceIds, :ws)",
-                    ExpressionAttributeValues={":ws": workspace_id},
-                    ExclusiveStartKey=response["LastEvaluatedKey"],
-                )
-                items.extend(response.get("Items", []))
-        except Exception:
-            return 0
+        logger.error("WorkspaceIdIndex GSI query failed", error=str(e), workspace_id=workspace_id)
+        return 0
 
     if not items:
         logger.debug("No connections for workspace", workspace_id=workspace_id)

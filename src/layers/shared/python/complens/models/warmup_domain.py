@@ -135,6 +135,19 @@ class WarmupDomain(BaseModel):
             "GSI1SK": f"{self.status}#{self.domain}",
         }
 
+    def get_gsi4_keys(self) -> dict[str, str] | None:
+        """Get GSI4 keys for global active warmup listing.
+
+        Only active domains get GSI4 keys. When status changes away from active,
+        a full put_item without GSI4 keys removes the item from the index.
+        """
+        if self.status == WarmupStatus.ACTIVE or self.status == "active":
+            return {
+                "GSI4PK": "WARMUP_ACTIVE",
+                "GSI4SK": self.domain,
+            }
+        return None
+
 
 class StartWarmupRequest(PydanticBaseModel):
     """Request model for starting a domain warm-up."""

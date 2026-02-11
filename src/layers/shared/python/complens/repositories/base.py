@@ -290,34 +290,16 @@ class BaseRepository(Generic[T]):
                 expr_values = {":pk": pk}
 
             # Use GSI key names if querying index
-            if index_name:
-                if index_name == "GSI1":
-                    key_condition = key_condition.replace("PK", "GSI1PK").replace("SK", "GSI1SK")
-                    expr_values = {
-                        k.replace(":pk", ":gsi1pk").replace(":sk_prefix", ":gsi1sk_prefix"): v
-                        for k, v in expr_values.items()
-                    }
-                    key_condition = key_condition.replace(":pk", ":gsi1pk").replace(
-                        ":sk_prefix", ":gsi1sk_prefix"
-                    )
-                elif index_name == "GSI2":
-                    key_condition = key_condition.replace("PK", "GSI2PK").replace("SK", "GSI2SK")
-                    expr_values = {
-                        k.replace(":pk", ":gsi2pk").replace(":sk_prefix", ":gsi2sk_prefix"): v
-                        for k, v in expr_values.items()
-                    }
-                    key_condition = key_condition.replace(":pk", ":gsi2pk").replace(
-                        ":sk_prefix", ":gsi2sk_prefix"
-                    )
-                elif index_name == "GSI3":
-                    key_condition = key_condition.replace("PK", "GSI3PK").replace("SK", "GSI3SK")
-                    expr_values = {
-                        k.replace(":pk", ":gsi3pk").replace(":sk_prefix", ":gsi3sk_prefix"): v
-                        for k, v in expr_values.items()
-                    }
-                    key_condition = key_condition.replace(":pk", ":gsi3pk").replace(
-                        ":sk_prefix", ":gsi3sk_prefix"
-                    )
+            if index_name and index_name.startswith("GSI"):
+                prefix = index_name.lower()  # e.g., "gsi1", "gsi4"
+                key_condition = key_condition.replace("PK", f"{index_name}PK").replace("SK", f"{index_name}SK")
+                expr_values = {
+                    k.replace(":pk", f":{prefix}pk").replace(":sk_prefix", f":{prefix}sk_prefix"): v
+                    for k, v in expr_values.items()
+                }
+                key_condition = key_condition.replace(":pk", f":{prefix}pk").replace(
+                    ":sk_prefix", f":{prefix}sk_prefix"
+                )
 
             # Merge with additional expression values
             if expression_values:

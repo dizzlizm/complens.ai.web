@@ -117,6 +117,14 @@ def list_workspaces(repo: WorkspaceRepository, auth) -> dict:
         workspaces = [workspace]
         logger.info("Default workspace created", user_id=auth.user_id, workspace_id=workspace.id)
 
+        # Seed demo data so the dashboard looks populated
+        try:
+            from complens.services.demo_data import seed_demo_data
+            seed_demo_data(workspace.id, repo.table)
+            logger.info("Demo data seeded", workspace_id=workspace.id)
+        except Exception:
+            logger.exception("Failed to seed demo data", workspace_id=workspace.id)
+
     return success({
         "items": [w.model_dump(mode="json") for w in workspaces],
     })

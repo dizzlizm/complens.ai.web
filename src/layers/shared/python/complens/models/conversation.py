@@ -80,6 +80,13 @@ class Conversation(BaseModel):
             "GSI1SK": f"CONV#{self.created_at.isoformat()}",
         }
 
+    def get_gsi4_keys(self) -> dict[str, str]:
+        """Get GSI4 keys for direct conversation ID lookup."""
+        return {
+            "GSI4PK": f"CONV#{self.id}",
+            "GSI4SK": "META",
+        }
+
 
 class CreateConversationRequest(PydanticBaseModel):
     """Request model for creating a conversation."""

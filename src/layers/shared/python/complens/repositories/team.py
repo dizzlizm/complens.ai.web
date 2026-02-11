@@ -75,9 +75,15 @@ class InvitationRepository(BaseRepository[Invitation]):
         )
         return items
 
+    def _get_all_gsi_keys(self, invitation: Invitation) -> dict[str, str]:
+        """Get all GSI keys for an invitation."""
+        keys = invitation.get_gsi1_keys()
+        keys.update(invitation.get_gsi4_keys())
+        return keys
+
     def create_invitation(self, invitation: Invitation) -> Invitation:
         """Create a new invitation."""
-        return self.put(invitation, gsi_keys=invitation.get_gsi1_keys())
+        return self.put(invitation, gsi_keys=self._get_all_gsi_keys(invitation))
 
     def revoke_invitation(self, workspace_id: str, email: str) -> bool:
         """Revoke an invitation."""
@@ -86,8 +92,7 @@ class InvitationRepository(BaseRepository[Invitation]):
     def find_by_token(self, token: str) -> Invitation | None:
         """Find an invitation by its token.
 
-        This scans all invitations - acceptable since tokens are unique
-        and the number of pending invitations is typically small.
+        Uses GSI4 for efficient lookup, with scan fallback for pre-GSI4 items.
 
         Args:
             token: The invitation token.
@@ -95,16 +100,27 @@ class InvitationRepository(BaseRepository[Invitation]):
         Returns:
             Invitation if found, None otherwise.
         """
+        # Try GSI4 first (efficient)
+        try:
+            items, _ = self.query(
+                pk=f"INVITE_TOKEN#{token}",
+                sk_begins_with="META",
+                index_name="GSI4",
+                limit=1,
+            )
+            if items:
+                return items[0]
+        except Exception:
+            pass
+
+        # Fallback scan for pre-GSI4 items
         from boto3.dynamodb.conditions import Attr
 
-        # Don't use Limit with FilterExpression - DynamoDB applies limit before filtering
-        # which would miss matching items. Scan without limit and paginate if needed.
         filter_expr = Attr("token").eq(token) & Attr("SK").begins_with("INVITE#")
 
         response = self.table.scan(FilterExpression=filter_expr)
         items = response.get("Items", [])
 
-        # Paginate if necessary (unlikely for small invite tables)
         while not items and "LastEvaluatedKey" in response:
             response = self.table.scan(
                 FilterExpression=filter_expr,

@@ -71,6 +71,13 @@ class Provider(BaseModel):
         """Get sort key."""
         return self._sk_prefix
 
+    def get_gsi4_keys(self) -> dict[str, str]:
+        """Get GSI4 keys for global provider listing."""
+        return {
+            "GSI4PK": "PROVIDERS",
+            "GSI4SK": f"{self.category}#{self.provider_id}",
+        }
+
 
 class WorkspaceProvider(BaseModel):
     """Workspace-specific provider configuration.

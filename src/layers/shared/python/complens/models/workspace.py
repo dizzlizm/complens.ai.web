@@ -57,6 +57,13 @@ class Workspace(BaseModel):
         """Get GSI1 keys for workspace lookup by ID."""
         return {"GSI1PK": f"WS#{self.id}", "GSI1SK": "META"}
 
+    def get_gsi4_keys(self) -> dict[str, str]:
+        """Get GSI4 keys for global workspace listing."""
+        return {
+            "GSI4PK": "ALL_WORKSPACES",
+            "GSI4SK": f"WS#{self.id}",
+        }
+
     def get_gsi2_keys(self) -> dict[str, str] | None:
         """Get GSI2 keys for workspace lookup by phone number.
 

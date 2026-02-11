@@ -107,42 +107,38 @@ def get_analytics(workspace_id: str, event: dict) -> dict:
     total_workflows = len(workflows)
     active_workflows = sum(1 for w in workflows if _get_status(w) == "active")
 
-    # Workflow runs
+    # Workflow stats from pre-computed counters (no per-workflow queries needed)
     total_runs = 0
     successful_runs = 0
     failed_runs = 0
-    workflow_runs_series = []
     workflow_performance = []
 
     for wf in workflows:
-        try:
-            runs = run_repo.list_by_workflow(wf.id, limit=500)
-            wf_total = len(runs)
-            wf_success = sum(1 for r in runs if _get_status(r) == "completed")
-            wf_failed = sum(1 for r in runs if _get_status(r) == "failed")
+        wf_total = getattr(wf, "total_runs", 0) or 0
+        wf_success = getattr(wf, "successful_runs", 0) or 0
+        wf_failed = getattr(wf, "failed_runs", 0) or 0
 
-            total_runs += wf_total
-            successful_runs += wf_success
-            failed_runs += wf_failed
+        total_runs += wf_total
+        successful_runs += wf_success
+        failed_runs += wf_failed
 
-            if wf_total > 0:
-                workflow_performance.append({
-                    "name": wf.name,
-                    "total": wf_total,
-                    "success": wf_success,
-                    "failed": wf_failed,
-                    "success_rate": round(wf_success / wf_total * 100) if wf_total > 0 else 0,
-                })
-        except Exception as e:
-            logger.error("Failed to query runs for workflow", workflow_id=wf.id, error=str(e))
+        if wf_total > 0:
+            workflow_performance.append({
+                "name": wf.name,
+                "total": wf_total,
+                "success": wf_success,
+                "failed": wf_failed,
+                "success_rate": round(wf_success / wf_total * 100) if wf_total > 0 else 0,
+            })
 
     # Sort performance by total runs descending
     workflow_performance.sort(key=lambda x: x["total"], reverse=True)
     top_workflows = workflow_performance[:5]
 
-    # Build workflow runs time series
+    # Build workflow runs time series from top 5 workflows by total_runs
     all_runs = []
-    for wf in workflows[:10]:  # Limit to top 10 workflows for performance
+    sorted_wfs = sorted(workflows, key=lambda w: getattr(w, "total_runs", 0) or 0, reverse=True)
+    for wf in sorted_wfs[:5]:
         try:
             runs = run_repo.list_by_workflow(wf.id, limit=200)
             all_runs.extend(runs)
@@ -271,25 +267,28 @@ def _get_form_analytics(workspace_id: str) -> dict:
         pages = []
 
     page_name_map = {p.id: p.name for p in pages}
+
+    # Single query for all forms in workspace (1 query instead of N per-page queries)
+    try:
+        forms, _ = form_repo.list_by_workspace(workspace_id, limit=500)
+    except Exception:
+        forms = []
+
     total_submissions = 0
     top_forms = []
 
-    for page in pages:
-        try:
-            forms, _ = form_repo.list_by_page(page.id, limit=50)
-            for form in forms:
-                submissions = getattr(form, "submission_count", 0) or 0
-                total_submissions += submissions
+    for form in forms:
+        submissions = getattr(form, "submission_count", 0) or 0
+        total_submissions += submissions
 
-                if submissions > 0:
-                    top_forms.append({
-                        "id": form.id,
-                        "name": form.name,
-                        "page_name": page_name_map.get(page.id, "Unknown"),
-                        "submissions": submissions,
-                    })
-        except Exception:
-            pass
+        if submissions > 0:
+            page_id = getattr(form, "page_id", None)
+            top_forms.append({
+                "id": form.id,
+                "name": form.name,
+                "page_name": page_name_map.get(page_id, "Unknown") if page_id else "Unknown",
+                "submissions": submissions,
+            })
 
     # Sort by submissions descending
     top_forms.sort(key=lambda x: x["submissions"], reverse=True)

@@ -78,6 +78,7 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         gsi2_keys = workspace.get_gsi2_keys()
         if gsi2_keys:
             keys.update(gsi2_keys)
+        keys.update(workspace.get_gsi4_keys())
         return keys
 
     def create_workspace(self, workspace: Workspace) -> Workspace:
@@ -119,6 +120,7 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         """List all workspaces across all agencies.
 
         Used by super admin panel for platform-wide workspace view.
+        Uses GSI4 (ALL_WORKSPACES partition) with scan fallback for pre-GSI4 items.
 
         Args:
             limit: Maximum workspaces to return.
@@ -127,12 +129,22 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         Returns:
             Tuple of (workspaces, last_evaluated_key).
         """
+        # Try GSI4 first (efficient)
+        try:
+            return self.query(
+                pk="ALL_WORKSPACES",
+                sk_begins_with="WS#",
+                index_name="GSI4",
+                limit=limit,
+                last_key=last_key,
+            )
+        except Exception:
+            pass
+
+        # Fallback to scan for pre-GSI4 data
         from botocore.exceptions import ClientError
 
         try:
-            # Use GSI1 to query all workspaces - they all have GSI1PK starting with "WS#"
-            # Actually, we need to scan with a filter since workspaces use GSI1PK=WS#{id}, GSI1SK=META
-            # Scan with filter for SK begins_with "WS#"
             kwargs = {
                 "FilterExpression": "begins_with(SK, :sk_prefix)",
                 "ExpressionAttributeValues": {":sk_prefix": "WS#"},

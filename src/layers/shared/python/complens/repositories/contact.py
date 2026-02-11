@@ -42,10 +42,9 @@ class ContactRepository(BaseRepository[Contact]):
         return items[0] if items else None
 
     def get_by_phone(self, workspace_id: str, phone: str) -> Contact | None:
-        """Get contact by phone number.
+        """Get contact by phone number using GSI4.
 
-        This requires a scan with filter - consider adding a GSI for phone
-        if this is a frequent operation.
+        Falls back to partition filter for pre-GSI4 items.
 
         Args:
             workspace_id: The workspace ID.
@@ -54,6 +53,20 @@ class ContactRepository(BaseRepository[Contact]):
         Returns:
             Contact or None if not found.
         """
+        # Try GSI4 first (efficient)
+        try:
+            items, _ = self.query(
+                pk=f"WS#{workspace_id}#PHONE",
+                sk_begins_with=phone,
+                index_name="GSI4",
+                limit=1,
+            )
+            if items:
+                return items[0]
+        except Exception:
+            pass
+
+        # Fallback for pre-GSI4 items
         items, _ = self.query(
             pk=f"WS#{workspace_id}",
             sk_begins_with="CONTACT#",
@@ -111,6 +124,14 @@ class ContactRepository(BaseRepository[Contact]):
         )
         return items
 
+    def _get_all_gsi_keys(self, contact: Contact) -> dict[str, str] | None:
+        """Get all GSI keys for a contact."""
+        gsi_keys = contact.get_gsi1_keys() or {}
+        gsi4_keys = contact.get_gsi4_keys()
+        if gsi4_keys:
+            gsi_keys.update(gsi4_keys)
+        return gsi_keys or None
+
     def create_contact(self, contact: Contact) -> Contact:
         """Create a new contact.
 
@@ -120,8 +141,7 @@ class ContactRepository(BaseRepository[Contact]):
         Returns:
             The created contact.
         """
-        gsi_keys = contact.get_gsi1_keys()
-        return self.create(contact, gsi_keys=gsi_keys)
+        return self.create(contact, gsi_keys=self._get_all_gsi_keys(contact))
 
     def update_contact(self, contact: Contact) -> Contact:
         """Update an existing contact.
@@ -132,8 +152,7 @@ class ContactRepository(BaseRepository[Contact]):
         Returns:
             The updated contact.
         """
-        gsi_keys = contact.get_gsi1_keys()
-        return self.update(contact, gsi_keys=gsi_keys)
+        return self.update(contact, gsi_keys=self._get_all_gsi_keys(contact))
 
     def delete_contact(self, workspace_id: str, contact_id: str) -> bool:
         """Delete a contact.
