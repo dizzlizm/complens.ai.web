@@ -7,6 +7,7 @@ import {
   resetPassword,
   confirmResetPassword,
   updatePassword,
+  updateUserAttributes,
   getCurrentUser,
   fetchUserAttributes,
   type SignInInput,
@@ -17,6 +18,7 @@ interface User {
   id: string;
   email: string;
   name?: string;
+  phone?: string;
   agencyId?: string;
   workspaceIds?: string[];
   isSuperAdmin?: boolean;
@@ -33,6 +35,7 @@ interface AuthContextType {
   forgotPassword: (email: string) => Promise<void>;
   confirmForgotPassword: (email: string, code: string, newPassword: string) => Promise<void>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<void>;
+  updateProfile: (attributes: { name?: string; phone_number?: string }) => Promise<void>;
   globalSignOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -52,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         id: currentUser.userId,
         email: attributes.email || '',
         name: attributes.name,
+        phone: attributes.phone_number,
         agencyId: attributes['custom:agency_id'],
         workspaceIds: attributes['custom:workspace_ids']?.split(','),
         isSuperAdmin: attributes['custom:is_super_admin'] === 'true',
@@ -151,6 +155,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await updatePassword({ oldPassword, newPassword });
   };
 
+  const updateProfile = async (attributes: { name?: string; phone_number?: string }) => {
+    const userAttributes: Record<string, string> = {};
+    if (attributes.name !== undefined) userAttributes.name = attributes.name;
+    if (attributes.phone_number !== undefined) userAttributes.phone_number = attributes.phone_number;
+    await updateUserAttributes({ userAttributes });
+    await refreshUser();
+  };
+
   const globalSignOut = async () => {
     await signOut({ global: true });
     setUser(null);
@@ -169,6 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         forgotPassword,
         confirmForgotPassword,
         changePassword,
+        updateProfile,
         globalSignOut,
         refreshUser,
       }}
