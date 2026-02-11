@@ -390,15 +390,6 @@ function NotificationSettings() {
         </div>
       </div>
 
-      <div className="card bg-gray-50 border-dashed">
-        <div className="flex items-center gap-3 text-gray-500">
-          <Bell className="w-5 h-5" />
-          <div>
-            <p className="font-medium text-gray-700">Push & SMS Notifications</p>
-            <p className="text-sm">Browser push and SMS alerts coming soon</p>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -527,7 +518,7 @@ function IntegrationSettings() {
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Integrations</h2>
             <p className="text-sm text-gray-500">
-              {availableCount} connected services available, more coming soon
+              {availableCount} connected services available
             </p>
           </div>
           <div className="relative">
