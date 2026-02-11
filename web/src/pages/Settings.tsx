@@ -16,6 +16,38 @@ import TeamManagement from '../components/settings/TeamManagement';
 import PricingTable from '../components/settings/PricingTable';
 import { TimezoneSelect } from '../components/ui';
 
+// Email provider detection for seed list coverage indicator
+const EMAIL_PROVIDERS: { name: string; domains: string[]; color: string }[] = [
+  { name: 'Gmail', domains: ['gmail.com', 'googlemail.com'], color: 'bg-red-100 text-red-700' },
+  { name: 'Outlook', domains: ['outlook.com', 'hotmail.com', 'live.com', 'msn.com'], color: 'bg-blue-100 text-blue-700' },
+  { name: 'Yahoo', domains: ['yahoo.com', 'ymail.com', 'yahoo.co.uk'], color: 'bg-violet-100 text-violet-700' },
+  { name: 'iCloud', domains: ['icloud.com', 'me.com', 'mac.com'], color: 'bg-gray-100 text-gray-700' },
+];
+
+function getProviderCoverage(emails: string[]): { name: string; color: string; count: number }[] {
+  const coverage: { name: string; color: string; count: number }[] = [];
+  for (const provider of EMAIL_PROVIDERS) {
+    const count = emails.filter(e => provider.domains.some(d => e.endsWith('@' + d))).length;
+    if (count > 0) coverage.push({ name: provider.name, color: provider.color, count });
+  }
+  const knownCount = coverage.reduce((sum, p) => sum + p.count, 0);
+  const otherCount = emails.length - knownCount;
+  if (otherCount > 0) coverage.push({ name: 'Other', color: 'bg-gray-100 text-gray-600', count: otherCount });
+  return coverage;
+}
+
+function parseBulkEmails(input: string, existing: string[]): string[] {
+  const raw = input.split(/[\s,;\n]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
+  const valid: string[] = [];
+  const existingSet = new Set(existing);
+  for (const email of raw) {
+    if (email.includes('@') && email.includes('.') && !existingSet.has(email) && !valid.includes(email)) {
+      valid.push(email);
+    }
+  }
+  return valid;
+}
+
 const settingsSections = [
   {
     id: 'workspace',
@@ -1723,21 +1755,40 @@ function EmailWarmupSection({ workspaceId, prefillDomain, onPrefillConsumed }: {
 
           {/* Optional seed list */}
           <div className="mt-3 pt-3 border-t border-gray-200">
-            <label className="block text-xs font-medium text-gray-600 mb-1">Seed List (optional)</label>
-            <p className="text-xs text-gray-500 mb-2">Add emails to receive AI-generated warmup emails</p>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-medium text-gray-600">Seed List (optional)</label>
+              {initSeedList.length > 0 && (
+                <span className="text-xs text-gray-400">{initSeedList.length}/50</span>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mb-2">
+              Add email addresses you control (team inboxes, aliases) to receive warmup emails.
+              Paste multiple emails separated by commas, spaces, or newlines.
+            </p>
             <div className="flex gap-2 mb-2">
               <input
-                type="email"
+                type="text"
                 className="input flex-1 text-sm"
-                placeholder="team@example.com"
+                placeholder="team@gmail.com, founder@outlook.com, hello@yahoo.com"
                 value={initSeedInput}
                 onChange={(e) => setInitSeedInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
-                    const email = initSeedInput.trim().toLowerCase();
-                    if (email && email.includes('@') && !initSeedList.includes(email)) {
-                      setInitSeedList([...initSeedList, email]);
+                    const newEmails = parseBulkEmails(initSeedInput, initSeedList);
+                    if (newEmails.length > 0) {
+                      setInitSeedList([...initSeedList, ...newEmails].slice(0, 50));
+                      setInitSeedInput('');
+                    }
+                  }
+                }}
+                onPaste={(e) => {
+                  const pasted = e.clipboardData.getData('text');
+                  if (pasted.includes(',') || pasted.includes('\n') || pasted.includes(' ')) {
+                    e.preventDefault();
+                    const newEmails = parseBulkEmails(pasted, initSeedList);
+                    if (newEmails.length > 0) {
+                      setInitSeedList([...initSeedList, ...newEmails].slice(0, 50));
                       setInitSeedInput('');
                     }
                   }
@@ -1745,40 +1796,56 @@ function EmailWarmupSection({ workspaceId, prefillDomain, onPrefillConsumed }: {
               />
               <button
                 onClick={() => {
-                  const email = initSeedInput.trim().toLowerCase();
-                  if (email && email.includes('@') && !initSeedList.includes(email)) {
-                    setInitSeedList([...initSeedList, email]);
+                  const newEmails = parseBulkEmails(initSeedInput, initSeedList);
+                  if (newEmails.length > 0) {
+                    setInitSeedList([...initSeedList, ...newEmails].slice(0, 50));
                     setInitSeedInput('');
                   }
                 }}
-                disabled={!initSeedInput.trim()}
+                disabled={!initSeedInput.trim() || initSeedList.length >= 50}
                 className="btn btn-secondary btn-sm"
               >
                 Add
               </button>
             </div>
             {initSeedList.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-2">
-                {initSeedList.map((email) => (
-                  <span key={email} className="inline-flex items-center gap-1 text-xs bg-white border border-gray-200 rounded-full px-2.5 py-1">
-                    {email}
-                    <button onClick={() => setInitSeedList(initSeedList.filter(e => e !== email))} className="text-gray-400 hover:text-red-500">
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-            {initSeedList.length > 0 && (
-              <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={initAutoWarmup}
-                  onChange={(e) => setInitAutoWarmup(e.target.checked)}
-                  className="rounded border-gray-300"
-                />
-                Enable auto-warmup (send AI emails hourly)
-              </label>
+              <>
+                {/* Provider coverage */}
+                <div className="flex items-center gap-1.5 mb-2">
+                  {getProviderCoverage(initSeedList).map((p) => (
+                    <span key={p.name} className={`text-xs px-2 py-0.5 rounded-full font-medium ${p.color}`}>
+                      {p.name} ({p.count})
+                    </span>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {initSeedList.map((email) => (
+                    <span key={email} className="inline-flex items-center gap-1 text-xs bg-white border border-gray-200 rounded-full px-2.5 py-1">
+                      {email}
+                      <button onClick={() => setInitSeedList(initSeedList.filter(e => e !== email))} className="text-gray-400 hover:text-red-500">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={initAutoWarmup}
+                      onChange={(e) => setInitAutoWarmup(e.target.checked)}
+                      className="rounded border-gray-300"
+                    />
+                    Enable auto-warmup (send AI emails hourly)
+                  </label>
+                  <button
+                    onClick={() => setInitSeedList([])}
+                    className="text-xs text-gray-400 hover:text-red-500"
+                  >
+                    Clear all
+                  </button>
+                </div>
+              </>
             )}
           </div>
 
@@ -1913,14 +1980,6 @@ function WarmupDomainCard({
     activePanel === 'log' ? workspaceId : undefined,
     activePanel === 'log' ? warmup.domain : undefined,
   );
-
-  const handleAddSeedEmail = () => {
-    const email = seedInput.trim().toLowerCase();
-    if (email && email.includes('@') && !editSeedList.includes(email)) {
-      setEditSeedList([...editSeedList, email]);
-      setSeedInput('');
-    }
-  };
 
   const handleRemoveSeedEmail = (email: string) => {
     setEditSeedList(editSeedList.filter((e) => e !== email));
@@ -2284,23 +2343,52 @@ function WarmupDomainCard({
           {/* Seed List Panel */}
           {activePanel === 'seedlist' && (
             <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
-              <h4 className="text-sm font-medium text-gray-700 mb-2">Seed List</h4>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-medium text-gray-700">Seed List</h4>
+                <span className="text-xs text-gray-400">{editSeedList.length}/50 emails</span>
+              </div>
               <p className="text-xs text-gray-500 mb-3">
-                Seed emails are addresses you control (team inboxes, aliases) that receive your warmup emails.
-                Open and reply to these emails to signal positive engagement to email providers.
+                Add email addresses you control (team inboxes, aliases) that receive your warmup emails.
+                Open and reply to these to signal positive engagement. Use addresses across different providers (Gmail, Outlook, Yahoo) for better coverage.
               </p>
 
-              <div className="flex gap-2 mb-3">
+              <div className="flex gap-2 mb-2">
                 <input
-                  type="email"
+                  type="text"
                   className="input flex-1 text-sm"
-                  placeholder="team@example.com"
+                  placeholder="Paste or type emails — comma, space, or newline separated"
                   value={seedInput}
                   onChange={(e) => setSeedInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddSeedEmail()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const newEmails = parseBulkEmails(seedInput, editSeedList);
+                      if (newEmails.length > 0) {
+                        setEditSeedList([...editSeedList, ...newEmails].slice(0, 50));
+                        setSeedInput('');
+                      }
+                    }
+                  }}
+                  onPaste={(e) => {
+                    const pasted = e.clipboardData.getData('text');
+                    if (pasted.includes(',') || pasted.includes('\n') || pasted.includes(' ')) {
+                      e.preventDefault();
+                      const newEmails = parseBulkEmails(pasted, editSeedList);
+                      if (newEmails.length > 0) {
+                        setEditSeedList([...editSeedList, ...newEmails].slice(0, 50));
+                        setSeedInput('');
+                      }
+                    }
+                  }}
                 />
                 <button
-                  onClick={handleAddSeedEmail}
+                  onClick={() => {
+                    const newEmails = parseBulkEmails(seedInput, editSeedList);
+                    if (newEmails.length > 0) {
+                      setEditSeedList([...editSeedList, ...newEmails].slice(0, 50));
+                      setSeedInput('');
+                    }
+                  }}
                   disabled={!seedInput.trim() || editSeedList.length >= 50}
                   className="btn btn-secondary btn-sm"
                 >
@@ -2309,16 +2397,50 @@ function WarmupDomainCard({
               </div>
 
               {editSeedList.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  {editSeedList.map((email) => (
-                    <span key={email} className="inline-flex items-center gap-1 text-xs bg-white border border-gray-200 rounded-full px-2.5 py-1">
-                      {email}
-                      <button onClick={() => handleRemoveSeedEmail(email)} className="text-gray-400 hover:text-red-500">
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
+                <>
+                  {/* Provider coverage */}
+                  <div className="flex items-center gap-1.5 mb-2">
+                    {getProviderCoverage(editSeedList).map((p) => (
+                      <span key={p.name} className={`text-xs px-2 py-0.5 rounded-full font-medium ${p.color}`}>
+                        {p.name} ({p.count})
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {editSeedList.map((email) => (
+                      <span key={email} className="inline-flex items-center gap-1 text-xs bg-white border border-gray-200 rounded-full px-2.5 py-1">
+                        {email}
+                        <button onClick={() => handleRemoveSeedEmail(email)} className="text-gray-400 hover:text-red-500">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex justify-end mb-2">
+                    <button
+                      onClick={() => setEditSeedList([])}
+                      className="text-xs text-gray-400 hover:text-red-500"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+
+                  {/* Missing provider hints */}
+                  {(() => {
+                    const covered = getProviderCoverage(editSeedList).map(p => p.name);
+                    const missing = EMAIL_PROVIDERS.filter(p => !covered.includes(p.name));
+                    if (missing.length === 0 || editSeedList.length === 0) return null;
+                    return (
+                      <p className="text-xs text-amber-600 mb-2">
+                        Tip: Add addresses from {missing.map(m => m.name).join(', ')} for better provider coverage
+                      </p>
+                    );
+                  })()}
+                </>
+              )}
+
+              {editSeedList.length === 0 && (
+                <p className="text-xs text-gray-400 mb-3 italic">No seed emails yet. Add your team inboxes and aliases above.</p>
               )}
 
               <div className="flex items-center justify-between py-2 border-t border-gray-200">
