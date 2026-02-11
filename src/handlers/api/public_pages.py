@@ -131,6 +131,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return submit_form(form_id, event)
         elif "/public/forms/" in path and http_method == "GET":
             return get_public_form(form_id, workspace_id)
+        elif path == "/public/plans" and http_method == "GET":
+            return get_public_plans()
         else:
             return error("Not found", 404)
 
@@ -522,6 +524,33 @@ def get_public_form(form_id: str, workspace_id: str | None) -> dict:
         form_data.pop(field, None)
 
     return success(form_data)
+
+
+def get_public_plans() -> dict:
+    """Get plan configs for public pricing display (no auth required)."""
+    from complens.repositories.plan_config import PlanConfigRepository
+    from complens.services.billing_service import DEFAULT_PLAN_LIMITS
+
+    repo = PlanConfigRepository()
+    plans = repo.list_plans()
+
+    if not plans:
+        plans = repo.seed_defaults(DEFAULT_PLAN_LIMITS)
+
+    return success({
+        "plans": [
+            {
+                "plan_key": p.plan_key,
+                "display_name": p.display_name,
+                "price_monthly": p.price_monthly,
+                "description": p.description,
+                "feature_list": p.feature_list,
+                "highlighted": p.highlighted,
+                "sort_order": p.sort_order,
+            }
+            for p in plans
+        ],
+    })
 
 
 def _get_origin(event: dict) -> str | None:

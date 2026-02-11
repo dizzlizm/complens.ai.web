@@ -20,7 +20,7 @@ class DomainHealthService:
     """
 
     def check_dns(self, domain: str) -> dict[str, Any]:
-        """Run DNS checks for a domain (SPF, DMARC, MX, blacklists).
+        """Run DNS checks for a domain (SPF, DMARC, MX, blacklists, landing page CNAME).
 
         Each sub-check is wrapped in try/except so partial results are
         returned if one check fails.
@@ -29,7 +29,7 @@ class DomainHealthService:
             domain: The email sending domain to check.
 
         Returns:
-            Dict with spf, dmarc, mx, blacklist results, and errors list.
+            Dict with spf, dmarc, mx, blacklist, landing page results, and errors list.
         """
         result: dict[str, Any] = {
             "spf_valid": False,
@@ -41,6 +41,8 @@ class DomainHealthService:
             "mx_hosts": [],
             "blacklisted": False,
             "blacklist_listings": [],
+            "landing_page_cname_valid": False,
+            "landing_page_cname_target": None,
             "errors": [],
         }
 
@@ -64,6 +66,13 @@ class DomainHealthService:
         result["blacklist_listings"] = bl.get("listings", [])
         if bl.get("error"):
             result["errors"].append(bl["error"])
+
+        # Landing page CNAME check
+        lp = self._check_landing_page_cname(domain)
+        result["landing_page_cname_valid"] = lp.get("valid", False)
+        result["landing_page_cname_target"] = lp.get("target")
+        if lp.get("error"):
+            result["errors"].append(lp["error"])
 
         return result
 
@@ -126,6 +135,45 @@ class DomainHealthService:
         except Exception as e:
             logger.warning("checkdmarc failed", domain=domain, error=str(e))
             result["error"] = f"DNS check failed: {e}"
+
+        return result
+
+    def _check_landing_page_cname(self, domain: str) -> dict[str, Any]:
+        """Check if domain has a CNAME pointing to the landing pages host.
+
+        Args:
+            domain: Domain to check.
+
+        Returns:
+            Dict with valid bool, target string, and optional error.
+        """
+        import os
+
+        result: dict[str, Any] = {
+            "valid": False,
+            "target": None,
+        }
+
+        try:
+            import dns.resolver
+
+            answers = dns.resolver.resolve(domain, "CNAME")
+            for rdata in answers:
+                target = str(rdata.target).rstrip(".")
+                result["target"] = target
+
+                stage = os.environ.get("STAGE", "dev")
+                expected_hosts = [
+                    f"pages.{stage}.complens.ai",
+                    "pages.complens.ai",
+                ]
+                if target in expected_hosts or target.endswith(".cloudfront.net"):
+                    result["valid"] = True
+                    break
+
+        except Exception as e:
+            # CNAME not found is normal (domain may use A records)
+            logger.debug("Landing page CNAME check", domain=domain, result=str(e))
 
         return result
 

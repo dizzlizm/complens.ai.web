@@ -11,6 +11,7 @@ import {
   X,
   ArrowLeft,
   Shield,
+  Settings2,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -18,6 +19,7 @@ const navigation = [
   { name: 'Workspaces', href: '/admin/workspaces', icon: Building2 },
   { name: 'Users', href: '/admin/users', icon: Users },
   { name: 'Billing', href: '/admin/billing', icon: CreditCard },
+  { name: 'Plans', href: '/admin/plans', icon: Settings2 },
   { name: 'Costs', href: '/admin/costs', icon: DollarSign },
   { name: 'System', href: '/admin/system', icon: Activity },
 ];

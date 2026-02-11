@@ -4,4 +4,5 @@ export { default as AdminUsers } from './AdminUsers';
 export { default as AdminUserDetail } from './AdminUserDetail';
 export { default as AdminBilling } from './AdminBilling';
 export { default as AdminCosts } from './AdminCosts';
+export { default as AdminPlans } from './AdminPlans';
 export { default as AdminSystem } from './AdminSystem';

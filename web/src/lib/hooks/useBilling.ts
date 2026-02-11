@@ -49,3 +49,25 @@ export function useCreatePortal(workspaceId: string) {
     },
   });
 }
+
+// Public plan config types
+export interface PublicPlan {
+  plan_key: string;
+  display_name: string;
+  price_monthly: number;
+  description: string;
+  feature_list: string[];
+  highlighted: boolean;
+  sort_order: number;
+}
+
+export function usePlans() {
+  return useQuery({
+    queryKey: ['plans'],
+    queryFn: async () => {
+      const { data } = await api.get<{ plans: PublicPlan[] }>('/public/plans');
+      return data.plans;
+    },
+    staleTime: 5 * 60 * 1000, // 5 min cache
+  });
+}

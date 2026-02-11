@@ -10,6 +10,7 @@ from complens.repositories.site import SiteRepository
 from complens.repositories.warmup_domain import WarmupDomainRepository
 from complens.repositories.workflow import WorkflowRepository
 from complens.repositories.workspace import WorkspaceRepository
+from complens.repositories.plan_config import PlanConfigRepository
 
 __all__ = [
     "BaseRepository",
@@ -19,6 +20,7 @@ __all__ = [
     "FormRepository",
     "FormSubmissionRepository",
     "PageRepository",
+    "PlanConfigRepository",
     "SiteRepository",
     "WarmupDomainRepository",
     "WorkflowRepository",

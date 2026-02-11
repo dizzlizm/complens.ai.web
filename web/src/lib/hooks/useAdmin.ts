@@ -362,3 +362,48 @@ export function usePlatformStats() {
     refetchInterval: 5 * 60 * 1000,
   });
 }
+
+// Plan config types
+export interface AdminPlanConfig {
+  id: string;
+  plan_key: string;
+  display_name: string;
+  price_monthly: number;
+  stripe_price_id: string | null;
+  description: string;
+  limits: Record<string, number>;
+  features: Record<string, boolean>;
+  feature_list: string[];
+  highlighted: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export function useAdminPlans() {
+  return useQuery({
+    queryKey: ['admin', 'plans'],
+    queryFn: async () => {
+      const { data } = await api.get<{ plans: AdminPlanConfig[] }>('/admin/plans');
+      return data.plans;
+    },
+  });
+}
+
+export function useUpdatePlan() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ planKey, ...updates }: { planKey: string } & Partial<AdminPlanConfig>) => {
+      const { data } = await api.put<AdminPlanConfig>(
+        `/admin/plans/${planKey}`,
+        updates
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'plans'] });
+      queryClient.invalidateQueries({ queryKey: ['plans'] }); // invalidate public plans cache too
+    },
+  });
+}

@@ -9,6 +9,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from complens.models.site import CreateSiteRequest, Site, UpdateSiteRequest
 from complens.repositories.site import SiteRepository
+from complens.services.feature_gate import FeatureGateError, count_resources, enforce_limit, get_workspace_plan
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
@@ -52,6 +53,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         else:
             return error("Method not allowed", 405)
 
+    except FeatureGateError as e:
+        return error(str(e), 403, error_code="FEATURE_GATE")
     except ValidationError as e:
         return validation_error(e.errors)
     except ForbiddenError as e:
@@ -123,6 +126,11 @@ def create_site(
         ])
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
+
+    # Enforce sites limit
+    plan = get_workspace_plan(workspace_id)
+    site_count = count_resources(repo.table, workspace_id, "SITE#")
+    enforce_limit(plan, "sites", site_count)
 
     # Check for duplicate domain in this workspace
     existing = repo.get_by_domain(workspace_id, request.domain_name)

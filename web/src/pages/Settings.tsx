@@ -1059,9 +1059,10 @@ function SendingDomainsCard({ workspaceId }: { workspaceId: string | undefined }
 
   const purposeLabels: Record<string, { title: string; required: boolean }> = {
     domain_verification: { title: 'Domain Verification', required: true },
-    dkim: { title: 'DKIM', required: true },
-    spf: { title: 'SPF', required: false },
-    dmarc: { title: 'DMARC', required: false },
+    dkim: { title: 'DKIM (Email Authentication)', required: true },
+    spf: { title: 'SPF (Sender Policy)', required: false },
+    dmarc: { title: 'DMARC (Email Policy)', required: false },
+    landing_page: { title: 'Landing Pages (CNAME)', required: false },
   };
 
   // Renders DNS records for a given domain setup result (used by both wizard and saved domain view)
@@ -1080,12 +1081,13 @@ function SendingDomainsCard({ workspaceId }: { workspaceId: string | undefined }
       // SPF/DMARC status is only available on the domain object (not authData)
       if (purpose === 'spf') return domain.spf_valid ? 'verified' : 'pending';
       if (purpose === 'dmarc') return domain.dmarc_valid ? 'verified' : 'pending';
+      if (purpose === 'landing_page') return 'pending'; // CNAME status checked server-side
       return 'pending';
     };
 
     return (
       <div className="space-y-4">
-        {(['domain_verification', 'dkim', 'spf', 'dmarc'] as const).map((purpose) => {
+        {(['domain_verification', 'dkim', 'spf', 'dmarc', 'landing_page'] as const).map((purpose) => {
           const purposeRecords = groups[purpose] || [];
           if (purposeRecords.length === 0) return null;
           const info = purposeLabels[purpose];
@@ -1172,8 +1174,8 @@ function SendingDomainsCard({ workspaceId }: { workspaceId: string | undefined }
     <div className="card">
       <div className="flex items-center justify-between mb-2">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Sending Domains</h2>
-          <p className="text-sm text-gray-500">Set up and verify domains for email sending</p>
+          <h2 className="text-lg font-semibold text-gray-900">Domains</h2>
+          <p className="text-sm text-gray-500">Set up and verify domains for email sending, landing pages, and platform features</p>
         </div>
         {!showAddWizard && (
           <button
@@ -1238,7 +1240,7 @@ function SendingDomainsCard({ workspaceId }: { workspaceId: string | undefined }
               {authStatus?.ready && (
                 <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg mb-4 text-sm">
                   <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-green-700 font-medium">Domain is fully verified and ready for sending!</span>
+                  <span className="text-green-700 font-medium">Domain is fully verified and ready to use!</span>
                 </div>
               )}
 
@@ -1306,7 +1308,7 @@ function SendingDomainsCard({ workspaceId }: { workspaceId: string | undefined }
                       {domain.ready && (
                         <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg mb-4 text-sm">
                           <Check className="w-4 h-4 text-green-600" />
-                          <span className="text-green-700 font-medium">Domain is fully verified and ready for sending!</span>
+                          <span className="text-green-700 font-medium">Domain is fully verified and ready to use!</span>
                         </div>
                       )}
                       {renderDnsRecords(domain)}

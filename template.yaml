@@ -1796,6 +1796,14 @@ Resources:
             Method: GET
             Auth:
               Authorizer: NONE
+        GetPublicPlans:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/plans
+            Method: GET
+            Auth:
+              Authorizer: NONE
 
   # ============================================
   # Lambda Functions - WebSocket
@@ -2542,6 +2550,18 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /admin/stats/platform
             Method: GET
+        AdminListPlans:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/plans
+            Method: GET
+        AdminUpdatePlan:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/plans/{plan_key}
+            Method: PUT
 
   BillingWebhookFunction:
     Type: AWS::Serverless::Function

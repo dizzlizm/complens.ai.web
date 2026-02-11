@@ -1,8 +1,13 @@
-import { useBillingSummary } from '@/lib/hooks/useAdmin';
+import { useBillingSummary, useAdminPlans } from '@/lib/hooks/useAdmin';
 import { CreditCard, TrendingUp, Users, DollarSign } from 'lucide-react';
 
 export default function AdminBilling() {
   const { data, isLoading, error } = useBillingSummary();
+  const { data: plans } = useAdminPlans();
+
+  // Get dynamic prices from plan configs, with fallbacks
+  const proPrice = plans?.find(p => p.plan_key === 'pro')?.price_monthly ?? 97;
+  const businessPrice = plans?.find(p => p.plan_key === 'business')?.price_monthly ?? 297;
 
   if (isLoading) {
     return (
@@ -120,7 +125,7 @@ export default function AdminBilling() {
                 : '0%'} of workspaces
             </p>
             <p className="text-xs text-blue-400 mt-1">
-              ${data.plan_counts.pro * 49}/mo revenue
+              ${data.plan_counts.pro * proPrice}/mo revenue
             </p>
           </div>
 
@@ -144,7 +149,7 @@ export default function AdminBilling() {
                 : '0%'} of workspaces
             </p>
             <p className="text-xs text-purple-400 mt-1">
-              ${data.plan_counts.business * 149}/mo revenue
+              ${data.plan_counts.business * businessPrice}/mo revenue
             </p>
           </div>
         </div>

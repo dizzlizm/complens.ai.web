@@ -1,8 +1,9 @@
 import { Check, Loader2, Sparkles, Zap } from 'lucide-react';
+import { usePlans, type PublicPlan } from '@/lib/hooks/useBilling';
 
 interface PricingTier {
   name: string;
-  planKey: string; // maps to backend plan name
+  planKey: string;
   price: string;
   priceId: string;
   description: string;
@@ -11,7 +12,8 @@ interface PricingTier {
   icon: 'free' | 'pro' | 'business';
 }
 
-const tiers: PricingTier[] = [
+// Hardcoded fallback tiers (used when API is unavailable)
+const fallbackTiers: PricingTier[] = [
   {
     name: 'Starter',
     planKey: 'free',
@@ -20,6 +22,7 @@ const tiers: PricingTier[] = [
     description: 'Try it out — no credit card needed',
     features: [
       '100 contacts',
+      '1 site',
       '1 landing page',
       '3 workflows',
       '100 runs/month',
@@ -37,12 +40,14 @@ const tiers: PricingTier[] = [
     description: 'Everything you need to grow',
     features: [
       '10,000 contacts',
+      '10 sites',
       '25 landing pages',
       '50 workflows',
       '10,000 runs/month',
       '5 team members',
       'Custom domains',
       'Knowledge base',
+      'Email warmup',
       'AI workflow generation',
       'Priority support',
     ],
@@ -57,18 +62,39 @@ const tiers: PricingTier[] = [
     description: 'For agencies & scaling teams',
     features: [
       'Unlimited contacts',
+      'Unlimited sites',
       'Unlimited pages',
       'Unlimited workflows',
       'Unlimited runs',
       'Unlimited team members',
       'Custom domains',
       'Knowledge base',
+      'Email warmup',
       'White-glove onboarding',
       'Dedicated support',
     ],
     icon: 'business',
   },
 ];
+
+function planToTier(plan: PublicPlan): PricingTier {
+  const iconMap: Record<string, 'free' | 'pro' | 'business'> = {
+    free: 'free',
+    pro: 'pro',
+    business: 'business',
+  };
+
+  return {
+    name: plan.display_name,
+    planKey: plan.plan_key,
+    price: plan.price_monthly === 0 ? '$0' : `$${plan.price_monthly}`,
+    priceId: plan.plan_key,
+    description: plan.description,
+    features: plan.feature_list,
+    highlighted: plan.highlighted,
+    icon: iconMap[plan.plan_key] || 'free',
+  };
+}
 
 interface PricingTableProps {
   currentPlan: string;
@@ -104,6 +130,8 @@ function PlanIcon({ type }: { type: 'free' | 'pro' | 'business' }) {
 const planOrder: Record<string, number> = { free: 0, pro: 1, business: 2 };
 
 export default function PricingTable({ currentPlan, onSelectPlan, isLoading, loadingPlan }: PricingTableProps) {
+  const { data: apiPlans } = usePlans();
+  const tiers = apiPlans ? apiPlans.map(planToTier) : fallbackTiers;
   const currentPlanOrder = planOrder[currentPlan] ?? 0;
 
   return (

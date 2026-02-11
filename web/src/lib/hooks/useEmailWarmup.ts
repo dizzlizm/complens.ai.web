@@ -93,7 +93,7 @@ export interface DnsRecord {
   type: 'TXT' | 'CNAME';
   name: string;
   value: string;
-  purpose: 'domain_verification' | 'dkim' | 'spf' | 'dmarc';
+  purpose: 'domain_verification' | 'dkim' | 'spf' | 'dmarc' | 'landing_page';
   status?: 'verified' | 'pending';
   recommended?: boolean;
 }

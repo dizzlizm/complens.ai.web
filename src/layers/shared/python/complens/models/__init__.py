@@ -68,6 +68,7 @@ from complens.models.warmup_domain import (
 )
 from complens.models.site import Site, CreateSiteRequest, UpdateSiteRequest
 from complens.models.deferred_email import DeferredEmail
+from complens.models.plan_config import PlanConfig, UpdatePlanConfigRequest
 
 __all__ = [
     # Base
@@ -152,4 +153,7 @@ __all__ = [
     "UpdateSiteRequest",
     # Deferred Email
     "DeferredEmail",
+    # Plan Config
+    "PlanConfig",
+    "UpdatePlanConfigRequest",
 ]

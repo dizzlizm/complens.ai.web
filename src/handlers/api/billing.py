@@ -95,10 +95,16 @@ def get_billing_status(workspace_id: str, auth: dict) -> dict:
     except Exception:
         workflow_count = 0
 
+    try:
+        site_count = count_resources(table, workspace_id, "SITE#")
+    except Exception:
+        site_count = 0
+
     counts = {
         "contacts": contact_count,
         "pages": page_count,
         "workflows": workflow_count,
+        "sites": site_count,
     }
 
     usage = get_usage_summary(plan, counts)

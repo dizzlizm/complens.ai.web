@@ -627,6 +627,17 @@ class EmailService:
                 "recommended": True,
             })
 
+            # Landing page CNAME recommendation
+            stage = os.environ.get("STAGE", "dev")
+            pages_host = "pages.complens.ai" if stage == "prod" else f"pages.{stage}.complens.ai"
+            dns_records.append({
+                "type": "CNAME",
+                "name": domain,
+                "value": pages_host,
+                "purpose": "landing_page",
+                "recommended": True,
+            })
+
             # Get current verification status
             auth_status = self.check_domain_auth(domain)
 

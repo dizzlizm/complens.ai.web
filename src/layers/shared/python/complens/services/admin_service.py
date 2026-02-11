@@ -257,8 +257,19 @@ class AdminService:
             if status == "active":
                 active_subscriptions += 1
 
-        # Estimate MRR (assuming Pro=$49, Business=$149)
-        mrr = (plan_counts.get("pro", 0) * 49) + (plan_counts.get("business", 0) * 149)
+        # Compute MRR from dynamic plan prices
+        from complens.services.billing_service import get_plan_config
+
+        pro_price = 97  # default fallback
+        business_price = 297
+        pro_config = get_plan_config("pro")
+        business_config = get_plan_config("business")
+        if pro_config:
+            pro_price = pro_config.price_monthly
+        if business_config:
+            business_price = business_config.price_monthly
+
+        mrr = (plan_counts.get("pro", 0) * pro_price) + (plan_counts.get("business", 0) * business_price)
 
         return {
             "total_workspaces": total_workspaces,

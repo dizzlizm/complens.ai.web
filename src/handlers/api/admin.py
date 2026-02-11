@@ -81,6 +81,11 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return get_actual_costs(event)
         elif path == "/admin/stats/platform" and http_method == "GET":
             return get_platform_stats()
+        elif path == "/admin/plans" and http_method == "GET":
+            return list_plans()
+        elif path.startswith("/admin/plans/") and http_method == "PUT":
+            plan_key = path_params.get("plan_key")
+            return update_plan(plan_key, event)
         else:
             return error("Not found", 404)
 
@@ -380,3 +385,52 @@ def get_platform_stats() -> dict:
     stats = admin_service.get_platform_stats()
 
     return success(stats)
+
+
+def list_plans() -> dict:
+    """List all plan configurations."""
+    from complens.repositories.plan_config import PlanConfigRepository
+    from complens.services.billing_service import DEFAULT_PLAN_LIMITS
+
+    repo = PlanConfigRepository()
+    plans = repo.list_plans()
+
+    if not plans:
+        plans = repo.seed_defaults(DEFAULT_PLAN_LIMITS)
+
+    return success({
+        "plans": [p.model_dump(mode="json") for p in plans],
+    })
+
+
+def update_plan(plan_key: str, event: dict) -> dict:
+    """Update a plan configuration."""
+    from complens.repositories.plan_config import PlanConfigRepository
+    from complens.services.billing_service import invalidate_plan_cache
+
+    if not plan_key:
+        return error("plan_key is required", 400)
+
+    repo = PlanConfigRepository()
+    existing = repo.get_plan(plan_key)
+
+    if not existing:
+        return not_found("plan", plan_key)
+
+    body = json.loads(event.get("body", "{}"))
+
+    # Update allowed fields
+    allowed_fields = [
+        "display_name", "price_monthly", "stripe_price_id", "description",
+        "limits", "features", "feature_list", "highlighted", "sort_order",
+    ]
+    for field in allowed_fields:
+        if field in body:
+            setattr(existing, field, body[field])
+
+    repo.upsert_plan(existing)
+    invalidate_plan_cache()
+
+    logger.info("Plan config updated by admin", plan_key=plan_key, fields=list(body.keys()))
+
+    return success(existing.model_dump(mode="json"))

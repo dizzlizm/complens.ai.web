@@ -2,7 +2,7 @@
 
 import structlog
 
-from complens.services.billing_service import PLAN_LIMITS
+from complens.services.billing_service import DEFAULT_PLAN_LIMITS, get_dynamic_plan_limits
 
 logger = structlog.get_logger()
 
@@ -35,13 +35,13 @@ def check_limit(
 
     Args:
         plan: Workspace plan (free, pro, business).
-        resource: Resource name (contacts, pages, workflows, etc.).
+        resource: Resource name (contacts, pages, workflows, sites, etc.).
         current_count: Current count of the resource.
 
     Returns:
         True if within limits, False if limit reached.
     """
-    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    limits = get_dynamic_plan_limits(plan)
     limit = limits.get(resource, 0)
 
     if limit == -1:  # unlimited
@@ -55,7 +55,7 @@ def enforce_limit(plan: str, resource: str, current_count: int) -> None:
 
     Args:
         plan: Workspace plan (free, pro, business).
-        resource: Resource name (contacts, pages, workflows, etc.).
+        resource: Resource name (contacts, pages, workflows, sites, etc.).
         current_count: Current count of the resource.
 
     Raises:
@@ -66,7 +66,8 @@ def enforce_limit(plan: str, resource: str, current_count: int) -> None:
 
     # Find minimum upgrade plan that would allow this
     for upgrade_plan in ("pro", "business"):
-        upgrade_limit = PLAN_LIMITS.get(upgrade_plan, {}).get(resource, 0)
+        upgrade_limits = get_dynamic_plan_limits(upgrade_plan)
+        upgrade_limit = upgrade_limits.get(resource, 0)
         if upgrade_limit == -1 or current_count < upgrade_limit:
             raise FeatureGateError(resource, plan, upgrade_plan)
     raise FeatureGateError(resource, plan, "business")
@@ -82,9 +83,10 @@ def require_feature(plan: str, feature: str) -> None:
     Raises:
         FeatureGateError: If feature is not available.
     """
-    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    limits = get_dynamic_plan_limits(plan)
     if not limits.get(feature, False):
-        required = "pro" if PLAN_LIMITS["pro"].get(feature) else "business"
+        pro_limits = get_dynamic_plan_limits("pro")
+        required = "pro" if pro_limits.get(feature) else "business"
         raise FeatureGateError(feature, plan, required)
 
 
@@ -135,7 +137,7 @@ def get_usage_summary(plan: str, counts: dict[str, int]) -> dict:
     Returns:
         Usage summary with limits and percentages.
     """
-    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    limits = get_dynamic_plan_limits(plan)
     usage = {}
 
     for resource, limit in limits.items():

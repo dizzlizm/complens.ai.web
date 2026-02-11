@@ -560,7 +560,7 @@ def list_domains_handler(workspace_id: str) -> dict:
 
 
 def check_domain_auth(event: dict) -> dict:
-    """Check domain authentication status (verification + DKIM).
+    """Check domain authentication status (verification + DKIM + SPF + DMARC).
 
     Args:
         event: API Gateway event.
@@ -576,6 +576,16 @@ def check_domain_auth(event: dict) -> dict:
 
     email_service = EmailService()
     auth_status = email_service.check_domain_auth(domain)
+
+    # Enrich with SPF/DMARC status from DNS checks
+    try:
+        from complens.services.domain_health_service import DomainHealthService
+        health_service = DomainHealthService()
+        spf_dmarc = health_service._check_spf_dmarc(domain)
+        auth_status["spf_valid"] = spf_dmarc.get("spf_valid", False)
+        auth_status["dmarc_valid"] = spf_dmarc.get("dmarc_valid", False)
+    except Exception:
+        logger.debug("SPF/DMARC check failed during domain auth", domain=domain)
 
     return success(auth_status)
 

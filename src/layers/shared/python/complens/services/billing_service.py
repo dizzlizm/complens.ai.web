@@ -1,17 +1,19 @@
 """Billing service for Stripe platform subscriptions."""
 
 import os
+import time
 from typing import Any
 
 import structlog
 
 logger = structlog.get_logger()
 
-# Pricing tier limits
-PLAN_LIMITS = {
+# Default pricing tier limits — used as seed/fallback when DynamoDB is empty
+DEFAULT_PLAN_LIMITS = {
     "free": {
         "contacts": 100,
         "pages": 1,
+        "sites": 1,
         "workflows": 3,
         "runs_per_month": 100,
         "team_members": 1,
@@ -22,6 +24,7 @@ PLAN_LIMITS = {
     "pro": {
         "contacts": 10000,
         "pages": 25,
+        "sites": 10,
         "workflows": 50,
         "runs_per_month": 10000,
         "team_members": 5,
@@ -32,6 +35,7 @@ PLAN_LIMITS = {
     "business": {
         "contacts": -1,  # unlimited
         "pages": -1,
+        "sites": -1,
         "workflows": -1,
         "runs_per_month": -1,
         "team_members": -1,
@@ -40,6 +44,84 @@ PLAN_LIMITS = {
         "email_warmup": True,
     },
 }
+
+# Module-level cache for plan configs
+_plan_cache: dict[str, Any] | None = None
+_plan_cache_ts: float = 0
+_CACHE_TTL = 300  # 5 minutes
+
+
+def get_plan_configs() -> dict[str, Any]:
+    """Get plan configs from DynamoDB with caching.
+
+    Returns a dict keyed by plan_key, each value being a PlanConfig instance.
+    Seeds defaults on first access if DynamoDB is empty.
+    """
+    global _plan_cache, _plan_cache_ts
+
+    now = time.time()
+    if _plan_cache is not None and (now - _plan_cache_ts) < _CACHE_TTL:
+        return _plan_cache
+
+    try:
+        from complens.repositories.plan_config import PlanConfigRepository
+        repo = PlanConfigRepository()
+        plans = repo.list_plans()
+
+        if not plans:
+            plans = repo.seed_defaults(DEFAULT_PLAN_LIMITS)
+
+        _plan_cache = {p.plan_key: p for p in plans}
+        _plan_cache_ts = now
+        return _plan_cache
+
+    except Exception:
+        logger.debug("Failed to load plan configs from DynamoDB, using defaults")
+        # Return a fallback structure without caching the failure
+        return {}
+
+
+def get_dynamic_plan_limits(plan: str) -> dict:
+    """Get resource limits for a plan from dynamic config.
+
+    Falls back to DEFAULT_PLAN_LIMITS if DynamoDB is unavailable.
+
+    Args:
+        plan: Plan name (free, pro, business).
+
+    Returns:
+        Dict of limits and boolean features merged together.
+    """
+    configs = get_plan_configs()
+    config = configs.get(plan)
+
+    if config:
+        # Merge limits and features into a single dict (matches old PLAN_LIMITS format)
+        merged = dict(config.limits)
+        merged.update(config.features)
+        return merged
+
+    return DEFAULT_PLAN_LIMITS.get(plan, DEFAULT_PLAN_LIMITS["free"])
+
+
+def get_plan_config(plan: str):
+    """Get full PlanConfig for a plan.
+
+    Args:
+        plan: Plan name (free, pro, business).
+
+    Returns:
+        PlanConfig instance or None.
+    """
+    configs = get_plan_configs()
+    return configs.get(plan)
+
+
+def invalidate_plan_cache() -> None:
+    """Invalidate the plan config cache (e.g., after admin update)."""
+    global _plan_cache, _plan_cache_ts
+    _plan_cache = None
+    _plan_cache_ts = 0
 
 
 class BillingService:
@@ -73,6 +155,11 @@ class BillingService:
         # If it looks like a Stripe price ID, return as-is
         if plan_or_price_id.startswith("price_"):
             return plan_or_price_id
+
+        # Try dynamic config first
+        config = get_plan_config(plan_or_price_id.lower())
+        if config and config.stripe_price_id:
+            return config.stripe_price_id
 
         # Resolve plan name to Price ID from environment
         plan_to_env = {
@@ -176,7 +263,7 @@ class BillingService:
         Returns:
             Plan limits dict.
         """
-        return PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+        return get_dynamic_plan_limits(plan)
 
 
 def get_billing_service() -> BillingService:

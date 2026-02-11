@@ -40,6 +40,7 @@ import {
   AdminUserDetail,
   AdminBilling,
   AdminCosts,
+  AdminPlans,
   AdminSystem,
 } from './pages/admin';
 
@@ -116,6 +117,7 @@ function App() {
             <Route path="/admin/users" element={<AdminUsers />} />
             <Route path="/admin/users/:id" element={<AdminUserDetail />} />
             <Route path="/admin/billing" element={<AdminBilling />} />
+            <Route path="/admin/plans" element={<AdminPlans />} />
             <Route path="/admin/costs" element={<AdminCosts />} />
             <Route path="/admin/system" element={<AdminSystem />} />
           </Route>
