@@ -5,6 +5,7 @@ import { Building2, Search, ChevronRight } from 'lucide-react';
 
 export default function AdminWorkspaces() {
   const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [searchQuery, setSearchQuery] = useState('');
   const { data, isLoading, error } = useAdminWorkspaces({ limit: 50, cursor });
 
   const getPlanBadgeColor = (plan: string) => {
@@ -31,6 +32,12 @@ export default function AdminWorkspaces() {
     }
   };
 
+  const filteredWorkspaces = (data?.workspaces ?? []).filter((ws) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return ws.name.toLowerCase().includes(q) || ws.id.toLowerCase().includes(q);
+  });
+
   return (
     <div>
       <div className="mb-8">
@@ -48,13 +55,15 @@ export default function AdminWorkspaces() {
         </div>
       )}
 
-      {/* Search (placeholder for now) */}
+      {/* Search */}
       <div className="mb-6">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
           <input
             type="text"
             placeholder="Search workspaces..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-red-500"
           />
         </div>
@@ -70,7 +79,7 @@ export default function AdminWorkspaces() {
           <div className="p-6 text-center text-red-400">
             Failed to load workspaces
           </div>
-        ) : data?.workspaces.length === 0 ? (
+        ) : data?.workspaces.length === 0 || filteredWorkspaces.length === 0 ? (
           <div className="p-12 text-center">
             <Building2 className="w-12 h-12 text-gray-600 mx-auto mb-4" />
             <p className="text-gray-400">No workspaces found</p>
@@ -98,7 +107,7 @@ export default function AdminWorkspaces() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-700">
-                {data?.workspaces.map((workspace) => (
+                {filteredWorkspaces.map((workspace) => (
                   <tr key={workspace.id} className="hover:bg-gray-700/30 transition-colors">
                     <td className="px-4 py-4">
                       <div className="flex items-center gap-3">

@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import {
   Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle,
-  ExternalLink, Search, Mail, Smartphone, Monitor, LogOut, Plus, ChevronRight, ChevronDown,
-  MessageSquare, Database, BarChart3, Calendar, ShoppingCart, FileText, Megaphone,
+  ExternalLink, Mail, Monitor, LogOut, Plus, ChevronRight, ChevronDown,
+  MessageSquare, BarChart3, FileText,
   Pause, Play, Trash2, AlertTriangle, TrendingUp, X, Eye, Copy, Clock, RefreshCw, SlidersHorizontal
 } from 'lucide-react';
 import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup, useCancelWarmup, useCheckDomainAuth, getWarmupStatusInfo, useUpdateSeedList, useUpdateWarmupSettings, useWarmupLog, useDomainHealth, getHealthStatusInfo, useSetupDomain, useListDomains, useDeleteSavedDomain } from '../lib/hooks';
@@ -394,16 +394,14 @@ function NotificationSettings() {
   );
 }
 
-// Integration categories and items
+// Available integrations (only ones that actually work)
 const integrationCategories = [
   {
     id: 'payments',
     name: 'Payments',
     icon: CreditCard,
     integrations: [
-      { id: 'stripe', name: 'Stripe', description: 'Accept payments and subscriptions', status: 'available', component: 'stripe' },
-      { id: 'paypal', name: 'PayPal', description: 'PayPal payments and checkout', status: 'coming_soon' },
-      { id: 'square', name: 'Square', description: 'In-person and online payments', status: 'coming_soon' },
+      { id: 'stripe', name: 'Stripe', description: 'Accept payments and subscriptions', component: 'stripe' },
     ],
   },
   {
@@ -411,11 +409,7 @@ const integrationCategories = [
     name: 'Communication',
     icon: MessageSquare,
     integrations: [
-      { id: 'twilio', name: 'Twilio', description: 'SMS and voice messaging', status: 'available', component: 'twilio' },
-      { id: 'sendgrid', name: 'SendGrid', description: 'Transactional email delivery', status: 'coming_soon' },
-      { id: 'mailgun', name: 'Mailgun', description: 'Email API and SMTP', status: 'coming_soon' },
-      { id: 'slack', name: 'Slack', description: 'Team notifications', status: 'coming_soon' },
-      { id: 'discord', name: 'Discord', description: 'Community notifications', status: 'coming_soon' },
+      { id: 'twilio', name: 'Twilio', description: 'SMS and voice messaging', component: 'twilio' },
     ],
   },
   {
@@ -423,146 +417,25 @@ const integrationCategories = [
     name: 'Analytics & Data',
     icon: BarChart3,
     integrations: [
-      { id: 'segment', name: 'Segment', description: 'Customer data platform', status: 'available', component: 'segment' },
-      { id: 'google_analytics', name: 'Google Analytics', description: 'Website analytics', status: 'coming_soon' },
-      { id: 'mixpanel', name: 'Mixpanel', description: 'Product analytics', status: 'coming_soon' },
-      { id: 'amplitude', name: 'Amplitude', description: 'Digital analytics', status: 'coming_soon' },
-    ],
-  },
-  {
-    id: 'crm',
-    name: 'CRM & Sales',
-    icon: Database,
-    integrations: [
-      { id: 'hubspot', name: 'HubSpot', description: 'CRM and marketing', status: 'coming_soon' },
-      { id: 'salesforce', name: 'Salesforce', description: 'Enterprise CRM', status: 'coming_soon' },
-      { id: 'pipedrive', name: 'Pipedrive', description: 'Sales pipeline CRM', status: 'coming_soon' },
-      { id: 'close', name: 'Close', description: 'Inside sales CRM', status: 'coming_soon' },
-    ],
-  },
-  {
-    id: 'marketing',
-    name: 'Marketing',
-    icon: Megaphone,
-    integrations: [
-      { id: 'mailchimp', name: 'Mailchimp', description: 'Email marketing', status: 'coming_soon' },
-      { id: 'convertkit', name: 'ConvertKit', description: 'Creator email marketing', status: 'coming_soon' },
-      { id: 'klaviyo', name: 'Klaviyo', description: 'E-commerce email', status: 'coming_soon' },
-      { id: 'activecampaign', name: 'ActiveCampaign', description: 'Marketing automation', status: 'coming_soon' },
-    ],
-  },
-  {
-    id: 'ecommerce',
-    name: 'E-commerce',
-    icon: ShoppingCart,
-    integrations: [
-      { id: 'shopify', name: 'Shopify', description: 'E-commerce platform', status: 'coming_soon' },
-      { id: 'woocommerce', name: 'WooCommerce', description: 'WordPress e-commerce', status: 'coming_soon' },
-      { id: 'gumroad', name: 'Gumroad', description: 'Digital products', status: 'coming_soon' },
-    ],
-  },
-  {
-    id: 'scheduling',
-    name: 'Scheduling',
-    icon: Calendar,
-    integrations: [
-      { id: 'calendly', name: 'Calendly', description: 'Appointment scheduling', status: 'coming_soon' },
-      { id: 'cal', name: 'Cal.com', description: 'Open-source scheduling', status: 'coming_soon' },
-      { id: 'acuity', name: 'Acuity', description: 'Client scheduling', status: 'coming_soon' },
-    ],
-  },
-  {
-    id: 'automation',
-    name: 'Automation',
-    icon: Zap,
-    integrations: [
-      { id: 'zapier', name: 'Zapier', description: 'Connect 5000+ apps', status: 'coming_soon' },
-      { id: 'make', name: 'Make (Integromat)', description: 'Visual automation', status: 'coming_soon' },
-      { id: 'n8n', name: 'n8n', description: 'Self-hosted automation', status: 'coming_soon' },
+      { id: 'segment', name: 'Segment', description: 'Customer data platform', component: 'segment' },
     ],
   },
 ];
 
 function IntegrationSettings() {
   const { workspaceId } = useCurrentWorkspace();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [expandedIntegration, setExpandedIntegration] = useState<string | null>(null);
-
-  const filteredCategories = useMemo(() => {
-    if (!searchQuery && !selectedCategory) return integrationCategories;
-
-    return integrationCategories
-      .map(category => ({
-        ...category,
-        integrations: category.integrations.filter(int => {
-          const matchesSearch = !searchQuery ||
-            int.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            int.description.toLowerCase().includes(searchQuery.toLowerCase());
-          const matchesCategory = !selectedCategory || category.id === selectedCategory;
-          return matchesSearch && matchesCategory;
-        }),
-      }))
-      .filter(category => category.integrations.length > 0);
-  }, [searchQuery, selectedCategory]);
-
-  const availableCount = integrationCategories
-    .flatMap(c => c.integrations)
-    .filter(i => i.status === 'available').length;
 
   return (
     <div className="space-y-6">
-      {/* Header with search */}
       <div className="card">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Integrations</h2>
-            <p className="text-sm text-gray-500">
-              {availableCount} connected services available
-            </p>
-          </div>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search integrations..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="input pl-9 w-full sm:w-64"
-            />
-          </div>
-        </div>
-
-        {/* Category filters */}
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setSelectedCategory(null)}
-            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-              !selectedCategory
-                ? 'bg-primary-100 text-primary-700'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-          >
-            All
-          </button>
-          {integrationCategories.map(category => (
-            <button
-              key={category.id}
-              onClick={() => setSelectedCategory(selectedCategory === category.id ? null : category.id)}
-              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                selectedCategory === category.id
-                  ? 'bg-primary-100 text-primary-700'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {category.name}
-            </button>
-          ))}
-        </div>
+        <h2 className="text-lg font-semibold text-gray-900">Integrations</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Connect third-party services to your workspace
+        </p>
       </div>
 
-      {/* Integration list by category */}
-      {filteredCategories.map(category => (
+      {integrationCategories.map(category => (
         <div key={category.id} className="card">
           <div className="flex items-center gap-2 mb-4">
             <category.icon className="w-5 h-5 text-gray-600" />
@@ -571,43 +444,27 @@ function IntegrationSettings() {
           <div className="space-y-3">
             {category.integrations.map(integration => {
               const isExpanded = expandedIntegration === integration.id;
-              const isAvailable = integration.status === 'available';
 
               return (
                 <div key={integration.id}>
                   <button
-                    onClick={() => isAvailable && setExpandedIntegration(isExpanded ? null : integration.id)}
-                    disabled={!isAvailable}
-                    className={`w-full flex items-center justify-between p-4 rounded-lg border transition-all text-left ${
-                      isAvailable
-                        ? 'border-gray-200 hover:border-primary-300 hover:bg-primary-50/50 cursor-pointer'
-                        : 'border-gray-100 bg-gray-50 cursor-not-allowed'
-                    } ${isExpanded ? 'border-primary-300 bg-primary-50/50' : ''}`}
+                    onClick={() => setExpandedIntegration(isExpanded ? null : integration.id)}
+                    className={`w-full flex items-center justify-between p-4 rounded-lg border transition-all text-left
+                      border-gray-200 hover:border-primary-300 hover:bg-primary-50/50 cursor-pointer
+                      ${isExpanded ? 'border-primary-300 bg-primary-50/50' : ''}`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                        isAvailable ? 'bg-primary-100' : 'bg-gray-100'
-                      }`}>
-                        <Zap className={`w-5 h-5 ${isAvailable ? 'text-primary-600' : 'text-gray-400'}`} />
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-primary-100">
+                        <Zap className="w-5 h-5 text-primary-600" />
                       </div>
                       <div>
-                        <p className={`font-medium ${isAvailable ? 'text-gray-900' : 'text-gray-500'}`}>
-                          {integration.name}
-                          {!isAvailable && (
-                            <span className="ml-2 text-xs bg-gray-200 text-gray-500 px-2 py-0.5 rounded">
-                              Coming Soon
-                            </span>
-                          )}
-                        </p>
+                        <p className="font-medium text-gray-900">{integration.name}</p>
                         <p className="text-sm text-gray-500">{integration.description}</p>
                       </div>
                     </div>
-                    {isAvailable && (
-                      <ChevronRight className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-                    )}
+                    <ChevronRight className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                   </button>
 
-                  {/* Expanded integration config */}
                   {isExpanded && integration.component && (
                     <div className="mt-3 ml-4 pl-4 border-l-2 border-primary-200">
                       {integration.component === 'stripe' && (
@@ -627,19 +484,6 @@ function IntegrationSettings() {
           </div>
         </div>
       ))}
-
-      {filteredCategories.length === 0 && (
-        <div className="card text-center py-12">
-          <Search className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-600">No integrations found for "{searchQuery}"</p>
-          <button
-            onClick={() => setSearchQuery('')}
-            className="text-primary-600 hover:text-primary-700 text-sm mt-2"
-          >
-            Clear search
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -1033,33 +877,19 @@ function SecuritySettings() {
       <div className="card">
         <h2 className="text-lg font-semibold text-gray-900 mb-2">Two-Factor Authentication</h2>
         <p className="text-sm text-gray-500 mb-4">Add an extra layer of security to your account</p>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                <Smartphone className="w-5 h-5 text-gray-600" />
-              </div>
-              <div>
-                <p className="font-medium text-gray-900">Authenticator App</p>
-                <p className="text-sm text-gray-500">Use Google Authenticator or Authy</p>
-              </div>
+        <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+              <Mail className="w-5 h-5 text-gray-600" />
             </div>
-            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full font-medium">Coming Soon</span>
-          </div>
-          <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                <Mail className="w-5 h-5 text-gray-600" />
-              </div>
-              <div>
-                <p className="font-medium text-gray-900">Email Verification</p>
-                <p className="text-sm text-gray-500">Receive codes via email</p>
-              </div>
+            <div>
+              <p className="font-medium text-gray-900">Email Verification</p>
+              <p className="text-sm text-gray-500">Email verification is required for all accounts</p>
             </div>
-            <span className="text-xs text-green-600 font-medium flex items-center gap-1">
-              <Check className="w-3 h-3" /> Active
-            </span>
           </div>
+          <span className="text-xs text-green-600 font-medium flex items-center gap-1">
+            <Check className="w-3 h-3" /> Active
+          </span>
         </div>
       </div>
 
