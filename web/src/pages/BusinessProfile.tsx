@@ -216,7 +216,7 @@ export default function BusinessProfile() {
           </div>
 
           {currentQuestion.input_type === 'select' && currentQuestion.options ? (
-            <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
               {currentQuestion.options.map((option) => (
                 <button
                   key={option}

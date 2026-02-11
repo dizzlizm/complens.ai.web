@@ -185,7 +185,7 @@ export default function Workflows() {
 
       {/* Workflows list */}
       {!isLoading && !error && filteredWorkflows.length > 0 && (
-        <div className="card p-0 overflow-visible">
+        <div className="card p-0 overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
