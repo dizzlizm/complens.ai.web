@@ -154,10 +154,7 @@ Globals:
         WORKFLOW_EXPRESS_STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor-express"
         WEBSOCKET_ENDPOINT: !If [CustomDomainEnabled, !Sub "wss://ws.${DomainName}", !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"]
         # CORS configuration - restrict to frontend origin
-        CORS_ALLOWED_ORIGIN: !If
-          - IsProd
-          - "https://complens.ai"
-          - !Sub "https://${DomainName}"
+        CORS_ALLOWED_ORIGIN: !Sub "https://${DomainName}"
         # Integration settings
         TWILIO_ACCOUNT_SID: !Ref TwilioAccountSid
         TWILIO_AUTH_TOKEN: !Ref TwilioAuthToken
@@ -640,10 +637,7 @@ Resources:
       Cors:
         AllowMethods: "'GET,POST,PUT,PATCH,DELETE,OPTIONS'"
         AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Requested-With'"
-        AllowOrigin: !If
-          - IsProd
-          - "'https://complens.ai'"
-          - !Sub "'https://${DomainName}'"
+        AllowOrigin: !Sub "'https://${DomainName}'"
         AllowCredentials: true
         MaxAge: "'600'"
       Auth:
@@ -662,10 +656,7 @@ Resources:
           StatusCode: 400
           ResponseParameters:
             Headers:
-              Access-Control-Allow-Origin: !If
-                - IsProd
-                - "'https://complens.ai'"
-                - !Sub "'https://${DomainName}'"
+              Access-Control-Allow-Origin: !Sub "'https://${DomainName}'"
               Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
               Access-Control-Allow-Credentials: "'true'"
           ResponseTemplates:
@@ -674,10 +665,7 @@ Resources:
           StatusCode: 500
           ResponseParameters:
             Headers:
-              Access-Control-Allow-Origin: !If
-                - IsProd
-                - "'https://complens.ai'"
-                - !Sub "'https://${DomainName}'"
+              Access-Control-Allow-Origin: !Sub "'https://${DomainName}'"
               Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
               Access-Control-Allow-Credentials: "'true'"
           ResponseTemplates:
@@ -686,10 +674,7 @@ Resources:
           StatusCode: 401
           ResponseParameters:
             Headers:
-              Access-Control-Allow-Origin: !If
-                - IsProd
-                - "'https://complens.ai'"
-                - !Sub "'https://${DomainName}'"
+              Access-Control-Allow-Origin: !Sub "'https://${DomainName}'"
               Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
               Access-Control-Allow-Credentials: "'true'"
               Access-Control-Allow-Methods: "'GET,POST,PUT,PATCH,DELETE,OPTIONS'"
@@ -699,10 +684,7 @@ Resources:
           StatusCode: 403
           ResponseParameters:
             Headers:
-              Access-Control-Allow-Origin: !If
-                - IsProd
-                - "'https://complens.ai'"
-                - !Sub "'https://${DomainName}'"
+              Access-Control-Allow-Origin: !Sub "'https://${DomainName}'"
               Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
               Access-Control-Allow-Methods: "'GET,POST,PUT,PATCH,DELETE,OPTIONS'"
           ResponseTemplates:
@@ -2655,7 +2637,7 @@ Resources:
           - AllowedHeaders: ["*"]
             AllowedMethods: [PUT]
             AllowedOrigins:
-              - !If [IsProd, "https://complens.ai", !Sub "https://${DomainName}"]
+              - !Sub "https://${DomainName}"
             MaxAge: 3600
 
   # ============================================
