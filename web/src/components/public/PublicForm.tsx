@@ -19,8 +19,17 @@ export default function PublicForm({
   const submitMutation = useSubmitPageForm(pageId || '', workspaceId);
 
   const [formData, setFormData] = useState<Record<string, string>>({});
+  const [smsOptIn, setSmsOptIn] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+
+  // Detect if form collects email or phone for consent display
+  const hasEmailField = form?.fields.some(
+    (f) => f.type === 'email' || f.map_to_contact_field === 'email'
+  );
+  const hasPhoneField = form?.fields.some(
+    (f) => f.type === 'phone' || f.map_to_contact_field === 'phone'
+  );
 
   const handleChange = (fieldName: string, value: string) => {
     setFormData((prev) => ({ ...prev, [fieldName]: value }));
@@ -30,9 +39,18 @@ export default function PublicForm({
     e.preventDefault();
 
     try {
+      const submitData = { ...formData };
+      // Include opt-in signals in form data for backend processing
+      if (hasPhoneField) {
+        submitData._sms_opt_in = smsOptIn ? 'true' : 'false';
+      }
+      if (hasEmailField) {
+        submitData._email_opt_in = 'true';
+      }
+
       const result = await submitMutation.mutateAsync({
         formId,
-        data: formData,
+        data: submitData,
       });
 
       setSubmitted(true);
@@ -120,6 +138,34 @@ export default function PublicForm({
           primaryColor={primaryColor}
         />
       ))}
+
+      {/* SMS opt-in checkbox (TCPA compliance) - shown when form has a phone field */}
+      {hasPhoneField && (
+        <div className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            id="_sms_opt_in"
+            checked={smsOptIn}
+            onChange={(e) => setSmsOptIn(e.target.checked)}
+            className="w-4 h-4 rounded border-gray-300 mt-0.5"
+            style={{ accentColor: primaryColor }}
+          />
+          <label htmlFor="_sms_opt_in" className="text-xs text-gray-600 leading-relaxed">
+            I agree to receive SMS/text messages. Message and data rates may apply.
+            Message frequency varies. Reply STOP to opt out at any time.
+          </label>
+        </div>
+      )}
+
+      {/* Consent notice (CAN-SPAM / GDPR compliance) */}
+      {(hasEmailField || hasPhoneField) && (
+        <p className="text-xs text-gray-400 leading-relaxed">
+          By submitting this form, you consent to receive communications from us.
+          {hasEmailField && ' You can unsubscribe from emails at any time.'}
+          {hasPhoneField && !smsOptIn && ' Check the box above to also receive SMS messages.'}
+          {' '}We respect your privacy and will not share your information with third parties.
+        </p>
+      )}
 
       <button
         type="submit"

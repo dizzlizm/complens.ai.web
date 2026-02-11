@@ -918,6 +918,10 @@ def _create_or_update_contact(form: Any, data: dict) -> str | None:
         logger.warning("Invalid phone format in form submission", phone=phone[:20])
         phone = None
 
+    # Extract opt-in signals (set by PublicForm frontend)
+    sms_opt_in = data.get("_sms_opt_in") == "true"
+    email_opt_in = data.get("_email_opt_in") == "true"
+
     # Need at least email or phone to create contact
     if not email and not phone:
         return None
@@ -941,6 +945,12 @@ def _create_or_update_contact(form: Any, data: dict) -> str | None:
             if tag not in existing_contact.tags:
                 existing_contact.tags.append(tag)
 
+        # Update consent flags — only upgrade, never downgrade
+        if sms_opt_in:
+            existing_contact.sms_opt_in = True
+        if email_opt_in:
+            existing_contact.email_opt_in = True
+
         # Merge custom fields
         existing_contact.custom_fields = {
             **existing_contact.custom_fields,
@@ -960,6 +970,8 @@ def _create_or_update_contact(form: Any, data: dict) -> str | None:
             tags=form.add_tags,
             custom_fields=custom_fields,
             source="form",
+            sms_opt_in=sms_opt_in,
+            email_opt_in=email_opt_in,
         )
         contact = contact_repo.create_contact(contact)
         return contact.id

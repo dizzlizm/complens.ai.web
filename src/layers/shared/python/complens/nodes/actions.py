@@ -48,6 +48,21 @@ class SendSmsAction(BaseNode):
         if not message:
             return NodeResult.failed(error="Message content is empty")
 
+        # TCPA compliance: check SMS opt-in before sending
+        if context.contact and not context.contact.sms_opt_in:
+            self.logger.info(
+                "SMS blocked - contact has not opted in",
+                contact_id=context.contact.id,
+                to=to_number,
+            )
+            return NodeResult.completed(
+                output={
+                    "skipped": True,
+                    "reason": "Contact has not opted in to SMS",
+                    "to": to_number,
+                }
+            )
+
         # Get from number from config or workspace settings
         from_number = self._get_config_value("sms_from")
         if not from_number:
@@ -161,6 +176,21 @@ class SendEmailAction(BaseNode):
 
         if not body_text and not body_html and not template_name:
             return NodeResult.failed(error="Email body or template is required")
+
+        # CAN-SPAM compliance: check email opt-in before sending
+        if context.contact and not context.contact.email_opt_in:
+            self.logger.info(
+                "Email blocked - contact has opted out",
+                contact_id=context.contact.id,
+                to=to_email,
+            )
+            return NodeResult.completed(
+                output={
+                    "skipped": True,
+                    "reason": "Contact has opted out of email",
+                    "to": to_email,
+                }
+            )
 
         self.logger.info(
             "Sending email",
