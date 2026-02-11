@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   Loader2, Check, AlertCircle, Globe, Plus, ChevronRight, ChevronDown, Mail,
@@ -45,10 +45,29 @@ function parseBulkEmails(input: string, existing: string[]): string[] {
   return valid;
 }
 
-const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => ({
-  value: i,
-  label: `${i.toString().padStart(2, '0')}:00 UTC`,
-}));
+// Timezone conversion helpers — backend stores UTC hours, UI shows local
+function getTimezoneOffsetHours(timezone: string): number {
+  const now = new Date();
+  const utcStr = now.toLocaleString('en-US', { timeZone: 'UTC' });
+  const tzStr = now.toLocaleString('en-US', { timeZone: timezone });
+  return (new Date(tzStr).getTime() - new Date(utcStr).getTime()) / 3600000;
+}
+
+function utcToLocal(utcHour: number, offsetHours: number): number {
+  return ((utcHour + offsetHours) % 24 + 24) % 24;
+}
+
+function localToUtc(localHour: number, offsetHours: number): number {
+  return ((localHour - offsetHours) % 24 + 24) % 24;
+}
+
+function buildHourOptions(timezone: string): { value: number; label: string }[] {
+  const shortTz = timezone.split('/').pop()?.replace(/_/g, ' ') || timezone;
+  return Array.from({ length: 24 }, (_, i) => ({
+    value: i,
+    label: `${i.toString().padStart(2, '0')}:00 ${shortTz}`,
+  }));
+}
 
 export default function EmailWarmup() {
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
@@ -80,6 +99,11 @@ function EmailWarmupSection({ workspaceId, siteId }: {
   workspaceId: string | undefined;
   siteId?: string;
 }) {
+  const { workspace } = useCurrentWorkspace();
+  const timezone = workspace?.settings?.timezone || 'America/New_York';
+  const tzOffset = getTimezoneOffsetHours(timezone);
+  const hourOptions = buildHourOptions(timezone);
+
   const { data: warmupsData, isLoading } = useWarmups(workspaceId);
   const startWarmup = useStartWarmup(workspaceId || '');
   const pauseWarmup = usePauseWarmup(workspaceId || '');
@@ -106,13 +130,20 @@ function EmailWarmupSection({ workspaceId, siteId }: {
     d => d.ready && !warmupDomainSet.has(d.domain)
   );
 
+  // Auto-select if there's only one verified domain
+  useEffect(() => {
+    if (verifiedDomains.length === 1 && !newDomain) {
+      setNewDomain(verifiedDomains[0].domain);
+    }
+  }, [verifiedDomains.length]);
+
   const handleStartWarmup = async () => {
     if (!newDomain.trim()) return;
     try {
       await startWarmup.mutateAsync({
         domain: newDomain.trim().toLowerCase(),
-        send_window_start: sendWindowStart,
-        send_window_end: sendWindowEnd,
+        send_window_start: localToUtc(sendWindowStart, tzOffset),
+        send_window_end: localToUtc(sendWindowEnd, tzOffset),
         seed_list: initSeedList.length > 0 ? initSeedList : undefined,
         auto_warmup_enabled: initAutoWarmup,
       });
@@ -189,25 +220,25 @@ function EmailWarmupSection({ workspaceId, siteId }: {
           {/* Send window */}
           <div className="mt-3 grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Send window start (UTC)</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Send window start</label>
               <select
                 className="input text-sm"
                 value={sendWindowStart}
                 onChange={(e) => setSendWindowStart(Number(e.target.value))}
               >
-                {HOUR_OPTIONS.map((h) => (
+                {hourOptions.map((h) => (
                   <option key={h.value} value={h.value}>{h.label}</option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Send window end (UTC)</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Send window end</label>
               <select
                 className="input text-sm"
                 value={sendWindowEnd}
                 onChange={(e) => setSendWindowEnd(Number(e.target.value))}
               >
-                {HOUR_OPTIONS.map((h) => (
+                {hourOptions.map((h) => (
                   <option key={h.value} value={h.value}>{h.label}</option>
                 ))}
               </select>
@@ -410,6 +441,11 @@ function WarmupDomainCard({
   isResuming: boolean;
   isCancelling: boolean;
 }) {
+  const { workspace } = useCurrentWorkspace();
+  const timezone = workspace?.settings?.timezone || 'America/New_York';
+  const tzOffset = getTimezoneOffsetHours(timezone);
+  const hourOptions = buildHourOptions(timezone);
+
   const statusInfo = getWarmupStatusInfo(warmup.status);
   const progress = warmup.schedule_length > 0
     ? Math.round((warmup.warmup_day / warmup.schedule_length) * 100)
@@ -424,9 +460,9 @@ function WarmupDomainCard({
   const [seedListSaved, setSeedListSaved] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
-  // Settings panel state
-  const [editSendWindowStart, setEditSendWindowStart] = useState(warmup.send_window_start);
-  const [editSendWindowEnd, setEditSendWindowEnd] = useState(warmup.send_window_end);
+  // Settings panel state — convert stored UTC hours to local for editing
+  const [editSendWindowStart, setEditSendWindowStart] = useState(utcToLocal(warmup.send_window_start, tzOffset));
+  const [editSendWindowEnd, setEditSendWindowEnd] = useState(utcToLocal(warmup.send_window_end, tzOffset));
   const [editMaxBounce, setEditMaxBounce] = useState(warmup.max_bounce_rate);
   const [editMaxComplaint, setEditMaxComplaint] = useState(warmup.max_complaint_rate);
   const [editRemainingSchedule, setEditRemainingSchedule] = useState(
@@ -473,8 +509,8 @@ function WarmupDomainCard({
 
       await updateSettings.mutateAsync({
         domain: warmup.domain,
-        send_window_start: editSendWindowStart,
-        send_window_end: editSendWindowEnd,
+        send_window_start: localToUtc(editSendWindowStart, tzOffset),
+        send_window_end: localToUtc(editSendWindowEnd, tzOffset),
         max_bounce_rate: editMaxBounce,
         max_complaint_rate: editMaxComplaint,
         schedule: scheduleValues.length > 0 ? scheduleValues : undefined,
@@ -969,25 +1005,25 @@ function WarmupDomainCard({
 
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Send window start (UTC)</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Send window start</label>
                   <select
                     className="input text-sm"
                     value={editSendWindowStart}
                     onChange={(e) => setEditSendWindowStart(Number(e.target.value))}
                   >
-                    {HOUR_OPTIONS.map((h) => (
+                    {hourOptions.map((h) => (
                       <option key={h.value} value={h.value}>{h.label}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Send window end (UTC)</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Send window end</label>
                   <select
                     className="input text-sm"
                     value={editSendWindowEnd}
                     onChange={(e) => setEditSendWindowEnd(Number(e.target.value))}
                   >
-                    {HOUR_OPTIONS.map((h) => (
+                    {hourOptions.map((h) => (
                       <option key={h.value} value={h.value}>{h.label}</option>
                     ))}
                   </select>

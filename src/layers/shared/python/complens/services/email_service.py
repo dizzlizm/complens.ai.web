@@ -556,7 +556,7 @@ class EmailService:
             result["dkim_status"] = dkim_attrs.get("DkimVerificationStatus")
             result["dkim_tokens"] = dkim_attrs.get("DkimTokens", [])
 
-            result["ready"] = result["verified"] and result["dkim_enabled"]
+            result["ready"] = result["verified"] and result["dkim_status"] == "Success"
 
         except ClientError as e:
             logger.error("Failed to check domain auth", domain=domain, error=str(e))
@@ -624,17 +624,6 @@ class EmailService:
                 "name": f"_dmarc.{domain}",
                 "value": "v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}".format(domain=domain),
                 "purpose": "dmarc",
-                "recommended": True,
-            })
-
-            # Landing page CNAME recommendation
-            stage = os.environ.get("STAGE", "dev")
-            pages_host = "pages.complens.ai" if stage == "prod" else f"pages.{stage}.complens.ai"
-            dns_records.append({
-                "type": "CNAME",
-                "name": domain,
-                "value": pages_host,
-                "purpose": "landing_page",
                 "recommended": True,
             })
 

@@ -1062,7 +1062,6 @@ function SendingDomainsCard({ workspaceId }: { workspaceId: string | undefined }
     dkim: { title: 'DKIM (Email Authentication)', required: true },
     spf: { title: 'SPF (Sender Policy)', required: false },
     dmarc: { title: 'DMARC (Email Policy)', required: false },
-    landing_page: { title: 'Landing Pages (CNAME)', required: false },
   };
 
   // Renders DNS records for a given domain setup result (used by both wizard and saved domain view)
@@ -1077,17 +1076,16 @@ function SendingDomainsCard({ workspaceId }: { workspaceId: string | undefined }
     const getSectionStatus = (purpose: string) => {
       const auth = authData || domain;
       if (purpose === 'domain_verification') return auth.verified ? 'verified' : 'pending';
-      if (purpose === 'dkim') return auth.dkim_enabled ? 'verified' : 'pending';
+      if (purpose === 'dkim') return auth.ready ? 'verified' : 'pending';
       // SPF/DMARC status is only available on the domain object (not authData)
       if (purpose === 'spf') return domain.spf_valid ? 'verified' : 'pending';
       if (purpose === 'dmarc') return domain.dmarc_valid ? 'verified' : 'pending';
-      if (purpose === 'landing_page') return 'pending'; // CNAME status checked server-side
       return 'pending';
     };
 
     return (
       <div className="space-y-4">
-        {(['domain_verification', 'dkim', 'spf', 'dmarc', 'landing_page'] as const).map((purpose) => {
+        {(['domain_verification', 'dkim', 'spf', 'dmarc'] as const).map((purpose) => {
           const purposeRecords = groups[purpose] || [];
           if (purposeRecords.length === 0) return null;
           const info = purposeLabels[purpose];
