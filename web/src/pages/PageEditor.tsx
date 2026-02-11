@@ -442,6 +442,7 @@ export default function PageEditor() {
           <WorkflowsTab
             workspaceId={workspaceId || ''}
             pageId={pageId || ''}
+            siteId={siteId}
           />
         )}
 

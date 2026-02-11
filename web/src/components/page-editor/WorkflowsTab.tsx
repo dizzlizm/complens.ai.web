@@ -6,9 +6,11 @@ import { Plus, Trash2, GitBranch, ExternalLink } from 'lucide-react';
 export interface WorkflowsTabProps {
   workspaceId: string;
   pageId: string;
+  siteId?: string;
 }
 
-export default function WorkflowsTab({ workspaceId, pageId }: WorkflowsTabProps) {
+export default function WorkflowsTab({ workspaceId, pageId, siteId }: WorkflowsTabProps) {
+  const basePath = siteId ? `/sites/${siteId}` : '';
   const { data: pageWorkflows } = usePageWorkflows(workspaceId, pageId);
   const deleteWorkflow = useDeletePageWorkflow(workspaceId || '', pageId || '');
   const toast = useToast();
@@ -31,7 +33,7 @@ export default function WorkflowsTab({ workspaceId, pageId }: WorkflowsTabProps)
           Page-specific workflows that trigger from this page's forms or events.
         </p>
         <Link
-          to={`/workflows/new?pageId=${pageId}`}
+          to={`${basePath}/workflows/new?pageId=${pageId}`}
           className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
         >
           <Plus className="w-4 h-4" />
@@ -57,7 +59,7 @@ export default function WorkflowsTab({ workspaceId, pageId }: WorkflowsTabProps)
               </div>
               <div className="flex items-center gap-2">
                 <Link
-                  to={`/workflows/${workflow.id}`}
+                  to={`${basePath}/workflows/${workflow.id}`}
                   className="p-2 text-gray-400 hover:text-indigo-600"
                   title="Edit workflow"
                 >
@@ -78,7 +80,7 @@ export default function WorkflowsTab({ workspaceId, pageId }: WorkflowsTabProps)
         <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
           <p className="text-gray-500 mb-2">No workflows for this page yet</p>
           <Link
-            to={`/workflows/new?pageId=${pageId}`}
+            to={`${basePath}/workflows/new?pageId=${pageId}`}
             className="text-indigo-600 hover:text-indigo-700 font-medium"
           >
             Create your first workflow
@@ -89,7 +91,7 @@ export default function WorkflowsTab({ workspaceId, pageId }: WorkflowsTabProps)
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <p className="text-sm text-blue-800">
           <strong>Tip:</strong> Workspace-level workflows (not attached to a page) can be managed from the{' '}
-          <Link to="/workflows" className="underline hover:text-blue-900">
+          <Link to={`${basePath}/workflows`} className="underline hover:text-blue-900">
             Workflows page
           </Link>
           .
