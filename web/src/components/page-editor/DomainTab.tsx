@@ -194,12 +194,12 @@ export default function DomainTab({
               </svg>
               This page is available at{' '}
               <a
-                href={`https://${siteDomain}/${pageSlug}`}
+                href={subdomain ? `https://${subdomain}.${siteDomain}` : `https://${siteDomain}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="font-medium text-green-700 hover:underline"
               >
-                {`https://${siteDomain}/${pageSlug}`}
+                {subdomain ? `https://${subdomain}.${siteDomain}` : `https://${siteDomain}`}
               </a>
             </p>
           </div>
