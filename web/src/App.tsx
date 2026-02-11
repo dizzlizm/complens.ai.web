@@ -19,6 +19,7 @@ import Workflows from './pages/Workflows';
 import WorkflowEditor from './pages/WorkflowEditor';
 import Contacts from './pages/Contacts';
 import ContactDetail from './pages/ContactDetail';
+import DealPipeline from './pages/DealPipeline';
 import Pages from './pages/Pages';
 import PageEditor from './pages/PageEditor';
 // Forms removed - now managed inside Page Editor
@@ -73,6 +74,7 @@ function App() {
             <Route path="/workflows/:id" element={<WorkflowEditor />} />
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/contacts/:id" element={<ContactDetail />} />
+            <Route path="/deals" element={<DealPipeline />} />
             <Route path="/pages" element={<Pages />} />
             <Route path="/pages/:id" element={<PageEditor />} />
             {/* Forms routes removed - forms are now managed inside Page Editor */}

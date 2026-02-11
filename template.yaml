@@ -1046,6 +1046,65 @@ Resources:
             Path: /workspaces/{workspace_id}/contacts/export
             Method: GET
 
+  DealsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: deals.handler
+      CodeUri: src/handlers/api/
+      Description: Deals pipeline CRUD operations
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Events:
+        List:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/deals
+            Method: GET
+        Create:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/deals
+            Method: POST
+        Get:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/deals/{deal_id}
+            Method: GET
+        Update:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/deals/{deal_id}
+            Method: PUT
+        Delete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/deals/{deal_id}
+            Method: DELETE
+        Move:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/deals/{deal_id}/move
+            Method: PUT
+        GetPipeline:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pipeline
+            Method: GET
+        UpdatePipeline:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/pipeline
+            Method: PUT
+
   ConversationsFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -3044,7 +3103,9 @@ Resources:
   RestApiBasePathMapping:
     Type: AWS::ApiGateway::BasePathMapping
     Condition: CustomDomainEnabled
-    DependsOn: RestApiDomainName
+    DependsOn:
+      - RestApiDomainName
+      - RestApiStage
     Properties:
       DomainName: !Ref RestApiDomainName
       RestApiId: !Ref RestApi

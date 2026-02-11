@@ -2,6 +2,7 @@ export * from './useWorkspaces';
 export * from './useWorkflows';
 export * from './useWorkflowEvents';
 export * from './useContacts';
+export * from './useDeals';
 export * from './usePages';
 export * from './useForms';
 export * from './usePublicPage';
