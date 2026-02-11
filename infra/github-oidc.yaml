@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: GitHub Actions OIDC provider and deploy role for Complens.ai
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: dizzlizm
+  GitHubRepo:
+    Type: String
+    Default: complens.ai.web
+
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  GitHubActionsDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: GitHubActionsDeployRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !GetAtt GitHubOIDCProvider.Arn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOrg}/${GitHubRepo}:*
+      Policies:
+        - PolicyName: ComplensDeployPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: CloudFormation
+                Effect: Allow
+                Action:
+                  - cloudformation:*
+                Resource: '*'
+              - Sid: S3
+                Effect: Allow
+                Action:
+                  - s3:*
+                Resource: '*'
+              - Sid: Lambda
+                Effect: Allow
+                Action:
+                  - lambda:*
+                Resource: '*'
+              - Sid: IAM
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:UpdateRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:CreateServiceLinkedRole
+                Resource: '*'
+              - Sid: APIGateway
+                Effect: Allow
+                Action:
+                  - apigateway:*
+                Resource: '*'
+              - Sid: DynamoDB
+                Effect: Allow
+                Action:
+                  - dynamodb:*
+                Resource: '*'
+              - Sid: Cognito
+                Effect: Allow
+                Action:
+                  - cognito-idp:*
+                Resource: '*'
+              - Sid: SQS
+                Effect: Allow
+                Action:
+                  - sqs:*
+                Resource: '*'
+              - Sid: EventBridge
+                Effect: Allow
+                Action:
+                  - events:*
+                  - scheduler:*
+                Resource: '*'
+              - Sid: StepFunctions
+                Effect: Allow
+                Action:
+                  - states:*
+                Resource: '*'
+              - Sid: CloudFront
+                Effect: Allow
+                Action:
+                  - cloudfront:*
+                Resource: '*'
+              - Sid: Route53
+                Effect: Allow
+                Action:
+                  - route53:*
+                  - route53:ChangeResourceRecordSets
+                Resource: '*'
+              - Sid: ACM
+                Effect: Allow
+                Action:
+                  - acm:*
+                Resource: '*'
+              - Sid: SES
+                Effect: Allow
+                Action:
+                  - ses:*
+                Resource: '*'
+              - Sid: SSM
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                Resource: '*'
+              - Sid: SNS
+                Effect: Allow
+                Action:
+                  - sns:*
+                Resource: '*'
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:*
+                Resource: '*'
+              - Sid: Bedrock
+                Effect: Allow
+                Action:
+                  - bedrock:*
+                Resource: '*'
+
+Outputs:
+  RoleArn:
+    Description: ARN of the GitHub Actions deploy role
+    Value: !GetAtt GitHubActionsDeployRole.Arn
+  OIDCProviderArn:
+    Description: ARN of the GitHub OIDC provider
+    Value: !GetAtt GitHubOIDCProvider.Arn
