@@ -120,6 +120,34 @@ class KnowledgeBaseService:
         except Exception as e:
             logger.error("Failed to delete document files", error=str(e))
 
+    def get_document_content(self, bucket: str, processed_key: str) -> str:
+        """Read markdown content from S3.
+
+        Args:
+            bucket: S3 bucket name.
+            processed_key: S3 key for the processed markdown file.
+
+        Returns:
+            Markdown content string.
+        """
+        response = self.s3.get_object(Bucket=bucket, Key=processed_key)
+        return response["Body"].read().decode("utf-8")
+
+    def put_document_content(self, bucket: str, processed_key: str, content: str) -> None:
+        """Write markdown content to S3.
+
+        Args:
+            bucket: S3 bucket name.
+            processed_key: S3 key for the processed markdown file.
+            content: Markdown content to write.
+        """
+        self.s3.put_object(
+            Bucket=bucket,
+            Key=processed_key,
+            Body=content.encode("utf-8"),
+            ContentType="text/markdown",
+        )
+
     def retrieve(
         self,
         workspace_id: str,

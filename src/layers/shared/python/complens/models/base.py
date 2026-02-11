@@ -34,6 +34,7 @@ class BaseModel(TimestampMixin):
     model_config = ConfigDict(
         populate_by_name=True,
         use_enum_values=True,
+        validate_assignment=True,
         json_encoders={datetime: lambda v: v.isoformat()},
     )
 

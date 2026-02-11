@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { usePageForms, useCreatePageForm, useDeletePageForm, type Form, type FormField } from '../../lib/hooks/useForms';
+import { usePageForms, useCreatePageForm, useUpdatePageForm, useDeletePageForm, type Form, type FormField } from '../../lib/hooks/useForms';
 import { useSynthesizePage } from '../../lib/hooks/useAI';
 import { useToast } from '../Toast';
 import FormBuilder from '../FormBuilder';
-import { Plus, Trash2, Sparkles, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Pencil, Sparkles, Loader2 } from 'lucide-react';
 
 export interface FormsTabProps {
   workspaceId: string;
@@ -31,6 +31,12 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
     submitButtonText: 'Submit',
     successMessage: 'Thank you for your submission!',
   });
+
+  const updateForm = useUpdatePageForm(
+    workspaceId || '',
+    pageId || '',
+    editingForm?.id || '',
+  );
 
   const createFormFieldId = () => crypto.randomUUID().slice(0, 8);
 
@@ -66,29 +72,61 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
     };
   };
 
-  const handleCreateForm = async () => {
-    try {
-      await createForm.mutateAsync({
-        name: formBuilderData.name,
-        fields: formBuilderData.fields,
-        submit_button_text: formBuilderData.submitButtonText,
-        success_message: formBuilderData.successMessage,
-        create_contact: true,
-        trigger_workflow: true,
-      });
-      setShowFormBuilder(false);
-      setFormBuilderData({
-        name: 'New Form',
-        fields: [],
-        submitButtonText: 'Submit',
-        successMessage: 'Thank you for your submission!',
-      });
-      setAiFormDescription('');
-      toast.success('Form created successfully');
-    } catch (err) {
-      console.error('Failed to create form:', err);
-      toast.error('Failed to create form');
+  const resetBuilder = () => {
+    setShowFormBuilder(false);
+    setEditingForm(null);
+    setAiFormDescription('');
+    setFormBuilderData({
+      name: 'New Form',
+      fields: [],
+      submitButtonText: 'Submit',
+      successMessage: 'Thank you for your submission!',
+    });
+  };
+
+  const handleSaveForm = async () => {
+    if (editingForm) {
+      try {
+        await updateForm.mutateAsync({
+          name: formBuilderData.name,
+          fields: formBuilderData.fields,
+          submit_button_text: formBuilderData.submitButtonText,
+          success_message: formBuilderData.successMessage,
+        });
+        resetBuilder();
+        toast.success('Form updated successfully');
+      } catch (err) {
+        console.error('Failed to update form:', err);
+        toast.error('Failed to update form');
+      }
+    } else {
+      try {
+        await createForm.mutateAsync({
+          name: formBuilderData.name,
+          fields: formBuilderData.fields,
+          submit_button_text: formBuilderData.submitButtonText,
+          success_message: formBuilderData.successMessage,
+          create_contact: true,
+          trigger_workflow: true,
+        });
+        resetBuilder();
+        toast.success('Form created successfully');
+      } catch (err) {
+        console.error('Failed to create form:', err);
+        toast.error('Failed to create form');
+      }
     }
+  };
+
+  const handleEditForm = (form: Form) => {
+    setEditingForm(form);
+    setFormBuilderData({
+      name: form.name,
+      fields: form.fields,
+      submitButtonText: form.submit_button_text,
+      successMessage: form.success_message,
+    });
+    setShowFormBuilder(true);
   };
 
   const handleAIGenerateForm = async () => {
@@ -158,6 +196,8 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
     }
   };
 
+  const isSaving = editingForm ? updateForm.isPending : createForm.isPending;
+
   return (
     <div className="space-y-6">
       {/* Form Builder Modal */}
@@ -168,11 +208,7 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
               {editingForm ? 'Edit Form' : 'Create New Form'}
             </h3>
             <button
-              onClick={() => {
-                setShowFormBuilder(false);
-                setEditingForm(null);
-                setAiFormDescription('');
-              }}
+              onClick={resetBuilder}
               className="text-gray-500 hover:text-gray-700"
             >
               Cancel
@@ -191,44 +227,46 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
             />
           </div>
 
-          <div className="border border-indigo-100 rounded-lg p-4 bg-indigo-50/40">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium text-indigo-900">Build with AI</p>
-                <p className="text-xs text-indigo-700">Describe the form and we'll draft the fields for you.</p>
+          {!editingForm && (
+            <div className="border border-indigo-100 rounded-lg p-4 bg-indigo-50/40">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-indigo-900">Build with AI</p>
+                  <p className="text-xs text-indigo-700">Describe the form and we'll draft the fields for you.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAIGenerateForm}
+                  disabled={synthesizePage.isPending}
+                  className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
+                >
+                  {synthesizePage.isPending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Build with AI
+                    </>
+                  )}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={handleAIGenerateForm}
-                disabled={synthesizePage.isPending}
-                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
-              >
-                {synthesizePage.isPending ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    Build with AI
-                  </>
-                )}
-              </button>
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-indigo-900 mb-1">
+                  Form description
+                </label>
+                <textarea
+                  value={aiFormDescription}
+                  onChange={(e) => setAiFormDescription(e.target.value)}
+                  rows={3}
+                  placeholder="e.g., Intake form for a photography studio with name, email, event date, and budget."
+                  className="w-full px-3 py-2 border border-indigo-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                />
+              </div>
             </div>
-            <div className="mt-3">
-              <label className="block text-xs font-medium text-indigo-900 mb-1">
-                Form description
-              </label>
-              <textarea
-                value={aiFormDescription}
-                onChange={(e) => setAiFormDescription(e.target.value)}
-                rows={3}
-                placeholder="e.g., Intake form for a photography studio with name, email, event date, and budget."
-                className="w-full px-3 py-2 border border-indigo-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-              />
-            </div>
-          </div>
+          )}
 
           <FormBuilder
             fields={formBuilderData.fields}
@@ -241,21 +279,20 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
 
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button
-              onClick={() => {
-                setShowFormBuilder(false);
-                setEditingForm(null);
-                setAiFormDescription('');
-              }}
+              onClick={resetBuilder}
               className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
             >
               Cancel
             </button>
             <button
-              onClick={handleCreateForm}
-              disabled={createForm.isPending || synthesizePage.isPending || !formBuilderData.name.trim()}
+              onClick={handleSaveForm}
+              disabled={isSaving || synthesizePage.isPending || !formBuilderData.name.trim()}
               className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
             >
-              {createForm.isPending ? 'Creating...' : 'Create Form'}
+              {isSaving
+                ? (editingForm ? 'Saving...' : 'Creating...')
+                : (editingForm ? 'Save Changes' : 'Create Form')
+              }
             </button>
           </div>
         </div>
@@ -288,6 +325,13 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleEditForm(form)}
+                      className="p-2 text-gray-400 hover:text-indigo-600"
+                      title="Edit form"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => handleDeleteForm(form.id)}
                       className="p-2 text-gray-400 hover:text-red-500"

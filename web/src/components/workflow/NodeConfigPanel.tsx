@@ -5,6 +5,7 @@ import { useForms, usePageForms } from '../../lib/hooks/useForms';
 import { usePages, usePage } from '../../lib/hooks/usePages';
 import { useWorkflows } from '../../lib/hooks/useWorkflows';
 import { useContacts } from '../../lib/hooks/useContacts';
+import { useListDomains } from '../../lib/hooks/useEmailWarmup';
 import EmailPreview from '../workflow-builder/EmailPreview';
 
 interface NodeData {
@@ -47,7 +48,7 @@ interface FieldConfig {
   type: 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'dynamic_select' | 'multi_select' | 'tag_input' | 'conditions';
   placeholder?: string;
   options?: { value: string; label: string }[];
-  dataSource?: 'forms' | 'pages' | 'workflows' | 'tags' | 'contact_fields';
+  dataSource?: 'forms' | 'pages' | 'workflows' | 'tags' | 'contact_fields' | 'domains';
   helperText?: string;
   defaultValue?: unknown;
 }
@@ -246,7 +247,7 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
       { key: 'email_to', label: 'To', type: 'text', placeholder: '{{contact.email}}', helperText: 'Recipient email address' },
       { key: 'email_subject', label: 'Subject', type: 'text', placeholder: 'Thanks for reaching out!' },
       { key: 'email_body', label: 'Body', type: 'textarea', placeholder: 'Hi {{contact.first_name}},\n\nThanks for your message!\n\nBest regards' },
-      { key: 'email_from', label: 'From Email', type: 'text', placeholder: 'noreply@complens.ai', helperText: 'Sender email address' },
+      { key: 'email_from', label: 'From Email', type: 'dynamic_select', dataSource: 'domains', helperText: 'Sender email address (uses workspace default if not set)' },
     ],
   },
   action_send_sms: {
@@ -862,6 +863,7 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
 
   const { data: workflows, isLoading: isLoadingWorkflows } = useWorkflows(workspaceId || '');
   const { data: contactsData, isLoading: isLoadingContacts } = useContacts(workspaceId || '', { limit: 100 });
+  const { data: domainsData, isLoading: isLoadingDomains } = useListDomains(workspaceId);
 
   // Extract unique tags from contacts
   const allTags = useMemo(() => {
@@ -916,10 +918,24 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
           options: CONTACT_FIELDS,
           isLoading: false,
         };
+      case 'domains': {
+        const domainOptions = domainsData?.items
+          ?.filter(d => d.ready)
+          .flatMap(d => [
+            { value: `noreply@${d.domain}`, label: `noreply@${d.domain}` },
+            { value: `hello@${d.domain}`, label: `hello@${d.domain}` },
+            { value: `info@${d.domain}`, label: `info@${d.domain}` },
+          ]) || [];
+        return {
+          options: domainOptions,
+          isLoading: isLoadingDomains,
+          contextNote: domainOptions.length > 0 ? 'Showing verified domains' : undefined,
+        };
+      }
       default:
         return { options: [], isLoading: false };
     }
-  }, [forms, pages, workflows, allTags, isLoadingForms, isLoadingPages, isLoadingWorkflows, isLoadingContacts, isPageContext, currentPage, pageId]);
+  }, [forms, pages, workflows, allTags, isLoadingForms, isLoadingPages, isLoadingWorkflows, isLoadingContacts, isPageContext, currentPage, pageId, domainsData, isLoadingDomains]);
 
   // Initialize local state when node changes
   useEffect(() => {

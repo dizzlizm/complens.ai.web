@@ -155,6 +155,20 @@ export interface GeneratedImage {
   prompt: string;
 }
 
+// Workflow step suggestion types
+export interface SuggestNextStepInput {
+  nodes: Array<{ id: string; type: string; label: string; config?: Record<string, unknown> }>;
+  edges: Array<{ source: string; target: string }>;
+  source_node_id: string;
+}
+
+export interface WorkflowStepSuggestion {
+  node_type: string;
+  label: string;
+  description: string;
+  config: Record<string, unknown>;
+}
+
 // Workflow generation types
 export interface GenerateWorkflowInput {
   description: string;
@@ -521,6 +535,57 @@ export function useGenerateWorkflow(workspaceId: string) {
         input
       );
       return data.workflow;
+    },
+  });
+}
+
+// Generate a complete workflow for a landing page
+export interface GeneratePageWorkflowInput {
+  page_id: string;
+}
+
+export interface GeneratedPageWorkflowResult {
+  name: string;
+  description: string;
+  trigger_type: string;
+  nodes: Array<{
+    id: string;
+    type: string;
+    position: { x: number; y: number };
+    data: {
+      label: string;
+      nodeType: string;
+      config: Record<string, unknown>;
+    };
+  }>;
+  edges: Array<{
+    id: string;
+    source: string;
+    target: string;
+  }>;
+}
+
+export function useGeneratePageWorkflow(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: GeneratePageWorkflowInput) => {
+      const { data } = await api.post<{ workflow: GeneratedPageWorkflowResult }>(
+        `/workspaces/${workspaceId}/ai/generate-page-workflow`,
+        input
+      );
+      return data.workflow;
+    },
+  });
+}
+
+// Suggest next workflow step using AI
+export function useSuggestNextStep(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: SuggestNextStepInput) => {
+      const { data } = await api.post<{ suggestions: WorkflowStepSuggestion[] }>(
+        `/workspaces/${workspaceId}/ai/suggest-workflow-step`,
+        input
+      );
+      return data.suggestions;
     },
   });
 }

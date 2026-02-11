@@ -59,6 +59,14 @@ from complens.models.block_schemas import (
     validate_block_config,
     DEFAULT_BLOCK_CONFIGS,
 )
+from complens.models.warmup_domain import (
+    WarmupDomain,
+    WarmupStatus,
+    StartWarmupRequest,
+    WarmupStatusResponse,
+    DEFAULT_WARMUP_SCHEDULE,
+)
+from complens.models.deferred_email import DeferredEmail
 
 __all__ = [
     # Base
@@ -131,4 +139,12 @@ __all__ = [
     "BLOCK_SCHEMAS",
     "validate_block_config",
     "DEFAULT_BLOCK_CONFIGS",
+    # Warmup Domain
+    "WarmupDomain",
+    "WarmupStatus",
+    "StartWarmupRequest",
+    "WarmupStatusResponse",
+    "DEFAULT_WARMUP_SCHEDULE",
+    # Deferred Email
+    "DeferredEmail",
 ]

@@ -1,6 +1,7 @@
 """Knowledge base API handler."""
 
 import json
+import os
 from typing import Any
 
 import structlog
@@ -50,6 +51,12 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return list_documents(repo, workspace_id, event)
         elif http_method == "POST" and not document_id:
             return create_document(repo, kb_service, workspace_id, event)
+        elif path.endswith("/confirm-upload") and http_method == "POST" and document_id:
+            return confirm_upload(repo, workspace_id, document_id)
+        elif path.endswith("/content") and http_method == "GET" and document_id:
+            return get_document_content(repo, kb_service, workspace_id, document_id)
+        elif path.endswith("/content") and http_method == "PUT" and document_id:
+            return update_document_content(repo, kb_service, workspace_id, document_id, event)
         elif http_method == "DELETE" and document_id:
             return delete_document(repo, kb_service, workspace_id, document_id)
         else:
@@ -145,6 +152,146 @@ def create_document(
     result["upload_url"] = upload_url
 
     return created(result)
+
+
+def confirm_upload(
+    repo: DocumentRepository,
+    workspace_id: str,
+    document_id: str,
+) -> dict:
+    """Confirm a document upload, process it to markdown, and mark as indexed.
+
+    Args:
+        repo: Document repository.
+        workspace_id: Workspace ID.
+        document_id: Document ID.
+
+    Returns:
+        API response with updated document.
+    """
+    from complens.services.document_processor import process_document
+
+    document = repo.get_by_id(workspace_id, document_id)
+    if not document:
+        return not_found("document", document_id)
+
+    # Mark as processing
+    document.status = DocumentStatus.PROCESSING
+    document.update_timestamp()
+    repo.update_document(document)
+
+    bucket = os.environ.get("KB_DOCUMENTS_BUCKET", "")
+
+    try:
+        processed_key = process_document(
+            bucket=bucket,
+            file_key=document.file_key,
+            content_type=document.content_type,
+            name=document.name,
+        )
+        document.processed_key = processed_key
+        document.status = DocumentStatus.INDEXED
+    except Exception as e:
+        logger.error("Document processing failed", document_id=document_id, error=str(e))
+        document.status = DocumentStatus.FAILED
+        document.error_message = str(e)
+
+    document.update_timestamp()
+    document = repo.update_document(document)
+
+    logger.info(
+        "Document upload confirmed",
+        workspace_id=workspace_id,
+        document_id=document_id,
+        status=document.status,
+    )
+
+    return success(document.model_dump(mode="json", by_alias=True))
+
+
+def get_document_content(
+    repo: DocumentRepository,
+    kb_service,
+    workspace_id: str,
+    document_id: str,
+) -> dict:
+    """Get processed markdown content for a document.
+
+    Args:
+        repo: Document repository.
+        kb_service: Knowledge base service.
+        workspace_id: Workspace ID.
+        document_id: Document ID.
+
+    Returns:
+        API response with document content.
+    """
+    document = repo.get_by_id(workspace_id, document_id)
+    if not document:
+        return not_found("document", document_id)
+
+    if not document.processed_key:
+        return error("Document has not been processed yet", 400)
+
+    bucket = os.environ.get("KB_DOCUMENTS_BUCKET", "")
+    content = kb_service.get_document_content(bucket, document.processed_key)
+
+    return success({
+        "document_id": document.id,
+        "name": document.name,
+        "content": content,
+        "status": document.status,
+    })
+
+
+def update_document_content(
+    repo: DocumentRepository,
+    kb_service,
+    workspace_id: str,
+    document_id: str,
+    event: dict,
+) -> dict:
+    """Update processed markdown content for a document.
+
+    Args:
+        repo: Document repository.
+        kb_service: Knowledge base service.
+        workspace_id: Workspace ID.
+        document_id: Document ID.
+        event: API Gateway event.
+
+    Returns:
+        API response with updated document.
+    """
+    document = repo.get_by_id(workspace_id, document_id)
+    if not document:
+        return not_found("document", document_id)
+
+    if not document.processed_key:
+        return error("Document has not been processed yet", 400)
+
+    body = json.loads(event.get("body", "{}"))
+    content = body.get("content")
+    if content is None:
+        return validation_error([{"loc": ["content"], "msg": "Content is required"}])
+
+    bucket = os.environ.get("KB_DOCUMENTS_BUCKET", "")
+    kb_service.put_document_content(bucket, document.processed_key, content)
+
+    document.update_timestamp()
+    repo.update_document(document)
+
+    logger.info(
+        "Document content updated",
+        workspace_id=workspace_id,
+        document_id=document_id,
+    )
+
+    return success({
+        "document_id": document.id,
+        "name": document.name,
+        "status": document.status,
+    })
 
 
 def delete_document(

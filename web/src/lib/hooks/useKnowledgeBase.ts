@@ -76,6 +76,61 @@ export function useCreateKBDocument(workspaceId: string) {
   });
 }
 
+export function useConfirmKBUpload(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (documentId: string) => {
+      const { data } = await api.post<KBDocument>(
+        `/workspaces/${workspaceId}/knowledge-base/documents/${documentId}/confirm-upload`
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kb-documents', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['kb-status', workspaceId] });
+    },
+  });
+}
+
+export interface KBDocumentContent {
+  document_id: string;
+  name: string;
+  content: string;
+  status: string;
+}
+
+export function useKBDocumentContent(workspaceId: string | undefined, documentId: string | undefined) {
+  return useQuery({
+    queryKey: ['kb-document-content', workspaceId, documentId],
+    queryFn: async () => {
+      const { data } = await api.get<KBDocumentContent>(
+        `/workspaces/${workspaceId}/knowledge-base/documents/${documentId}/content`
+      );
+      return data;
+    },
+    enabled: !!workspaceId && !!documentId,
+  });
+}
+
+export function useUpdateKBDocumentContent(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ documentId, content }: { documentId: string; content: string }) => {
+      const { data } = await api.put(
+        `/workspaces/${workspaceId}/knowledge-base/documents/${documentId}/content`,
+        { content }
+      );
+      return data;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['kb-document-content', workspaceId, variables.documentId] });
+      queryClient.invalidateQueries({ queryKey: ['kb-documents', workspaceId] });
+    },
+  });
+}
+
 export function useDeleteKBDocument(workspaceId: string) {
   const queryClient = useQueryClient();
 

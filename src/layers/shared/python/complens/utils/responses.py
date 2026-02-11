@@ -60,6 +60,8 @@ def _json_serializer(obj: Any) -> Any:
         return obj.model_dump(mode="json")
     if hasattr(obj, "to_dict"):
         return obj.to_dict()
+    if isinstance(obj, Exception):
+        return str(obj)
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 

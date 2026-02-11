@@ -514,10 +514,8 @@ export default function AgenticPageBuilder({
       addSystemMessage('🎨 Generating hero image...');
       let heroUrl: string | null = null;
       try {
-        const imagePrompt = buildImagePrompt(generatedContent, style);
         const imageResult = await generateImage.mutateAsync({
-          prompt: imagePrompt,
-          context: result.business_name || 'business',
+          context: buildImageContext(generatedContent, style),
           style,
         });
         if (imageResult?.url) {
@@ -673,10 +671,8 @@ export default function AgenticPageBuilder({
 
     let heroUrl: string | null = null;
     try {
-      const imagePrompt = buildImagePrompt(generatedContent, style);
       const imageResult = await generateImage.mutateAsync({
-        prompt: imagePrompt,
-        context: generatedContent.business_info?.business_name || 'business',
+        context: buildImageContext(generatedContent, style),
         style,
       });
       if (imageResult?.url) {
@@ -700,11 +696,12 @@ export default function AgenticPageBuilder({
 
       for (let i = 0; i < Math.min(testimonialConcepts.length, 3); i++) {
         try {
-          const avatarPrompt = buildAvatarPrompt(i, style);
+          const concept = testimonialConcepts[i] || {};
           const avatarResult = await generateImage.mutateAsync({
-            prompt: avatarPrompt,
-            context: `testimonial-avatar-${i}-${Date.now()}`,
+            context: buildAvatarContext(concept, style),
             style,
+            width: 512,
+            height: 512,
           });
           if (avatarResult?.url) {
             avatarUrls.push(avatarResult.url);
@@ -1924,69 +1921,20 @@ function buildBlocksFromContent(
   return blocks;
 }
 
-function buildImagePrompt(content: GeneratedPageContent, style: WizardStyle): string {
+function buildImageContext(content: GeneratedPageContent, style: WizardStyle): string {
   const businessName = content.business_info?.business_name || '';
   const industry = content.business_info?.industry || 'business';
-  const businessType = content.business_info?.business_type || 'professional';
   const tagline = content.content.tagline || '';
   const headline = content.content.headlines?.[0] || '';
 
-  // Extract keywords from the business context for more specific imagery
-  const contextWords = [businessName, tagline, headline, industry]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+  const parts = [businessName, headline, tagline, `${industry} industry`]
+    .filter(Boolean);
 
-  let prompt = '';
-
-  // Style-specific visual approaches
-  const styleDescriptions: Record<WizardStyle, string> = {
-    professional: 'clean corporate photography, business professional, polished, trustworthy',
-    bold: 'vibrant dynamic imagery, high contrast, energetic, impactful visuals',
-    minimal: 'simple elegant design, lots of white space, subtle, refined aesthetic',
-    playful: 'colorful creative imagery, fun approachable, friendly vibrant',
-  };
-
-  // Build industry/type specific imagery
-  if (contextWords.includes('tech') || contextWords.includes('software') || contextWords.includes('saas') || contextWords.includes('app')) {
-    prompt = `Modern technology workspace, sleek devices, digital innovation, futuristic elements. `;
-  } else if (contextWords.includes('health') || contextWords.includes('wellness') || contextWords.includes('fitness')) {
-    prompt = `Healthy lifestyle imagery, wellness and vitality, natural light, serene environment. `;
-  } else if (contextWords.includes('food') || contextWords.includes('restaurant') || contextWords.includes('chef')) {
-    prompt = `Appetizing culinary scene, fresh ingredients, warm inviting atmosphere. `;
-  } else if (contextWords.includes('finance') || contextWords.includes('invest') || contextWords.includes('money')) {
-    prompt = `Financial success imagery, growth charts, prosperity, professional confidence. `;
-  } else if (contextWords.includes('creative') || contextWords.includes('design') || contextWords.includes('art')) {
-    prompt = `Creative studio environment, artistic tools, inspiration, innovative workspace. `;
-  } else if (contextWords.includes('consult') || contextWords.includes('coach') || contextWords.includes('mentor')) {
-    prompt = `Professional consultation scene, confident guidance, collaborative meeting. `;
-  } else if (contextWords.includes('real estate') || contextWords.includes('home') || contextWords.includes('property')) {
-    prompt = `Beautiful property exterior, dream home, architectural elegance, inviting spaces. `;
-  } else if (businessType === 'freelancer' || businessType === 'consultant') {
-    prompt = `Modern professional workspace, clean organized desk, natural lighting. `;
-  } else if (businessType === 'agency') {
-    prompt = `Creative team collaboration, modern office environment, innovative thinking. `;
-  } else {
-    prompt = `Professional ${industry} imagery, successful business environment. `;
-  }
-
-  prompt += `${styleDescriptions[style]}. `;
-  prompt += `Hero banner image, wide aspect ratio, no text or logos, cinematic quality, photorealistic.`;
-
-  return prompt.substring(0, 500);
+  return `Hero banner for: ${parts.join(' — ')}. Visual style: ${style}. Wide aspect ratio, no text or logos, cinematic quality.`;
 }
 
-function buildAvatarPrompt(index: number, style: WizardStyle): string {
-  // Each entry is a complete, distinct person description to maximize visual diversity
-  const avatarDescriptions = [
-    'Portrait photo of a young woman with short dark hair, early 30s, warm confident smile, wearing a navy blazer, soft studio lighting on white background',
-    'Portrait photo of a middle-aged man with glasses and salt-and-pepper hair, late 40s, friendly genuine expression, wearing a light blue shirt, outdoor natural daylight with blurred greenery',
-    'Portrait photo of a woman with curly auburn hair, mid 50s, approachable kind eyes, wearing a cream sweater, modern office with window light',
-    'Portrait photo of a young man with a neat beard and brown skin, late 20s, enthusiastic grin, wearing a dark polo shirt, neutral gray backdrop with side lighting',
-    'Portrait photo of a senior woman with silver hair pulled back, 60s, wise warm smile, wearing a burgundy top, bright airy background with soft focus',
-  ];
-
-  const description = avatarDescriptions[index % avatarDescriptions.length];
-
-  return `${description}, high quality corporate photography, sharp focus, photorealistic, ${style} aesthetic`.substring(0, 500);
+function buildAvatarContext(testimonialConcept: string | { author?: string; company?: string; quote?: string }, style: WizardStyle): string {
+  // testimonial_concepts can be strings (quotes) or objects
+  const quote = typeof testimonialConcept === 'string' ? testimonialConcept : (testimonialConcept.quote || '');
+  return `Professional headshot portrait of a person who might say: "${quote.slice(0, 100)}". Photorealistic corporate photography, ${style} aesthetic, clean background, well-lit, friendly expression.`;
 }

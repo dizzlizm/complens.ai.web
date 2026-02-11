@@ -40,6 +40,9 @@ export default function ChatWidget({
   const ws = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const visitorId = useRef<string>(getOrCreateVisitorId());
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttempts = useRef(0);
+  const intentionalClose = useRef(false);
 
   // Notify parent frame (if embedded) when chat opens/closes
   const isEmbedded = window !== window.parent;
@@ -65,17 +68,16 @@ export default function ChatWidget({
   // Track whether initial message has been shown
   const initialMessageShown = useRef(false);
 
-  // Connect to WebSocket when chat opens.
-  // IMPORTANT: Do NOT include messages.length in deps — that would close and
-  // reopen the connection on every sent message, causing "Connection is gone".
-  useEffect(() => {
-    if (!isOpen || !WS_URL) return;
+  // Connect/reconnect WebSocket
+  const connectWebSocket = useCallback(() => {
+    if (!WS_URL) return;
 
     const wsUrl = `${WS_URL}?page_id=${pageId}&workspace_id=${workspaceId}&visitor_id=${visitorId.current}`;
     ws.current = new WebSocket(wsUrl);
 
     ws.current.onopen = () => {
       setIsConnected(true);
+      reconnectAttempts.current = 0;
 
       // Add initial message if configured (only once)
       if (config.initial_message && !initialMessageShown.current) {
@@ -112,20 +114,43 @@ export default function ChatWidget({
 
     ws.current.onclose = () => {
       setIsConnected(false);
+      // Auto-reconnect unless we intentionally closed
+      if (!intentionalClose.current) {
+        const delay = Math.min(1000 * 2 ** reconnectAttempts.current, 10000);
+        reconnectAttempts.current += 1;
+        reconnectTimer.current = setTimeout(connectWebSocket, delay);
+      }
     };
 
     ws.current.onerror = (error) => {
       console.error('WebSocket error:', error);
-      setIsConnected(false);
+      // onclose will fire after onerror, which handles reconnection
     };
+  }, [pageId, workspaceId, config.initial_message]);
+
+  // Manage WebSocket lifecycle based on chat open/close state
+  useEffect(() => {
+    if (!isOpen || !WS_URL) return;
+
+    intentionalClose.current = false;
+    reconnectAttempts.current = 0;
+    connectWebSocket();
 
     return () => {
+      intentionalClose.current = true;
+      if (reconnectTimer.current) {
+        clearTimeout(reconnectTimer.current);
+        reconnectTimer.current = null;
+      }
       ws.current?.close();
     };
-  }, [isOpen, pageId, workspaceId, config.initial_message]);
+  }, [isOpen, connectWebSocket]);
+
+  // Allow sending if connected or if we're reconnecting (message will queue)
+  const canSend = isConnected || reconnectAttempts.current < 3;
 
   const sendMessage = () => {
-    if (!inputValue.trim() || !ws.current || !isConnected) return;
+    if (!inputValue.trim() || !ws.current || ws.current.readyState !== WebSocket.OPEN) return;
 
     const message: ChatMessage = {
       id: crypto.randomUUID(),
@@ -252,11 +277,11 @@ export default function ChatWidget({
               placeholder="Type a message..."
               className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:border-transparent"
               style={{ '--tw-ring-color': primaryColor } as React.CSSProperties}
-              disabled={!isConnected}
+              disabled={!canSend}
             />
             <button
               onClick={sendMessage}
-              disabled={!inputValue.trim() || !isConnected}
+              disabled={!inputValue.trim() || !canSend}
               className="px-4 py-3 rounded-xl text-white font-medium disabled:opacity-50 transition-colors"
               style={{ backgroundColor: primaryColor }}
             >

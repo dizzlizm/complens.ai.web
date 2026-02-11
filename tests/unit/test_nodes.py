@@ -179,13 +179,16 @@ class TestActionNodes:
             },
         )
 
-        result = await action.execute(context)
+        with patch("complens.repositories.contact.ContactRepository") as mock_repo_cls:
+            mock_repo_cls.return_value.update_contact.return_value = sample_contact
+            result = await action.execute(context)
 
         assert result.success
         assert sample_contact.has_tag("customer")
         assert sample_contact.has_tag("verified")
         assert not sample_contact.has_tag("lead")
         assert sample_contact.first_name == "Jonathan"
+        mock_repo_cls.return_value.update_contact.assert_called_once_with(sample_contact)
 
 
 class TestLogicNodes:

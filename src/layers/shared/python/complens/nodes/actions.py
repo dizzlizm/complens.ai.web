@@ -153,8 +153,11 @@ class SendEmailAction(BaseNode):
         template_name = self._get_config_value("email_template_name")
         template_data = self._get_config_value("email_template_data", {})
 
-        # Get from email from config
-        from_email = self._get_config_value("email_from")
+        # Get from email: node config > workspace setting > service default
+        from_email = (
+            self._get_config_value("email_from")
+            or context.workspace_settings.get("from_email")
+        )
 
         if not body_text and not body_html and not template_name:
             return NodeResult.failed(error="Email body or template is required")
@@ -471,13 +474,23 @@ class UpdateContactAction(BaseNode):
             context.contact.remove_tag(tag)
             changes_made.append(f"-tag:{tag}")
 
+        # Persist changes to database
+        try:
+            from complens.repositories.contact import ContactRepository
+            contact_repo = ContactRepository()
+            contact_repo.update_contact(context.contact)
+        except Exception as e:
+            self.logger.error("Failed to save contact", error=str(e))
+            return NodeResult.failed(
+                error=f"Failed to save contact: {e}",
+                error_details={"contact_id": context.contact.id, "changes": changes_made},
+            )
+
         self.logger.info(
             "Contact updated",
             contact_id=context.contact.id,
             changes=changes_made,
         )
-
-        # TODO: Save contact changes to database
 
         return NodeResult.completed(
             output={

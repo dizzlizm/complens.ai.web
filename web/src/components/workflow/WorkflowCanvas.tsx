@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
+import { useCallback, useMemo, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -7,13 +7,13 @@ import {
   addEdge,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   type Connection,
   type Edge,
   type Node,
   type NodeTypes,
   type OnSelectionChangeParams,
   ReactFlowProvider,
-  useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -21,6 +21,8 @@ import TriggerNode from './nodes/TriggerNode';
 import ActionNode from './nodes/ActionNode';
 import LogicNode from './nodes/LogicNode';
 import AINode from './nodes/AINode';
+import AddNodeButton from './AddNodeButton';
+import type { WorkflowStepSuggestion } from '../../lib/hooks/useAI';
 
 const nodeTypes: NodeTypes = {
   trigger: TriggerNode,
@@ -41,6 +43,7 @@ export interface WorkflowCanvasRef {
 
 interface WorkflowCanvasProps {
   workflowId?: string;
+  workspaceId?: string;
   initialNodes?: Node[];
   initialEdges?: Edge[];
   onChange?: (nodes: Node[], edges: Edge[]) => void;
@@ -61,11 +64,11 @@ const defaultNodes: Node[] = [
 ];
 
 const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
-  function WorkflowCanvasInner({ initialNodes, initialEdges, onChange, onNodeSelect }, ref) {
+  function WorkflowCanvasInner({ initialNodes, initialEdges, workspaceId, onChange, onNodeSelect }, ref) {
     const reactFlowWrapper = useRef<HTMLDivElement>(null);
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes || defaultNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges || []);
-    const { screenToFlowPosition, getViewport } = useReactFlow();
+    const { screenToFlowPosition, getViewport, flowToScreenPosition } = useReactFlow();
 
     // Track selected node
     const selectedNodeRef = useRef<Node | null>(null);
@@ -176,10 +179,107 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
       onNodeSelect?.(null);
     }, [onNodeSelect]);
 
+    // Handle adding a suggested node
+    const handleAddSuggestedNode = useCallback((suggestion: WorkflowStepSuggestion, sourceNodeId: string) => {
+      const sourceNode = nodes.find((n) => n.id === sourceNodeId);
+      if (!sourceNode) return;
+
+      // Derive React Flow type category from node_type
+      let rfType = 'action';
+      if (suggestion.node_type.startsWith('trigger_')) rfType = 'trigger';
+      else if (suggestion.node_type.startsWith('action_')) rfType = 'action';
+      else if (suggestion.node_type.startsWith('logic_')) rfType = 'logic';
+      else if (suggestion.node_type.startsWith('ai_')) rfType = 'ai';
+
+      const newNodeId = `${rfType}-${Date.now()}`;
+      const newNode: Node = {
+        id: newNodeId,
+        type: rfType,
+        position: {
+          x: sourceNode.position.x,
+          y: sourceNode.position.y + 150,
+        },
+        data: {
+          label: suggestion.label,
+          nodeType: suggestion.node_type,
+          config: suggestion.config || {},
+        },
+        selected: true,
+      };
+
+      const newEdge: Edge = {
+        id: `e-${sourceNodeId}-${newNodeId}`,
+        source: sourceNodeId,
+        target: newNodeId,
+        animated: true,
+      };
+
+      // Deselect all existing nodes, add new node selected
+      setNodes((nds) => [
+        ...nds.map((n) => ({ ...n, selected: false })),
+        newNode,
+      ]);
+      setEdges((eds) => [...eds, newEdge]);
+
+      // Notify parent of selection change
+      setTimeout(() => {
+        selectedNodeRef.current = newNode;
+        onNodeSelect?.(newNode);
+      }, 0);
+    }, [nodes, setNodes, setEdges, onNodeSelect]);
+
+    // Find nodes without outgoing edges (excluding logic nodes)
+    const nodesWithoutOutgoing = useMemo(() => {
+      const sourceNodeIds = new Set(edges.map((e) => e.source));
+      return nodes.filter(
+        (n) => !sourceNodeIds.has(n.id) && n.type !== 'logic'
+      );
+    }, [nodes, edges]);
+
+    // Build simplified node list for the AI API
+    const simplifiedNodes = useMemo(() =>
+      nodes.map((n) => ({
+        id: n.id,
+        type: (n.data as { nodeType?: string })?.nodeType || n.type || 'action',
+        label: (n.data as { label?: string })?.label || 'Unnamed',
+        config: (n.data as { config?: Record<string, unknown> })?.config,
+      })),
+      [nodes]
+    );
+
+    const simplifiedEdges = useMemo(() =>
+      edges.map((e) => ({ source: e.source, target: e.target })),
+      [edges]
+    );
+
+    // Calculate screen positions for AddNodeButtons
+    const viewport = getViewport();
+    const addButtonPositions = useMemo(() => {
+      return nodesWithoutOutgoing.map((node) => {
+        // Convert flow position to screen position
+        const screenPos = flowToScreenPosition({
+          x: node.position.x + 90, // Center of node (~180px wide)
+          y: node.position.y + 60, // Bottom of node (~50px tall)
+        });
+
+        // Get wrapper position to make coordinates relative
+        const wrapperRect = reactFlowWrapper.current?.getBoundingClientRect();
+        const relX = screenPos.x - (wrapperRect?.left || 0);
+        const relY = screenPos.y - (wrapperRect?.top || 0);
+
+        return {
+          nodeId: node.id,
+          left: relX,
+          top: relY,
+        };
+      });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [nodesWithoutOutgoing, flowToScreenPosition, viewport.x, viewport.y, viewport.zoom]);
+
     return (
       <div
         ref={reactFlowWrapper}
-        className="h-full w-full"
+        className="h-full w-full relative"
         onKeyDown={onKeyDown}
         tabIndex={0}
       >
@@ -219,6 +319,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
             }}
           />
         </ReactFlow>
+
+        {/* AddNodeButton overlay */}
+        {workspaceId && addButtonPositions.map(({ nodeId, left, top }) => (
+          <AddNodeButton
+            key={nodeId}
+            sourceNodeId={nodeId}
+            workspaceId={workspaceId}
+            nodes={simplifiedNodes}
+            edges={simplifiedEdges}
+            onAddNode={handleAddSuggestedNode}
+            style={{
+              left: `${left}px`,
+              top: `${top}px`,
+              transform: 'translateX(-50%)',
+              pointerEvents: 'auto',
+            }}
+          />
+        ))}
       </div>
     );
   }

@@ -33,6 +33,7 @@ class Document(BaseModel):
     workspace_id: str = Field(..., description="Owning workspace ID")
     name: str = Field(..., min_length=1, max_length=255, description="Document name")
     file_key: str = Field(default="", description="S3 object key")
+    processed_key: str = Field(default="", description="S3 key for processed markdown")
     file_size: int = Field(default=0, description="File size in bytes")
     content_type: str = Field(default="", description="MIME type")
     status: DocumentStatus = Field(default=DocumentStatus.PENDING, description="Processing status")
@@ -50,7 +51,7 @@ class Document(BaseModel):
         """Get GSI1 keys for listing documents."""
         return {
             "GSI1PK": f"WS#{self.workspace_id}#DOCS",
-            "GSI1SK": f"{self.status.value}#{self.name}",
+            "GSI1SK": f"{self.status}#{self.name}",
         }
 
 

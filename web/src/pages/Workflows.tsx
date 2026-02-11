@@ -1,14 +1,12 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2, AlertTriangle, X, History, LayoutTemplate } from 'lucide-react';
-import { useWorkflows, useCurrentWorkspace, useDeleteWorkflow, useCreateWorkflow, type Workflow } from '../lib/hooks';
+import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2, AlertTriangle, X, History } from 'lucide-react';
+import { useWorkflows, useCurrentWorkspace, useDeleteWorkflow, type Workflow } from '../lib/hooks';
 import api from '../lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../components/Toast';
 import DropdownMenu, { DropdownItem } from '../components/ui/DropdownMenu';
 import WorkflowRuns from '../components/WorkflowRuns';
-import TemplateLibrary from '../components/workflows/TemplateLibrary';
-import type { WorkflowTemplate } from '../data/workflowTemplates';
 
 // Format trigger type for display
 function formatTriggerType(triggerType: string): string {
@@ -46,31 +44,13 @@ export default function Workflows() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [viewingRunsWorkflow, setViewingRunsWorkflow] = useState<Workflow | null>(null);
-  const [showTemplates, setShowTemplates] = useState(false);
 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { data: workflows, isLoading, error, refetch } = useWorkflows(workspaceId || '');
   const deleteWorkflow = useDeleteWorkflow(workspaceId || '');
-  const createWorkflow = useCreateWorkflow(workspaceId || '');
   const toast = useToast();
-
-  const handleUseTemplate = async (template: WorkflowTemplate) => {
-    if (!workspaceId) return;
-    try {
-      const result = await createWorkflow.mutateAsync({
-        name: template.name,
-        description: template.description,
-        nodes: template.nodes,
-        edges: template.edges,
-      });
-      toast.success(`Workflow "${template.name}" created from template`);
-      navigate(`/workflows/${result.id}`);
-    } catch {
-      toast.error('Failed to create workflow from template');
-    }
-  };
 
   // Toggle workflow status (draft/paused -> active, active -> paused)
   const handleToggleStatus = async (workflow: Workflow) => {
@@ -130,39 +110,11 @@ export default function Workflows() {
           <h1 className="text-2xl font-bold text-gray-900">Workflows</h1>
           <p className="mt-1 text-gray-500">Workspace-level automation workflows</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowTemplates(!showTemplates)}
-            className={`btn inline-flex items-center gap-2 ${showTemplates ? 'btn-primary' : 'btn-secondary'}`}
-          >
-            <LayoutTemplate className="w-5 h-5" />
-            Templates
-          </button>
-          <Link to="/workflows/new" className="btn btn-primary inline-flex items-center gap-2">
-            <Plus className="w-5 h-5" />
-            Create Workflow
-          </Link>
-        </div>
+        <Link to="/workflows/new" className="btn btn-primary inline-flex items-center gap-2">
+          <Plus className="w-5 h-5" />
+          Create Workflow
+        </Link>
       </div>
-
-      {/* Templates library */}
-      {showTemplates && (
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Workflow Templates</h2>
-            <button
-              onClick={() => setShowTemplates(false)}
-              className="p-1 text-gray-400 hover:text-gray-600 rounded"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-          <TemplateLibrary
-            onUseTemplate={handleUseTemplate}
-            isCreating={createWorkflow.isPending}
-          />
-        </div>
-      )}
 
       {/* Info banner about page-specific workflows */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
@@ -233,7 +185,7 @@ export default function Workflows() {
 
       {/* Workflows list */}
       {!isLoading && !error && filteredWorkflows.length > 0 && (
-        <div className="card p-0 overflow-visible">
+        <div className="card p-0 overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>

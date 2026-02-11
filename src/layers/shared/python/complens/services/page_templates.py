@@ -724,7 +724,7 @@ def _get_col_span_class(block: dict) -> str:
         return f"col-span-12 md:col-span-{col_span}"
 
     # Fall back to legacy width (1-4 scale -> 12-column)
-    width = block.get("width", 4)
+    width = block.get("width") or 4
     col_map = {1: 3, 2: 6, 3: 9, 4: 12}
     span = col_map.get(width, 12)
     return f"col-span-12 md:col-span-{span}"
@@ -807,7 +807,7 @@ def render_blocks_html(
 
         # Check if any block in this row needs grid layout (has colSpan < 12 or width < 4)
         needs_grid = any(
-            block.get("colSpan", 12) < 12 or block.get("width", 4) < 4
+            (block.get("colSpan") or 12) < 12 or (block.get("width") or 4) < 4
             for block in row_blocks
         )
 
@@ -1019,127 +1019,292 @@ def render_full_page(
         if page_layout == "contained":
             body_content = f'<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{body_content}</div>'
 
-    # Build chat widget script
+    # Build chat widget styles and script
+    chat_styles = ""
     chat_script = ""
     if chat_enabled and ws_url_safe:
+        chat_styles = f"""
+    <style>
+        .cc-bubble {{
+            position: fixed; bottom: 24px; right: 24px;
+            width: 60px; height: 60px; border-radius: 50%;
+            background: {primary_color}; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            z-index: 9999; transition: transform 0.2s ease;
+        }}
+        .cc-bubble:hover {{ transform: scale(1.1); }}
+        .cc-bubble svg {{ width: 28px; height: 28px; fill: white; }}
+
+        .cc-panel {{
+            display: none; position: fixed; bottom: 96px; right: 24px;
+            width: 380px; max-width: calc(100vw - 48px);
+            height: 500px; max-height: 60vh;
+            background: white; border-radius: 16px;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.2);
+            z-index: 9999; flex-direction: column; overflow: hidden;
+            opacity: 0; transform: translateY(20px);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }}
+        .cc-panel.cc-open {{
+            display: flex; opacity: 1; transform: translateY(0);
+        }}
+
+        .cc-header {{
+            padding: 16px 20px; background: {primary_color};
+            color: white; font-weight: 600; font-size: 15px;
+            display: flex; align-items: center; justify-content: space-between;
+        }}
+        .cc-close {{
+            background: none; border: none; color: white;
+            cursor: pointer; font-size: 20px; line-height: 1;
+            padding: 0 0 0 8px; opacity: 0.8; transition: opacity 0.15s;
+        }}
+        .cc-close:hover {{ opacity: 1; }}
+
+        .cc-messages {{
+            flex: 1; overflow-y: auto; padding: 16px;
+            display: flex; flex-direction: column; gap: 12px;
+        }}
+
+        .cc-msg {{
+            max-width: 80%; word-wrap: break-word;
+            padding: 10px 14px; line-height: 1.5; font-size: 14px;
+            animation: cc-fade-in 0.25s ease;
+        }}
+        .cc-msg a {{ color: inherit; text-decoration: underline; }}
+        .cc-msg code {{
+            background: rgba(0,0,0,0.06); padding: 1px 5px;
+            border-radius: 4px; font-size: 0.9em;
+        }}
+        .cc-msg-user {{
+            align-self: flex-end; background: {primary_color};
+            color: white; border-radius: 16px 16px 4px 16px;
+        }}
+        .cc-msg-bot {{
+            align-self: flex-start; background: #f3f4f6;
+            color: #1f2937; border-radius: 16px 16px 16px 4px;
+        }}
+
+        .cc-input-bar {{
+            padding: 12px; border-top: 1px solid #eee;
+            display: flex; gap: 8px;
+        }}
+        .cc-input-bar input {{
+            flex: 1; padding: 10px 14px; border: 1px solid #ddd;
+            border-radius: 24px; outline: none; font-size: 14px;
+        }}
+        .cc-input-bar input:focus {{ border-color: {primary_color}; }}
+        .cc-input-bar button {{
+            padding: 10px 20px; background: {primary_color};
+            color: white; border: none; border-radius: 24px;
+            cursor: pointer; font-weight: 500; font-size: 14px;
+            transition: opacity 0.15s;
+        }}
+        .cc-input-bar button:hover {{ opacity: 0.9; }}
+
+        .cc-typing {{
+            align-self: flex-start; display: flex; gap: 4px;
+            padding: 12px 16px; background: #f3f4f6;
+            border-radius: 16px 16px 16px 4px;
+        }}
+        .cc-typing span {{
+            width: 6px; height: 6px; border-radius: 50%;
+            background: #9ca3af; animation: cc-bounce 1.2s ease-in-out infinite;
+        }}
+        .cc-typing span:nth-child(2) {{ animation-delay: 0.1s; }}
+        .cc-typing span:nth-child(3) {{ animation-delay: 0.2s; }}
+
+        @keyframes cc-bounce {{
+            0%, 60%, 100% {{ transform: translateY(0); }}
+            30% {{ transform: translateY(-6px); }}
+        }}
+        @keyframes cc-fade-in {{
+            from {{ opacity: 0; transform: translateY(6px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+    </style>"""
+
         chat_script = f"""
 <script>
 (function() {{
-  try {{
-    var WS_URL = '{ws_url_safe}';
-    var PAGE_ID = '{page_id}';
-    var WORKSPACE_ID = '{_escape_js_string(workspace_id)}';
-    var ws = null;
-    var visitorId = localStorage.getItem('complens_vid');
-    if (!visitorId) {{
-      visitorId = 'v_' + Math.random().toString(36).substr(2, 9);
-      localStorage.setItem('complens_vid', visitorId);
-    }}
+  var WS_URL = '{ws_url_safe}';
+  var PAGE_ID = '{page_id}';
+  var WORKSPACE_ID = '{_escape_js_string(workspace_id)}';
+  var INITIAL_MSG = '{chat_initial_message}';
+  var ws = null;
+  var intentionalClose = false;
+  var reconnectAttempts = 0;
+  var reconnectTimer = null;
+  var typingEl = null;
+  var messagesEl = null;
+  var panelEl = null;
+  var initialShown = false;
 
-    function createWidget() {{
-      try {{
-        var container = document.createElement('div');
-        container.id = 'complens-chat';
-        container.innerHTML = '<div id="chat-bubble" style="position:fixed;bottom:24px;right:24px;width:60px;height:60px;border-radius:50%;background:{primary_color};cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(0,0,0,0.2);z-index:9999;transition:transform 0.2s;"><svg width="28" height="28" fill="white" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg></div><div id="chat-panel" style="display:none;position:fixed;bottom:96px;right:24px;width:380px;max-width:calc(100vw - 48px);height:500px;max-height:60vh;background:white;border-radius:16px;box-shadow:0 8px 40px rgba(0,0,0,0.2);z-index:9999;flex-direction:column;overflow:hidden;"><div style="padding:16px 20px;background:{primary_color};color:white;font-weight:600;">Chat with us</div><div id="chat-messages" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;"></div><div style="padding:12px;border-top:1px solid #eee;display:flex;gap:8px;"><input id="chat-input" type="text" placeholder="Type a message..." style="flex:1;padding:10px 14px;border:1px solid #ddd;border-radius:24px;outline:none;"><button id="chat-send-btn" style="padding:10px 20px;background:{primary_color};color:white;border:none;border-radius:24px;cursor:pointer;font-weight:500;">Send</button></div></div>';
-        document.body.appendChild(container);
+  var visitorId = localStorage.getItem('complens_vid');
+  if (!visitorId) {{
+    visitorId = 'v_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('complens_vid', visitorId);
+  }}
 
-        // Attach event listeners
-        document.getElementById('chat-bubble').addEventListener('click', function() {{ window.toggleChat(); }});
-        document.getElementById('chat-send-btn').addEventListener('click', function() {{ window.sendChat(); }});
-        document.getElementById('chat-input').addEventListener('keypress', function(e) {{
-          if (e.key === 'Enter') window.sendChat();
-        }});
+  function el(tag, cls) {{
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    return e;
+  }}
 
-        console.log('[Complens Chat] Widget created successfully');
-      }} catch (err) {{
-        console.error('[Complens Chat] Error creating widget:', err);
-      }}
-    }}
+  function renderMarkdown(text) {{
+    var s = text
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
+      .replace(/\\*(.+?)\\*/g, '<em>$1</em>')
+      .replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      .replace(/\\n/g, '<br>');
+    return s;
+  }}
 
-    window.toggleChat = function() {{
-      try {{
-        var panel = document.getElementById('chat-panel');
-        if (!panel) {{ console.error('[Complens Chat] Panel not found'); return; }}
-        var isOpen = panel.style.display !== 'none';
-        panel.style.display = isOpen ? 'none' : 'flex';
-        if (!isOpen && !ws) connectWS();
-      }} catch (err) {{
-        console.error('[Complens Chat] Error toggling chat:', err);
-      }}
-    }};
+  function createWidget() {{
+    var root = el('div'); root.id = 'complens-chat';
 
-    function connectWS() {{
-      try {{
-        console.log('[Complens Chat] Connecting to', WS_URL);
-        ws = new WebSocket(WS_URL + '?page_id=' + PAGE_ID + '&workspace_id=' + WORKSPACE_ID + '&visitor_id=' + visitorId);
-        ws.onopen = function() {{
-          console.log('[Complens Chat] Connected');
-          var initial = '{chat_initial_message}';
-          if (initial) addMessage(initial, 'bot');
-        }};
-        ws.onmessage = function(e) {{
-          try {{
-            var data = JSON.parse(e.data);
-            console.log('[Complens Chat] Message received:', data.action);
-            if (data.action === 'ai_response') addMessage(data.message, 'bot');
-          }} catch (err) {{
-            console.error('[Complens Chat] Error parsing message:', err);
-          }}
-        }};
-        ws.onerror = function(err) {{
-          console.error('[Complens Chat] WebSocket error:', err);
-        }};
-        ws.onclose = function(e) {{
-          console.log('[Complens Chat] Disconnected:', e.code, e.reason);
-          ws = null;
-        }};
-      }} catch (err) {{
-        console.error('[Complens Chat] Error connecting:', err);
-      }}
-    }}
+    // Bubble
+    var bubble = el('div', 'cc-bubble');
+    bubble.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>';
+    bubble.addEventListener('click', toggleChat);
 
-    window.sendChat = function() {{
-      try {{
-        var input = document.getElementById('chat-input');
-        if (!input) return;
-        var msg = input.value.trim();
-        if (!msg) return;
-        if (!ws || ws.readyState !== WebSocket.OPEN) {{
-          console.log('[Complens Chat] WebSocket not ready, reconnecting...');
-          connectWS();
-          return;
-        }}
-        addMessage(msg, 'user');
-        ws.send(JSON.stringify({{ action: 'public_chat', page_id: PAGE_ID, workspace_id: WORKSPACE_ID, message: msg, visitor_id: visitorId }}));
-        input.value = '';
-      }} catch (err) {{
-        console.error('[Complens Chat] Error sending:', err);
-      }}
-    }};
+    // Panel
+    panelEl = el('div', 'cc-panel');
 
-    function addMessage(text, type) {{
-      try {{
-        var container = document.getElementById('chat-messages');
-        if (!container) return;
-        var div = document.createElement('div');
-        div.style.cssText = type === 'user' ?
-          'align-self:flex-end;background:{primary_color};color:white;padding:10px 14px;border-radius:16px 16px 4px 16px;max-width:80%;word-wrap:break-word;' :
-          'align-self:flex-start;background:#f3f4f6;color:#1f2937;padding:10px 14px;border-radius:16px 16px 16px 4px;max-width:80%;word-wrap:break-word;';
-        div.textContent = text;
-        container.appendChild(div);
-        container.scrollTop = container.scrollHeight;
-      }} catch (err) {{
-        console.error('[Complens Chat] Error adding message:', err);
-      }}
-    }}
+    var header = el('div', 'cc-header');
+    header.textContent = 'Chat with us';
+    var closeBtn = el('button', 'cc-close');
+    closeBtn.innerHTML = '&times;';
+    closeBtn.addEventListener('click', toggleChat);
+    header.appendChild(closeBtn);
 
-    if (document.readyState === 'loading') {{
-      document.addEventListener('DOMContentLoaded', createWidget);
+    messagesEl = el('div', 'cc-messages');
+
+    var inputBar = el('div', 'cc-input-bar');
+    var input = el('input'); input.id = 'cc-input';
+    input.type = 'text'; input.placeholder = 'Type a message...';
+    input.addEventListener('keypress', function(e) {{ if (e.key === 'Enter') sendChat(); }});
+    var sendBtn = el('button');
+    sendBtn.textContent = 'Send';
+    sendBtn.addEventListener('click', sendChat);
+    inputBar.appendChild(input);
+    inputBar.appendChild(sendBtn);
+
+    panelEl.appendChild(header);
+    panelEl.appendChild(messagesEl);
+    panelEl.appendChild(inputBar);
+
+    root.appendChild(bubble);
+    root.appendChild(panelEl);
+    document.body.appendChild(root);
+  }}
+
+  function toggleChat() {{
+    if (!panelEl) return;
+    var isOpen = panelEl.classList.contains('cc-open');
+    if (isOpen) {{
+      panelEl.style.opacity = '0';
+      panelEl.style.transform = 'translateY(20px)';
+      setTimeout(function() {{ panelEl.classList.remove('cc-open'); }}, 250);
     }} else {{
-      createWidget();
+      panelEl.classList.add('cc-open');
+      // Force reflow then animate in
+      panelEl.offsetHeight;
+      panelEl.style.opacity = '1';
+      panelEl.style.transform = 'translateY(0)';
+      if (!ws) connectWS();
+      var inp = document.getElementById('cc-input');
+      if (inp) inp.focus();
     }}
-  }} catch (err) {{
-    console.error('[Complens Chat] Initialization error:', err);
+  }}
+
+  function connectWS() {{
+    if (ws) return;
+    intentionalClose = false;
+    ws = new WebSocket(WS_URL + '?page_id=' + PAGE_ID + '&workspace_id=' + WORKSPACE_ID + '&visitor_id=' + visitorId);
+
+    ws.onopen = function() {{
+      reconnectAttempts = 0;
+      if (INITIAL_MSG && !initialShown) {{
+        addMessage(INITIAL_MSG, 'bot');
+        initialShown = true;
+      }}
+    }};
+
+    ws.onmessage = function(e) {{
+      try {{
+        var data = JSON.parse(e.data);
+        if (data.action === 'ai_response') {{
+          hideTyping();
+          addMessage(data.message, 'bot');
+        }}
+      }} catch (err) {{
+        console.error('[Complens Chat] Parse error:', err);
+      }}
+    }};
+
+    ws.onerror = function() {{}};
+
+    ws.onclose = function() {{
+      ws = null;
+      if (!intentionalClose) {{
+        var delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+        reconnectAttempts++;
+        reconnectTimer = setTimeout(connectWS, delay);
+      }}
+    }};
+  }}
+
+  function sendChat() {{
+    var input = document.getElementById('cc-input');
+    if (!input) return;
+    var msg = input.value.trim();
+    if (!msg) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {{
+      connectWS();
+      return;
+    }}
+    addMessage(msg, 'user');
+    showTyping();
+    ws.send(JSON.stringify({{ action: 'public_chat', page_id: PAGE_ID, workspace_id: WORKSPACE_ID, message: msg, visitor_id: visitorId }}));
+    input.value = '';
+  }}
+
+  function addMessage(text, type) {{
+    if (!messagesEl) return;
+    var div = el('div', 'cc-msg ' + (type === 'user' ? 'cc-msg-user' : 'cc-msg-bot'));
+    if (type === 'user') {{
+      div.textContent = text;
+    }} else {{
+      div.innerHTML = renderMarkdown(text);
+    }}
+    messagesEl.appendChild(div);
+    messagesEl.scrollTo({{ top: messagesEl.scrollHeight, behavior: 'smooth' }});
+  }}
+
+  function showTyping() {{
+    if (typingEl) return;
+    typingEl = el('div', 'cc-typing');
+    for (var i = 0; i < 3; i++) typingEl.appendChild(el('span'));
+    messagesEl.appendChild(typingEl);
+    messagesEl.scrollTo({{ top: messagesEl.scrollHeight, behavior: 'smooth' }});
+  }}
+
+  function hideTyping() {{
+    if (typingEl && typingEl.parentNode) {{
+      typingEl.parentNode.removeChild(typingEl);
+      typingEl = null;
+    }}
+  }}
+
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', createWidget);
+  }} else {{
+    createWidget();
   }}
 }})();
 </script>"""
@@ -1247,6 +1412,7 @@ def render_full_page(
         .bg-white\\/20 {{ background-color: rgba(255, 255, 255, 0.2); }}
         {custom_css or ''}
     </style>
+    {chat_styles}
 </head>
 <body class="min-h-screen">
 {body_content}

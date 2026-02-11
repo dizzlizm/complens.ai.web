@@ -5,6 +5,7 @@ from complens.services.email_service import EmailError, EmailService, get_email_
 from complens.services.stripe_service import StripeError, create_checkout_session, cancel_subscription
 from complens.services.synthesis_engine import SynthesisEngine
 from complens.services.twilio_service import TwilioError, TwilioService, get_twilio_service
+from complens.services.warmup_service import WarmupService, get_warmup_service
 from complens.services.workflow_engine import WorkflowEngine
 from complens.services.workflow_events import (
     WorkflowEventType,
@@ -25,6 +26,7 @@ __all__ = [
     "SynthesisEngine",
     "TwilioError",
     "TwilioService",
+    "WarmupService",
     "WorkflowEngine",
     "WorkflowEventType",
     "cancel_subscription",
@@ -38,4 +40,5 @@ __all__ = [
     "emit_workflow_started",
     "get_email_service",
     "get_twilio_service",
+    "get_warmup_service",
 ]

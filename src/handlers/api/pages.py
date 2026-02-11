@@ -1488,6 +1488,7 @@ def _build_automation_workflow(
     business_name: str,
     automation: AutomationConfig,
     trigger_type: str = "trigger_form_submitted",
+    from_email: str | None = None,
 ) -> Workflow:
     """Build an automation workflow for the specified trigger type.
 
@@ -1498,6 +1499,15 @@ def _build_automation_workflow(
     - Welcome email to the lead
     - Owner notification email (using template variables for dynamic resolution)
     """
+    # Resolve from_email from workspace if not provided
+    if not from_email:
+        try:
+            ws_repo = WorkspaceRepository()
+            workspace = ws_repo.get_by_id(workspace_id)
+            if workspace and workspace.from_email:
+                from_email = workspace.from_email
+        except Exception:
+            pass
     nodes = []
     edges = []
     node_y = 100
@@ -1597,7 +1607,7 @@ def _build_automation_workflow(
                     "email_to": "{{contact.email}}",
                     "email_subject": f"Thanks for contacting {business_name}!",
                     "email_body": f"Hi {{{{contact.first_name}}}},\n\n{welcome_msg}\n\nBest regards,\n{business_name}",
-                    "email_from": "noreply@complens.ai",
+                    **({"email_from": from_email} if from_email else {}),
                 },
             },
         ))
@@ -1628,7 +1638,7 @@ def _build_automation_workflow(
                         "- Phone: {{contact.phone}}\n\n"
                         "Form Data:\n{{trigger_data.form_data}}"
                     ),
-                    "email_from": "noreply@complens.ai",
+                    **({"email_from": from_email} if from_email else {}),
                 },
             },
         ))

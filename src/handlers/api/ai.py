@@ -94,6 +94,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         POST   /workspaces/{workspace_id}/ai/improve-block   - Improve block content
         POST   /workspaces/{workspace_id}/ai/generate-blocks - Generate page blocks
         POST   /workspaces/{workspace_id}/ai/generate-image  - Generate an image
+        POST   /workspaces/{workspace_id}/ai/suggest-workflow-step - Suggest next workflow step
+        POST   /workspaces/{workspace_id}/ai/generate-page-workflow - Generate complete workflow for a page
         POST   /workspaces/{workspace_id}/ai/generate-workflow - Generate workflow from NL
         POST   /workspaces/{workspace_id}/ai/generate-page-content - Generate page content from description
         POST   /workspaces/{workspace_id}/ai/refine-page-content - Refine generated content with feedback
@@ -137,6 +139,12 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         elif "/ai/generate-image" in path and http_method == "POST":
             _check_ai_rate_limit(auth, workspace_id, action="ai_image")
             return generate_image(workspace_id, event)
+        elif "/ai/suggest-workflow-step" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
+            return suggest_workflow_step(workspace_id, event)
+        elif "/ai/generate-page-workflow" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
+            return generate_page_workflow(workspace_id, event)
         elif "/ai/generate-workflow" in path and http_method == "POST":
             _check_ai_rate_limit(auth, workspace_id)
             return generate_workflow(workspace_id, event)
@@ -509,6 +517,184 @@ def generate_image(workspace_id: str, event: dict) -> dict:
     except Exception as e:
         logger.error("Image generation failed", error=str(e))
         return error(f"Image generation failed: {str(e)}", 500)
+
+
+def suggest_workflow_step(workspace_id: str, event: dict) -> dict:
+    """Suggest the next workflow step using AI."""
+    try:
+        body = json.loads(event.get("body", "{}"))
+        nodes = body.get("nodes", [])
+        edges = body.get("edges", [])
+        source_node_id = body.get("source_node_id", "")
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    if not source_node_id:
+        return error("source_node_id is required", 400)
+
+    if not nodes:
+        return error("nodes array is required", 400)
+
+    # Fetch workspace resources for context
+    from complens.repositories.form import FormRepository
+    from complens.repositories.page import PageRepository
+    from complens.repositories.domain import DomainRepository
+
+    forms_data = []
+    pages_data = []
+    domains_data = []
+
+    try:
+        form_repo = FormRepository()
+        forms_result = form_repo.list_by_workspace(workspace_id, limit=20)
+        forms_data = [
+            {"id": f.get("id", ""), "name": f.get("name", "Unnamed Form")}
+            for f in (forms_result if isinstance(forms_result, list) else forms_result.get("items", []))
+        ]
+    except Exception:
+        pass
+
+    try:
+        page_repo = PageRepository()
+        pages_result = page_repo.list_by_workspace(workspace_id, limit=20)
+        pages_data = [
+            {"id": p.get("id", ""), "name": p.get("name", "Unnamed Page")}
+            for p in (pages_result if isinstance(pages_result, list) else pages_result.get("items", []))
+        ]
+    except Exception:
+        pass
+
+    try:
+        domain_repo = DomainRepository()
+        domain_items = domain_repo.list_by_workspace(workspace_id, limit=20)
+        domains_data = [
+            d.domain_name if hasattr(d, "domain_name") else d.get("domain_name", "")
+            for d in (domain_items if isinstance(domain_items, list) else [])
+            if (hasattr(d, "status") and d.status == "verified") or
+               (isinstance(d, dict) and d.get("status") == "verified")
+        ]
+    except Exception:
+        pass
+
+    try:
+        suggestions = ai_service.suggest_next_workflow_step(
+            workspace_id=workspace_id,
+            nodes=nodes,
+            edges=edges,
+            source_node_id=source_node_id,
+            forms=forms_data if forms_data else None,
+            pages=pages_data if pages_data else None,
+            domains=domains_data if domains_data else None,
+        )
+
+        logger.info(
+            "Workflow step suggestions generated",
+            workspace_id=workspace_id,
+            source_node_id=source_node_id,
+            suggestion_count=len(suggestions),
+        )
+
+        return success({"suggestions": suggestions})
+
+    except Exception as e:
+        logger.error("Workflow step suggestion failed", error=str(e))
+        return error(f"Suggestion failed: {str(e)}", 500)
+
+
+def generate_page_workflow(workspace_id: str, event: dict) -> dict:
+    """Generate a complete workflow for a landing page.
+
+    Fetches the page, its forms, business profile, and verified domains,
+    then asks AI to generate a full multi-node workflow with all configs
+    pre-filled so the user can activate immediately.
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+        page_id = body.get("page_id", "")
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    if not page_id:
+        return error("page_id is required", 400)
+
+    from complens.repositories.page import PageRepository
+    from complens.repositories.form import FormRepository
+    from complens.repositories.domain import DomainRepository
+    from complens.repositories.workspace import WorkspaceRepository
+
+    # Fetch page
+    page_repo = PageRepository()
+    page = page_repo.get_by_id(workspace_id, page_id)
+    if not page:
+        return error("Page not found", 404)
+
+    page_data = page if isinstance(page, dict) else page.model_dump(mode="json") if hasattr(page, "model_dump") else vars(page)
+
+    # Fetch forms for this page
+    forms_data = []
+    try:
+        form_repo = FormRepository()
+        forms_result = form_repo.list_by_page(page_id)
+        raw_forms = forms_result if isinstance(forms_result, list) else forms_result.get("items", [])
+        for f in raw_forms:
+            fd = f if isinstance(f, dict) else f.model_dump(mode="json") if hasattr(f, "model_dump") else vars(f)
+            forms_data.append({
+                "id": fd.get("id", ""),
+                "name": fd.get("name", "Unnamed Form"),
+                "fields": fd.get("fields", []),
+                "add_tags": fd.get("add_tags", []),
+            })
+    except Exception as e:
+        logger.warning("Failed to fetch forms for page workflow", page_id=page_id, error=str(e))
+
+    # Fetch verified domains
+    domains_data = []
+    try:
+        domain_repo = DomainRepository()
+        domain_items = domain_repo.list_by_workspace(workspace_id, limit=20)
+        for d in (domain_items if isinstance(domain_items, list) else []):
+            status = d.status if hasattr(d, "status") else d.get("status", "")
+            name = d.domain_name if hasattr(d, "domain_name") else d.get("domain_name", "")
+            if status == "verified" and name:
+                domains_data.append(name)
+    except Exception:
+        pass
+
+    # Resolve from_email and owner_email from workspace settings
+    from_email = None
+    owner_email = None
+    try:
+        ws_repo = WorkspaceRepository()
+        workspace = ws_repo.get_by_id(workspace_id)
+        if workspace:
+            from_email = workspace.from_email if hasattr(workspace, "from_email") else None
+            owner_email = workspace.notification_email if hasattr(workspace, "notification_email") else None
+    except Exception:
+        pass
+
+    try:
+        result = ai_service.generate_page_workflow(
+            workspace_id=workspace_id,
+            page_id=page_id,
+            page=page_data,
+            forms=forms_data,
+            domains=domains_data if domains_data else None,
+            from_email=from_email,
+            owner_email=owner_email,
+        )
+
+        logger.info(
+            "Page workflow generated",
+            workspace_id=workspace_id,
+            page_id=page_id,
+            node_count=len(result.get("nodes", [])),
+        )
+
+        return success({"workflow": result})
+
+    except Exception as e:
+        logger.error("Page workflow generation failed", error=str(e))
+        return error(f"Page workflow generation failed: {str(e)}", 500)
 
 
 def generate_workflow(workspace_id: str, event: dict) -> dict:

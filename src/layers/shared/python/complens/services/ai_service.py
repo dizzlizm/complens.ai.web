@@ -6,6 +6,7 @@ for context-aware generation of pages, blocks, workflows, and more.
 
 import json
 import os
+import uuid
 from typing import Any
 
 import boto3
@@ -288,6 +289,531 @@ Generate the blocks as a JSON array. Use the business context to personalize all
         blocks = blocks["blocks"]
 
     return blocks if isinstance(blocks, list) else []
+
+
+def suggest_next_workflow_step(
+    workspace_id: str,
+    nodes: list[dict],
+    edges: list[dict],
+    source_node_id: str,
+    page_id: str | None = None,
+    forms: list[dict] | None = None,
+    pages: list[dict] | None = None,
+    domains: list[str] | None = None,
+) -> list[dict]:
+    """Suggest the next workflow step based on current workflow context.
+
+    Args:
+        workspace_id: The workspace ID for business context.
+        nodes: Simplified list of current nodes [{id, type, label, config}].
+        edges: List of current edges [{source, target}].
+        source_node_id: The node ID to build from.
+        page_id: Optional page ID for page-specific profile.
+        forms: Available forms [{id, name}].
+        pages: Available pages [{id, name}].
+        domains: Verified domain names.
+
+    Returns:
+        List of suggestion dicts with node_type, label, config, description.
+    """
+    # Build workflow summary
+    source_node = next((n for n in nodes if n.get("id") == source_node_id), None)
+    workflow_lines = []
+    for n in nodes:
+        connections = [e["target"] for e in edges if e["source"] == n["id"]]
+        conn_str = f" -> {', '.join(connections)}" if connections else " -> (no outgoing)"
+        workflow_lines.append(f"  - [{n.get('type', '?')}] \"{n.get('label', '?')}\" (id: {n['id']}){conn_str}")
+
+    workflow_summary = "\n".join(workflow_lines) if workflow_lines else "  (empty workflow)"
+
+    # Build resources context
+    resources_parts = []
+    if forms:
+        resources_parts.append(f"Available forms: {json.dumps(forms)}")
+    if pages:
+        resources_parts.append(f"Available pages: {json.dumps(pages)}")
+    if domains:
+        resources_parts.append(f"Verified domains: {json.dumps(domains)}")
+    resources_ctx = "\n".join(resources_parts) if resources_parts else "No workspace resources available yet."
+
+    system = f"""You are an expert marketing automation architect.
+Given a workflow-in-progress, suggest 3-4 logical next nodes to connect after a specific node.
+
+## Available node types and their config schemas
+
+### Actions
+- action_send_email:
+    email_to: "{{{{contact.email}}}}" (default)
+    email_subject: "Subject line" (REQUIRED)
+    email_body: "Email body with {{{{contact.first_name}}}} variables" (REQUIRED)
+    email_from: "noreply@domain.com" (optional, use verified domain if available)
+
+- action_send_sms:
+    sms_to: "{{{{contact.phone}}}}"
+    sms_message: "SMS text" (REQUIRED)
+
+- action_ai_respond:
+    ai_prompt: "Instruction for AI" (REQUIRED)
+    ai_respond_via: "email" | "sms" | "same_channel"
+
+- action_update_contact:
+    add_tags: ["tag1", "tag2"]
+    remove_tags: ["tag3"]
+    update_fields: {{"field_name": "value"}}
+
+- action_wait:
+    wait_duration: 300 (integer seconds: 300=5min, 3600=1hr, 86400=1day)
+
+- action_webhook:
+    webhook_url: "https://..." (REQUIRED)
+    webhook_method: "POST"
+    webhook_headers: {{}}
+    webhook_body: {{}}
+
+### Logic
+- logic_branch:
+    conditions: [{{"field": "contact.tags", "operator": "contains", "value": "vip", "output_handle": "yes"}}, {{"output_handle": "no"}}]
+    default_output: "no"
+
+- logic_filter:
+    filter_conditions: [{{"field": "contact.email", "operator": "exists"}}]
+    filter_operator: "and"
+
+### AI Nodes
+- ai_decision: config with ai_prompt describing the decision
+- ai_generate: config with ai_prompt describing what to generate
+- ai_analyze: config with ai_prompt describing what to analyze
+
+## Template variables
+{{{{contact.email}}}}, {{{{contact.first_name}}}}, {{{{contact.last_name}}}}, {{{{contact.phone}}}},
+{{{{contact.custom_fields.company}}}}, {{{{trigger_data.form_data.message}}}},
+{{{{workspace.notification_email}}}}, {{{{owner.email}}}}
+
+## Rules
+- Return exactly 3-4 suggestions ranked by relevance
+- Each suggestion must have complete, ready-to-use config
+- Use real business context (name, domain, voice) in email copy
+- Use real form/page IDs when referencing workspace resources
+- Don't suggest node types that are already downstream of the source node
+- Tailor suggestions to what makes sense after the source node's type
+- Write real email subjects/bodies, not placeholders
+
+Return ONLY valid JSON array. No markdown, no explanation."""
+
+    source_desc = "unknown node"
+    if source_node:
+        source_desc = f"[{source_node.get('type', '?')}] \"{source_node.get('label', '?')}\""
+
+    prompt = f"""Current workflow:
+{workflow_summary}
+
+Building from node: {source_desc} (id: {source_node_id})
+
+{resources_ctx}
+
+Suggest 3-4 logical next nodes to connect after this node.
+Return a JSON array where each element has:
+- "node_type": the node type string
+- "label": short display name
+- "description": one-line explanation of why this step is useful
+- "config": complete config object ready to use"""
+
+    result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+
+    # Normalize: accept both array and {"suggestions": [...]}
+    if isinstance(result, dict) and "suggestions" in result:
+        result = result["suggestions"]
+
+    if not isinstance(result, list):
+        return []
+
+    return result[:4]
+
+
+def generate_page_workflow(
+    workspace_id: str,
+    page_id: str,
+    page: dict,
+    forms: list[dict],
+    domains: list[str] | None = None,
+    from_email: str | None = None,
+    owner_email: str | None = None,
+) -> dict:
+    """Generate a complete workflow for a landing page.
+
+    Uses a two-phase approach: AI generates a simple step list (what to do),
+    then deterministic Python builds the actual workflow nodes/edges.
+
+    Args:
+        workspace_id: The workspace ID.
+        page_id: The page ID (used for profile lookup).
+        page: Page data dict with headline, blocks, etc.
+        forms: List of form dicts with id, name, fields.
+        domains: Verified domain names for email from-addresses.
+        from_email: Resolved sender email address.
+        owner_email: Owner/notification email address.
+
+    Returns:
+        Dict with name, description, trigger_type, nodes[], edges[].
+    """
+    # Build page content summary
+    page_name = page.get("name") or page.get("headline") or "Untitled Page"
+    headline = page.get("headline", "")
+    subheadline = page.get("subheadline", "")
+    blocks = page.get("blocks", [])
+
+    block_summary_lines = []
+    for b in blocks:
+        btype = b.get("type", "unknown")
+        bconfig = b.get("config", {})
+        if btype == "hero":
+            parts = [f"Hero: \"{bconfig.get('headline', '')}\""]
+            if bconfig.get("subheadline"):
+                parts.append(f"    Subheadline: \"{bconfig['subheadline']}\"")
+            if bconfig.get("ctaText"):
+                parts.append(f"    CTA: \"{bconfig['ctaText']}\"")
+            block_summary_lines.append("  - " + "\n".join(parts))
+        elif btype == "features":
+            items = bconfig.get("items", [])
+            if items:
+                feature_lines = [f"Features ({len(items)} items):"]
+                for item in items[:6]:
+                    title = item.get("title", "")
+                    desc = item.get("description", "")
+                    if title:
+                        feature_lines.append(f"    • {title}" + (f" — {desc}" if desc else ""))
+                block_summary_lines.append("  - " + "\n".join(feature_lines))
+            else:
+                block_summary_lines.append("  - Features: (empty)")
+        elif btype == "form":
+            block_summary_lines.append(f"  - Form block (formId: {bconfig.get('formId', 'none')})")
+        elif btype == "cta":
+            parts = [f"CTA: \"{bconfig.get('headline', '')}\""]
+            if bconfig.get("subheadline"):
+                parts.append(f"    Subheadline: \"{bconfig['subheadline']}\"")
+            if bconfig.get("buttonText"):
+                parts.append(f"    Button: \"{bconfig['buttonText']}\"")
+            block_summary_lines.append("  - " + "\n".join(parts))
+        elif btype == "testimonials":
+            items = bconfig.get("items", [])
+            if items:
+                testimonial_lines = [f"Testimonials ({len(items)} quotes):"]
+                for item in items[:4]:
+                    quote = item.get("quote", "")
+                    author = item.get("author", "")
+                    if quote:
+                        short_quote = quote[:120] + "..." if len(quote) > 120 else quote
+                        testimonial_lines.append(f"    • \"{short_quote}\" — {author}" if author else f"    • \"{short_quote}\"")
+                block_summary_lines.append("  - " + "\n".join(testimonial_lines))
+            else:
+                block_summary_lines.append("  - Testimonials: (empty)")
+        elif btype == "faq":
+            items = bconfig.get("items", [])
+            if items:
+                faq_lines = [f"FAQ ({len(items)} questions):"]
+                for item in items[:6]:
+                    q = item.get("question", "")
+                    if q:
+                        faq_lines.append(f"    • {q}")
+                block_summary_lines.append("  - " + "\n".join(faq_lines))
+            else:
+                block_summary_lines.append("  - FAQ: (empty)")
+        elif btype == "pricing":
+            items = bconfig.get("items", [])
+            if items:
+                pricing_lines = [f"Pricing ({len(items)} tiers):"]
+                for item in items[:4]:
+                    name = item.get("name", "")
+                    price = item.get("price", "")
+                    if name:
+                        pricing_lines.append(f"    • {name}: {price}" if price else f"    • {name}")
+                block_summary_lines.append("  - " + "\n".join(pricing_lines))
+            else:
+                block_summary_lines.append("  - Pricing: (empty)")
+        elif btype == "text":
+            content = bconfig.get("content", "")
+            if content:
+                short = content[:200] + "..." if len(content) > 200 else content
+                block_summary_lines.append(f"  - Text: \"{short}\"")
+            else:
+                block_summary_lines.append("  - Text block")
+        elif btype == "stats":
+            items = bconfig.get("items", [])
+            if items:
+                stat_parts = [f"{s.get('value', '')} {s.get('label', '')}" for s in items[:4]]
+                block_summary_lines.append(f"  - Stats: {', '.join(stat_parts)}")
+            else:
+                block_summary_lines.append("  - Stats block")
+        elif btype == "chat":
+            block_summary_lines.append("  - AI Chat widget")
+        else:
+            block_summary_lines.append(f"  - {btype}")
+
+    block_summary = "\n".join(block_summary_lines) if block_summary_lines else "  (no blocks)"
+
+    # Build form details
+    form_details_lines = []
+    for f in forms:
+        fields = f.get("fields", [])
+        field_names = [fld.get("label") or fld.get("name", "?") for fld in fields]
+        tags = f.get("add_tags", [])
+        form_details_lines.append(
+            f"  - Form \"{f.get('name', 'Unnamed')}\" (id: {f.get('id', '?')})\n"
+            f"    Fields: {', '.join(field_names) if field_names else 'none'}\n"
+            f"    Auto-tags: {', '.join(tags) if tags else 'none'}"
+        )
+    form_details = "\n".join(form_details_lines) if form_details_lines else "  (no forms on this page)"
+
+    # Domain context for AI
+    domain_ctx = f"Verified domains: {', '.join(domains)}" if domains else "No verified domains"
+
+    system = f"""You are an expert marketing automation architect.
+Given a landing page with its content, forms, and business profile, design a
+step-by-step automation sequence that handles everything when someone submits a form.
+
+You output ONLY a simple step list — you do NOT need to worry about node IDs, positions,
+edge wiring, or any visual layout. Just describe WHAT should happen, in order.
+
+## Available step types
+
+- tag_contact: Add tags to the contact
+  Required: "tags" (array of strings)
+
+- send_email: Send an email
+  Required: "to" ("contact" or "owner"), "subject", "body"
+  The body can use template variables like {{{{contact.first_name}}}}, {{{{contact.last_name}}}},
+  {{{{contact.email}}}}, {{{{contact.phone}}}}, {{{{trigger_data.form_data.message}}}}
+
+- wait: Pause before the next step
+  Required: "duration" (integer seconds: 300=5min, 3600=1hr, 86400=1day)
+  Optional: "label" (e.g. "Wait 1 Day")
+
+## Rules
+- Design a realistic 3-6 step sequence
+- A typical flow: tag contact → welcome email to contact → notify owner → wait → follow-up email
+- Write REAL email copy that matches the business's brand voice and page content
+- Include meaningful tag names based on the page's purpose
+- Wait steps should use realistic durations (e.g., 86400 for a 1-day follow-up)
+- Emails to "contact" should be warm and professional
+- Emails to "owner" should include lead details with template variables
+
+## Output format
+Return JSON with:
+- name: workflow name (related to the page purpose)
+- description: one-line description
+- steps: array of step objects
+
+Example:
+{{
+  "name": "Lead Automation - Acme Co",
+  "description": "Handles new form submissions from the Acme landing page",
+  "steps": [
+    {{"action": "tag_contact", "tags": ["lead", "website"]}},
+    {{"action": "send_email", "to": "contact", "subject": "Thanks!", "body": "Hi {{{{contact.first_name}}}}..."}},
+    {{"action": "send_email", "to": "owner", "subject": "New Lead", "body": "New lead..."}},
+    {{"action": "wait", "duration": 86400, "label": "Wait 1 Day"}},
+    {{"action": "send_email", "to": "contact", "subject": "Following up", "body": "Hi {{{{contact.first_name}}}}..."}}
+  ]
+}}
+
+Return ONLY valid JSON. No markdown, no explanation."""
+
+    prompt = f"""Page: "{page_name}"
+Headline: "{headline}"
+Subheadline: "{subheadline}"
+
+Page blocks:
+{block_summary}
+
+Forms:
+{form_details}
+
+{domain_ctx}
+
+Design the automation steps for this landing page.
+Write real email copy that matches this page's purpose and brand voice."""
+
+    result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+
+    if not isinstance(result, dict) or "steps" not in result:
+        logger.warning("generate_page_workflow: unexpected AI result", result_type=type(result).__name__)
+        result = {
+            "name": f"Workflow for {page_name}",
+            "description": "Auto-generated workflow",
+            "steps": [],
+        }
+
+    # Pick the first form ID for the trigger
+    form_id = forms[0].get("id", "") if forms else ""
+
+    # Build deterministic workflow from AI step list
+    return build_workflow_from_steps(
+        steps=result.get("steps", []),
+        name=result.get("name", f"Workflow for {page_name}"),
+        description=result.get("description", "Auto-generated workflow"),
+        form_id=form_id,
+        from_email=from_email,
+        owner_email=owner_email,
+    )
+
+
+def build_workflow_from_steps(
+    steps: list[dict],
+    name: str,
+    description: str,
+    form_id: str,
+    from_email: str | None = None,
+    owner_email: str | None = None,
+) -> dict:
+    """Convert a flat step list into a complete workflow with nodes and edges.
+
+    This is the deterministic builder — it handles all IDs, positions, types,
+    and edge wiring so the AI never has to.
+
+    Args:
+        steps: List of step dicts from AI (action, config fields).
+        name: Workflow name.
+        description: Workflow description.
+        form_id: Form ID for the trigger node.
+        from_email: Sender email address (from verified domain/workspace).
+        owner_email: Owner notification email address.
+
+    Returns:
+        Dict with name, description, trigger_type, nodes[], edges[].
+    """
+    # Map step action to node type and React Flow category
+    ACTION_MAP = {
+        "tag_contact": ("action_update_contact", "action"),
+        "send_email": ("action_send_email", "action"),
+        "wait": ("action_wait", "action"),
+        "send_sms": ("action_send_sms", "action"),
+        "ai_respond": ("action_ai_respond", "ai"),
+        "webhook": ("action_webhook", "action"),
+    }
+
+    nodes = []
+    edges = []
+    node_y = 100
+
+    # Always start with a trigger node
+    trigger_id = str(uuid.uuid4())[:8]
+    nodes.append({
+        "id": trigger_id,
+        "type": "trigger",
+        "position": {"x": 250, "y": node_y},
+        "data": {
+            "label": "Form Submitted",
+            "nodeType": "trigger_form_submitted",
+            "config": {"form_id": form_id},
+        },
+    })
+    last_node_id = trigger_id
+    node_y += 150
+
+    # Track whether we have parallel nodes at the same y level
+    # (e.g. welcome email + owner notification sent from the same parent)
+    for step in steps:
+        action = step.get("action", "")
+        if action not in ACTION_MAP:
+            logger.warning("build_workflow_from_steps: unknown action, skipping", action=action)
+            continue
+
+        node_type, rf_type = ACTION_MAP[action]
+        node_id = str(uuid.uuid4())[:8]
+        config = {}
+        label = ""
+
+        if action == "tag_contact":
+            tags = step.get("tags", [])
+            config = {"add_tags": tags}
+            label = "Tag Contact"
+
+        elif action == "send_email":
+            to = step.get("to", "contact")
+            subject = step.get("subject", "")
+            body = step.get("body", "")
+
+            if to == "owner":
+                config = {
+                    "email_to": owner_email or "{{owner.email}}",
+                    "email_subject": subject,
+                    "email_body": body,
+                }
+                label = "Notify Owner"
+            else:
+                config = {
+                    "email_to": "{{contact.email}}",
+                    "email_subject": subject,
+                    "email_body": body,
+                }
+                label = step.get("label", subject[:30] if subject else "Send Email")
+
+            if from_email:
+                config["email_from"] = from_email
+
+        elif action == "wait":
+            duration = step.get("duration", 86400)
+            config = {"wait_duration": duration}
+            label = step.get("label", f"Wait {_format_duration(duration)}")
+
+        elif action == "send_sms":
+            config = {
+                "sms_to": "{{contact.phone}}",
+                "sms_message": step.get("message", ""),
+            }
+            label = "Send SMS"
+
+        elif action == "ai_respond":
+            config = {
+                "ai_prompt": step.get("prompt", ""),
+                "ai_respond_via": step.get("via", "email"),
+            }
+            label = "AI Response"
+
+        elif action == "webhook":
+            config = {
+                "webhook_url": step.get("url", ""),
+                "webhook_method": step.get("method", "POST"),
+            }
+            label = "Call Webhook"
+
+        nodes.append({
+            "id": node_id,
+            "type": rf_type,
+            "position": {"x": 250, "y": node_y},
+            "data": {
+                "label": label,
+                "nodeType": node_type,
+                "config": config,
+            },
+        })
+        edges.append({
+            "id": f"e-{last_node_id}-{node_id}",
+            "source": last_node_id,
+            "target": node_id,
+        })
+        last_node_id = node_id
+        node_y += 150
+
+    return {
+        "name": name,
+        "description": description,
+        "trigger_type": "trigger_form_submitted",
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
+def _format_duration(seconds: int) -> str:
+    """Format seconds into a human-readable duration label."""
+    if seconds >= 86400:
+        days = seconds // 86400
+        return f"{days} Day{'s' if days != 1 else ''}"
+    if seconds >= 3600:
+        hours = seconds // 3600
+        return f"{hours} Hour{'s' if hours != 1 else ''}"
+    minutes = seconds // 60
+    return f"{minutes} Min{'s' if minutes != 1 else ''}"
 
 
 def generate_workflow_from_description(

@@ -77,6 +77,7 @@ class EmailService:
         bcc: list[str] | None = None,
         attachments: list[dict] | None = None,
         tags: dict[str, str] | None = None,
+        _skip_warmup_check: bool = False,
     ) -> dict[str, Any]:
         """Send an email.
 
@@ -91,6 +92,7 @@ class EmailService:
             bcc: BCC addresses.
             attachments: List of attachment dicts with keys: filename, content, content_type.
             tags: Message tags for tracking.
+            _skip_warmup_check: Internal flag to bypass warm-up check (used by daily processor).
 
         Returns:
             Dict with message_id and status.
@@ -109,6 +111,15 @@ class EmailService:
         # Normalize to list
         if isinstance(to, str):
             to = [to]
+
+        # Warm-up check: defer email if over daily limit
+        if not _skip_warmup_check and not attachments:
+            deferred = self._check_warmup_and_defer(
+                to=to, subject=subject, body_text=body_text, body_html=body_html,
+                from_email=from_email, reply_to=reply_to, cc=cc, bcc=bcc, tags=tags,
+            )
+            if deferred is not None:
+                return deferred
 
         logger.info(
             "Sending email",
@@ -163,6 +174,54 @@ class EmailService:
                 code=error_code,
                 details={"aws_error": error_message},
             ) from e
+
+    def _check_warmup_and_defer(
+        self,
+        to: list[str],
+        subject: str,
+        body_text: str | None,
+        body_html: str | None,
+        from_email: str,
+        reply_to: list[str] | None,
+        cc: list[str] | None,
+        bcc: list[str] | None,
+        tags: dict[str, str] | None,
+    ) -> dict[str, Any] | None:
+        """Check warm-up limits and defer email if over daily limit.
+
+        Returns None if the email should be sent normally, or a deferred
+        result dict if the email was queued for later.
+        Fails open: if anything goes wrong, returns None (send normally).
+
+        Args:
+            to: Recipient addresses.
+            subject: Email subject.
+            body_text: Plain text body.
+            body_html: HTML body.
+            from_email: Sender email.
+            reply_to: Reply-to addresses.
+            cc: CC addresses.
+            bcc: BCC addresses.
+            tags: Message tags.
+
+        Returns:
+            Deferred result dict, or None to proceed with normal send.
+        """
+        try:
+            from complens.services.warmup_service import WarmupService
+            service = WarmupService()
+            check = service.check_warmup_limit(from_email)
+
+            if check.should_defer:
+                return service.defer_email(
+                    to=to, subject=subject, body_text=body_text, body_html=body_html,
+                    from_email=from_email, reply_to=reply_to, cc=cc, bcc=bcc,
+                    tags=tags, domain=check.domain,
+                )
+        except Exception:
+            logger.debug("Warmup check failed, proceeding with send", from_email=from_email)
+
+        return None
 
     def _send_simple_email(
         self,
@@ -361,6 +420,7 @@ class EmailService:
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
         tags: dict[str, str] | None = None,
+        _skip_warmup_check: bool = False,
     ) -> dict[str, Any]:
         """Send an email using an SES template.
 
@@ -373,6 +433,7 @@ class EmailService:
             cc: CC addresses.
             bcc: BCC addresses.
             tags: Message tags.
+            _skip_warmup_check: Internal flag to bypass warm-up check.
 
         Returns:
             Dict with message_id and status.
@@ -387,6 +448,16 @@ class EmailService:
         # Normalize to list
         if isinstance(to, str):
             to = [to]
+
+        # Warm-up check for templated emails
+        if not _skip_warmup_check:
+            deferred = self._check_warmup_and_defer(
+                to=to, subject=f"[template:{template_name}]", body_text=None,
+                body_html=None, from_email=from_email, reply_to=reply_to,
+                cc=cc, bcc=bcc, tags=tags,
+            )
+            if deferred is not None:
+                return deferred
 
         logger.info(
             "Sending templated email",
@@ -448,6 +519,147 @@ class EmailService:
             raise EmailError(
                 f"Failed to send templated email: {error_message}",
                 code=error_code,
+            ) from e
+
+    def check_domain_auth(self, domain: str) -> dict[str, Any]:
+        """Check domain authentication status (verification + DKIM).
+
+        Args:
+            domain: Email sending domain to check.
+
+        Returns:
+            Dict with domain, verified, dkim_enabled, dkim_status, dkim_tokens, ready.
+        """
+        result: dict[str, Any] = {
+            "domain": domain,
+            "verified": False,
+            "dkim_enabled": False,
+            "dkim_status": None,
+            "dkim_tokens": [],
+            "ready": False,
+        }
+
+        try:
+            # Check domain verification
+            verify_resp = self.client.get_identity_verification_attributes(
+                Identities=[domain]
+            )
+            attrs = verify_resp.get("VerificationAttributes", {}).get(domain, {})
+            result["verified"] = attrs.get("VerificationStatus") == "Success"
+
+            # Check DKIM status
+            dkim_resp = self.client.get_identity_dkim_attributes(
+                Identities=[domain]
+            )
+            dkim_attrs = dkim_resp.get("DkimAttributes", {}).get(domain, {})
+            result["dkim_enabled"] = dkim_attrs.get("DkimEnabled", False)
+            result["dkim_status"] = dkim_attrs.get("DkimVerificationStatus")
+            result["dkim_tokens"] = dkim_attrs.get("DkimTokens", [])
+
+            result["ready"] = result["verified"] and result["dkim_enabled"]
+
+        except ClientError as e:
+            logger.error("Failed to check domain auth", domain=domain, error=str(e))
+            # Fail open - return unknown state rather than blocking
+            result["error"] = str(e)
+
+        return result
+
+    def setup_domain(self, domain: str) -> dict[str, Any]:
+        """Set up a domain for SES sending: verify identity + enable DKIM.
+
+        Returns DNS records the user needs to add, plus current verification status.
+        Idempotent — SES returns the same tokens on repeated calls.
+
+        Args:
+            domain: The sending domain to set up.
+
+        Returns:
+            Dict with domain, verification_token, dkim_tokens, dns_records, and status fields.
+
+        Raises:
+            EmailError: If SES API calls fail.
+        """
+        try:
+            # Initiate domain verification
+            verify_resp = self.client.verify_domain_identity(Domain=domain)
+            verification_token = verify_resp["VerificationToken"]
+
+            # Initiate DKIM verification
+            dkim_resp = self.client.verify_domain_dkim(Domain=domain)
+            dkim_tokens = dkim_resp["DkimTokens"]
+
+            # Build DNS records list
+            dns_records: list[dict[str, Any]] = []
+
+            # Domain verification TXT record
+            dns_records.append({
+                "type": "TXT",
+                "name": f"_amazonses.{domain}",
+                "value": verification_token,
+                "purpose": "domain_verification",
+            })
+
+            # DKIM CNAME records (3)
+            for token in dkim_tokens:
+                dns_records.append({
+                    "type": "CNAME",
+                    "name": f"{token}._domainkey.{domain}",
+                    "value": f"{token}.dkim.amazonses.com",
+                    "purpose": "dkim",
+                })
+
+            # SPF recommendation
+            dns_records.append({
+                "type": "TXT",
+                "name": domain,
+                "value": "v=spf1 include:amazonses.com ~all",
+                "purpose": "spf",
+                "recommended": True,
+            })
+
+            # DMARC recommendation
+            dns_records.append({
+                "type": "TXT",
+                "name": f"_dmarc.{domain}",
+                "value": "v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}".format(domain=domain),
+                "purpose": "dmarc",
+                "recommended": True,
+            })
+
+            # Get current verification status
+            auth_status = self.check_domain_auth(domain)
+
+            logger.info(
+                "Domain setup initiated",
+                domain=domain,
+                dkim_token_count=len(dkim_tokens),
+            )
+
+            return {
+                "domain": domain,
+                "verification_token": verification_token,
+                "dkim_tokens": dkim_tokens,
+                "dns_records": dns_records,
+                "verified": auth_status["verified"],
+                "dkim_enabled": auth_status["dkim_enabled"],
+                "dkim_status": auth_status["dkim_status"],
+                "ready": auth_status["ready"],
+            }
+
+        except ClientError as e:
+            error_code = e.response["Error"]["Code"]
+            error_message = e.response["Error"]["Message"]
+            logger.error(
+                "Domain setup failed",
+                domain=domain,
+                error_code=error_code,
+                error_message=error_message,
+            )
+            raise EmailError(
+                f"Failed to set up domain: {error_message}",
+                code=error_code,
+                details={"domain": domain},
             ) from e
 
     def verify_email_identity(self, email: str) -> dict[str, Any]:

@@ -406,7 +406,7 @@ export default function Contacts() {
       {/* Contacts list */}
       {!isLoading && !isLoadingWorkspace && !error && filteredContacts.length > 0 && (
         <>
-          <div className="card p-0 overflow-visible">
+          <div className="card p-0 overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
@@ -567,7 +567,7 @@ export default function Contacts() {
         size="md"
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>
               <input

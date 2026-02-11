@@ -396,25 +396,8 @@ function CtaBlockPublic({ config, isFullBleed = true }: { config: CtaConfig; isF
 // Form Block
 function FormBlockPublic({ config, workspaceId, pageId, primaryColor, isFullBleed = true }: { config: FormConfig; workspaceId: string; pageId: string; primaryColor: string; isFullBleed?: boolean }) {
   if (!config.formId) {
-    // Show placeholder with title/description when form hasn't been created yet
-    if (isFullBleed) {
-      return (
-        <section className="py-16 px-4 bg-gray-50">
-          <div className="max-w-xl mx-auto text-center">
-            {config.title && <h2 className="text-2xl font-bold text-gray-900 mb-2">{config.title}</h2>}
-            {config.description && <p className="text-gray-600 mb-4">{config.description}</p>}
-            <p className="text-sm text-gray-400">Contact form coming soon</p>
-          </div>
-        </section>
-      );
-    }
-    return (
-      <div className="py-6 bg-gray-50 rounded-lg text-center">
-        {config.title && <h3 className="text-lg font-bold text-gray-900 mb-1">{config.title}</h3>}
-        {config.description && <p className="text-sm text-gray-600 mb-2">{config.description}</p>}
-        <p className="text-xs text-gray-400">Contact form coming soon</p>
-      </div>
-    );
+    // Hide the block entirely if no form is linked
+    return null;
   }
 
   // Full-bleed version

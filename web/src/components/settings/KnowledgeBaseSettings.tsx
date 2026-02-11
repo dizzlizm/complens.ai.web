@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
-import { BookOpen, Upload, Trash2, RefreshCw, FileText, Loader2, CheckCircle, AlertCircle, Clock } from 'lucide-react';
-import { useKBDocuments, useKBStatus, useCreateKBDocument, useDeleteKBDocument, useSyncKB } from '../../lib/hooks/useKnowledgeBase';
+import { BookOpen, Upload, Trash2, RefreshCw, FileText, Loader2, CheckCircle, AlertCircle, Clock, Eye } from 'lucide-react';
+import { useKBDocuments, useKBStatus, useCreateKBDocument, useConfirmKBUpload, useDeleteKBDocument, useSyncKB } from '../../lib/hooks/useKnowledgeBase';
+import DocumentContentModal from './DocumentContentModal';
 
 interface KnowledgeBaseSettingsProps {
   workspaceId: string;
@@ -23,10 +24,12 @@ export default function KnowledgeBaseSettings({ workspaceId }: KnowledgeBaseSett
   const { data: documents = [], isLoading: loadingDocs } = useKBDocuments(workspaceId || undefined);
   const { data: status } = useKBStatus(workspaceId || undefined);
   const createDocument = useCreateKBDocument(workspaceId);
+  const confirmUpload = useConfirmKBUpload(workspaceId);
   const deleteDocument = useDeleteKBDocument(workspaceId);
   const syncKB = useSyncKB(workspaceId);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [viewingDoc, setViewingDoc] = useState<{ id: string; name: string } | null>(null);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -42,11 +45,15 @@ export default function KnowledgeBaseSettings({ workspaceId }: KnowledgeBaseSett
         });
 
         // Upload to presigned URL
-        await fetch(result.upload_url, {
+        const uploadRes = await fetch(result.upload_url, {
           method: 'PUT',
           body: file,
           headers: { 'Content-Type': file.type || 'application/octet-stream' },
         });
+
+        if (uploadRes.ok) {
+          await confirmUpload.mutateAsync(result.id);
+        }
       }
     } catch (err) {
       console.error('Upload failed:', err);
@@ -169,6 +176,15 @@ export default function KnowledgeBaseSettings({ workspaceId }: KnowledgeBaseSett
                   {statusIcons[doc.status]}
                   <span className="text-xs text-gray-500 capitalize">{doc.status}</span>
                 </div>
+                {doc.status === 'indexed' && (
+                  <button
+                    onClick={() => setViewingDoc({ id: doc.id, name: doc.name })}
+                    className="p-1.5 rounded text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+                    title="View content"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                )}
                 <button
                   onClick={() => handleDelete(doc.id)}
                   className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
@@ -180,6 +196,16 @@ export default function KnowledgeBaseSettings({ workspaceId }: KnowledgeBaseSett
           </div>
         )}
       </div>
+
+      {/* Document content viewer/editor */}
+      {viewingDoc && (
+        <DocumentContentModal
+          workspaceId={workspaceId}
+          documentId={viewingDoc.id}
+          documentName={viewingDoc.name}
+          onClose={() => setViewingDoc(null)}
+        />
+      )}
     </div>
   );
 }

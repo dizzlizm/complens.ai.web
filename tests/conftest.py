@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 # Add handlers to the path for testing
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "handlers"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "handlers", "workers"))
 
 # Set environment variables before imports
 os.environ["TABLE_NAME"] = "complens-test"
