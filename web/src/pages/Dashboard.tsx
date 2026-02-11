@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { GitBranch, Users, MessageSquare, CheckCircle } from 'lucide-react';
-import { useCurrentWorkspace } from '../lib/hooks';
+import { GitBranch, Users, MessageSquare, CheckCircle, DollarSign, TrendingUp, Trophy } from 'lucide-react';
+import { useCurrentWorkspace, useDeals } from '../lib/hooks';
 import { useAnalytics } from '../lib/hooks/useAnalytics';
 import { useBusinessProfile } from '../lib/hooks/useAI';
 import StatCard from '../components/dashboard/StatCard';
@@ -24,6 +24,7 @@ export default function Dashboard() {
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { data: analytics, isLoading: isLoadingAnalytics } = useAnalytics(workspaceId, period);
   const { data: profile, isLoading: isLoadingProfile } = useBusinessProfile(workspaceId);
+  const { data: dealsData } = useDeals(workspaceId || '');
   const [wizardDismissed, setWizardDismissed] = useState(
     () => localStorage.getItem('onboarding_dismissed') === 'true'
   );
@@ -142,6 +143,83 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Deal Pipeline Summary - only show when there are deals */}
+      {!isLoading && dealsData && dealsData.summary.total_deals > 0 && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Deal Pipeline</h2>
+            <Link to="/deals" className="text-sm text-primary-600 hover:text-primary-700 font-medium">
+              View Pipeline
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+            <div className="bg-blue-50 rounded-lg p-3 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+                <DollarSign className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-xs text-blue-600 font-medium">Pipeline Value</p>
+                <p className="text-lg font-bold text-gray-900">${dealsData.summary.total_value.toLocaleString()}</p>
+              </div>
+            </div>
+            <div className="bg-indigo-50 rounded-lg p-3 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-indigo-100 flex items-center justify-center shrink-0">
+                <TrendingUp className="w-5 h-5 text-indigo-600" />
+              </div>
+              <div>
+                <p className="text-xs text-indigo-600 font-medium">Active Deals</p>
+                <p className="text-lg font-bold text-gray-900">
+                  {dealsData.deals.filter(d => d.stage !== 'Won' && d.stage !== 'Lost').length}
+                </p>
+              </div>
+            </div>
+            <div className="bg-green-50 rounded-lg p-3 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
+                <Trophy className="w-5 h-5 text-green-600" />
+              </div>
+              <div>
+                <p className="text-xs text-green-600 font-medium">Won</p>
+                <p className="text-lg font-bold text-gray-900">
+                  {dealsData.summary.by_stage['Won']?.count || 0}
+                  {(dealsData.summary.by_stage['Won']?.value ?? 0) > 0 && (
+                    <span className="text-sm font-normal text-gray-500 ml-1">
+                      (${(dealsData.summary.by_stage['Won']?.value || 0).toLocaleString()})
+                    </span>
+                  )}
+                </p>
+              </div>
+            </div>
+          </div>
+          {/* Stage breakdown */}
+          <div className="space-y-2">
+            {dealsData.stages
+              .filter(stage => (dealsData.summary.by_stage[stage]?.count || 0) > 0)
+              .map(stage => {
+                const stageData = dealsData.summary.by_stage[stage];
+                const pct = dealsData.summary.total_deals > 0
+                  ? Math.round((stageData.count / dealsData.summary.total_deals) * 100)
+                  : 0;
+                return (
+                  <div key={stage} className="flex items-center gap-3">
+                    <span className="text-sm text-gray-600 w-28 truncate">{stage}</span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          stage === 'Won' ? 'bg-green-500' : stage === 'Lost' ? 'bg-gray-400' : 'bg-primary-500'
+                        }`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500 w-16 text-right">
+                      {stageData.count} ({pct}%)
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      )}
+
       {/* Page & Form Analytics - only show when there's data */}
       {!isLoading && analytics && (
         ((analytics.page_analytics?.total_page_views ?? 0) > 0 || (analytics.form_analytics?.total_submissions ?? 0) > 0) && (
@@ -202,7 +280,7 @@ export default function Dashboard() {
       {!isLoading && (
         <div className="card">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <Link
               to="/workflows/new"
               className="flex items-center gap-3 p-3 bg-primary-50 hover:bg-primary-100 rounded-lg transition-colors"
@@ -213,6 +291,18 @@ export default function Dashboard() {
               <div>
                 <p className="font-medium text-gray-900">Create Workflow</p>
                 <p className="text-sm text-gray-500">Build automation</p>
+              </div>
+            </Link>
+            <Link
+              to="/deals"
+              className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded-lg transition-colors"
+            >
+              <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                <DollarSign className="w-5 h-5 text-gray-600" />
+              </div>
+              <div>
+                <p className="font-medium text-gray-900">Deal Pipeline</p>
+                <p className="text-sm text-gray-500">Manage deals</p>
               </div>
             </Link>
             <Link

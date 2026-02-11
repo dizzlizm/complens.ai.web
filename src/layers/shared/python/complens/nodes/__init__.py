@@ -8,6 +8,10 @@ from complens.nodes.triggers import (
     SmsReceivedTrigger,
     WebhookTrigger,
     ScheduleTrigger,
+    DealCreatedTrigger,
+    DealStageChangedTrigger,
+    DealWonTrigger,
+    DealLostTrigger,
 )
 from complens.nodes.actions import (
     SendSmsAction,
@@ -17,6 +21,8 @@ from complens.nodes.actions import (
     WaitAction,
     WebhookAction,
     CreateTaskAction,
+    CreateDealAction,
+    UpdateDealAction,
 )
 from complens.nodes.logic import (
     BranchNode,
@@ -43,6 +49,10 @@ __all__ = [
     "SmsReceivedTrigger",
     "WebhookTrigger",
     "ScheduleTrigger",
+    "DealCreatedTrigger",
+    "DealStageChangedTrigger",
+    "DealWonTrigger",
+    "DealLostTrigger",
     # Actions
     "SendSmsAction",
     "SendEmailAction",
@@ -51,6 +61,8 @@ __all__ = [
     "WaitAction",
     "WebhookAction",
     "CreateTaskAction",
+    "CreateDealAction",
+    "UpdateDealAction",
     # Logic
     "BranchNode",
     "ABSplitNode",

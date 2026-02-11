@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import {
   DndContext,
   DragEndEvent,
@@ -29,6 +29,7 @@ import {
   GripVertical,
   Settings2,
   ArrowUpDown,
+  Check,
 } from 'lucide-react';
 import {
   useCurrentWorkspace,
@@ -70,16 +71,193 @@ const priorityColors: Record<string, string> = {
   high: 'bg-red-100 text-red-700',
 };
 
+function useDebouncedCallback<T extends (...args: Parameters<T>) => void>(
+  callback: T,
+  delay: number
+): T {
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  return useCallback(
+    ((...args: Parameters<T>) => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => {
+        callback(...args);
+      }, delay);
+    }) as T,
+    [callback, delay]
+  );
+}
+
 // =============================================================================
-// Deal Card (Sortable)
+// Inline Edit Components
+// =============================================================================
+
+function InlineTextEdit({
+  value,
+  onSave,
+  className = '',
+  placeholder = '',
+}: {
+  value: string;
+  onSave: (value: string) => void;
+  className?: string;
+  placeholder?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [localValue, setLocalValue] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { setLocalValue(value); }, [value]);
+
+  const commit = () => {
+    setEditing(false);
+    if (localValue.trim() && localValue !== value) {
+      onSave(localValue.trim());
+    } else {
+      setLocalValue(value);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <span
+        className={`cursor-text hover:bg-gray-100 rounded px-0.5 -mx-0.5 ${className}`}
+        onClick={(e) => { e.stopPropagation(); setEditing(true); setTimeout(() => inputRef.current?.select(), 0); }}
+      >
+        {value || placeholder}
+      </span>
+    );
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={localValue}
+      onChange={(e) => setLocalValue(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setLocalValue(value); setEditing(false); } }}
+      className={`bg-white border border-primary-300 rounded px-1 outline-none text-sm w-full ${className}`}
+      autoFocus
+      onClick={(e) => e.stopPropagation()}
+    />
+  );
+}
+
+function InlineCurrencyEdit({
+  value,
+  onSave,
+}: {
+  value: number;
+  onSave: (value: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [localValue, setLocalValue] = useState(value.toString());
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { setLocalValue(value.toString()); }, [value]);
+
+  const commit = () => {
+    setEditing(false);
+    const parsed = parseFloat(localValue) || 0;
+    if (parsed !== value) {
+      onSave(parsed);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <span
+        className="cursor-text hover:bg-green-50 rounded px-0.5 -mx-0.5 text-sm font-semibold text-green-600"
+        onClick={(e) => { e.stopPropagation(); setEditing(true); setTimeout(() => inputRef.current?.select(), 0); }}
+      >
+        {value > 0 ? formatCurrency(value) : '$0'}
+      </span>
+    );
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      type="number"
+      value={localValue}
+      onChange={(e) => setLocalValue(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setLocalValue(value.toString()); setEditing(false); } }}
+      className="bg-white border border-primary-300 rounded px-1 outline-none text-sm w-20 font-semibold text-green-600"
+      autoFocus
+      min="0"
+      step="0.01"
+      onClick={(e) => e.stopPropagation()}
+    />
+  );
+}
+
+function InlinePrioritySelect({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as HTMLElement)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const options = ['low', 'medium', 'high'] as const;
+
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <span
+        className={`text-xs px-1.5 py-0.5 rounded font-medium cursor-pointer hover:ring-2 hover:ring-primary-200 ${priorityColors[value]}`}
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+      >
+        {value}
+      </span>
+      {open && (
+        <div className="absolute z-20 top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[100px]">
+          {options.map((opt) => (
+            <button
+              key={opt}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (opt !== value) onSave(opt);
+                setOpen(false);
+              }}
+              className="w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-2"
+            >
+              <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${priorityColors[opt]}`}>{opt}</span>
+              {opt === value && <Check className="w-3 h-3 text-primary-600 ml-auto" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =============================================================================
+// Deal Card (Sortable) with inline editing
 // =============================================================================
 
 function DealCard({
   deal,
   onClick,
+  onInlineUpdate,
 }: {
   deal: Deal;
   onClick: () => void;
+  onInlineUpdate: (dealId: string, data: Record<string, unknown>) => void;
 }) {
   const {
     attributes,
@@ -112,19 +290,25 @@ function DealCard({
           <GripVertical className="w-4 h-4" />
         </button>
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-gray-900 text-sm truncate">{deal.title}</p>
-          {deal.value > 0 && (
-            <p className="text-sm font-semibold text-green-600 mt-0.5">
-              {formatCurrency(deal.value)}
-            </p>
-          )}
+          <InlineTextEdit
+            value={deal.title}
+            onSave={(title) => onInlineUpdate(deal.id, { title })}
+            className="font-medium text-gray-900 text-sm truncate block"
+          />
+          <div className="mt-0.5">
+            <InlineCurrencyEdit
+              value={deal.value}
+              onSave={(value) => onInlineUpdate(deal.id, { value })}
+            />
+          </div>
           {deal.contact_name && (
             <p className="text-xs text-gray-500 mt-1 truncate">{deal.contact_name}</p>
           )}
           <div className="flex items-center gap-2 mt-2">
-            <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${priorityColors[deal.priority]}`}>
-              {deal.priority}
-            </span>
+            <InlinePrioritySelect
+              value={deal.priority}
+              onSave={(priority) => onInlineUpdate(deal.id, { priority })}
+            />
             {deal.expected_close_date && (
               <span className="text-xs text-gray-400">
                 {formatDate(deal.expected_close_date)}
@@ -137,22 +321,105 @@ function DealCard({
   );
 }
 
-// Overlay card shown during drag
+// Overlay card shown during drag — enlarged with more shadow
 function DealCardOverlay({ deal }: { deal: Deal }) {
   return (
-    <div className="bg-white rounded-lg border-2 border-primary-400 p-3 shadow-xl w-64">
+    <div className="bg-white rounded-lg border-2 border-primary-400 p-4 shadow-2xl w-72 rotate-2">
       <p className="font-medium text-gray-900 text-sm truncate">{deal.title}</p>
       {deal.value > 0 && (
-        <p className="text-sm font-semibold text-green-600 mt-0.5">
+        <p className="text-sm font-semibold text-green-600 mt-1">
           {formatCurrency(deal.value)}
         </p>
       )}
+      {deal.contact_name && (
+        <p className="text-xs text-gray-500 mt-1">{deal.contact_name}</p>
+      )}
+      <span className={`text-xs px-1.5 py-0.5 rounded font-medium mt-2 inline-block ${priorityColors[deal.priority]}`}>
+        {deal.priority}
+      </span>
     </div>
   );
 }
 
 // =============================================================================
-// Stage Column (Droppable)
+// Inline Add Deal Form (replaces modal for column-level add)
+// =============================================================================
+
+function InlineAddDeal({
+  stage,
+  onSubmit,
+  onCancel,
+  isSubmitting,
+}: {
+  stage: string;
+  onSubmit: (data: CreateDealInput) => void;
+  onCancel: () => void;
+  isSubmitting: boolean;
+}) {
+  const [title, setTitle] = useState('');
+  const [value, setValue] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const handleSubmit = () => {
+    if (!title.trim()) return;
+    onSubmit({
+      title: title.trim(),
+      value: parseFloat(value) || 0,
+      stage,
+      priority: 'medium',
+    });
+    setTitle('');
+    setValue('');
+    inputRef.current?.focus();
+  };
+
+  return (
+    <div className="bg-white rounded-lg border-2 border-dashed border-primary-300 p-3 space-y-2">
+      <input
+        ref={inputRef}
+        type="text"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && title.trim()) handleSubmit();
+          if (e.key === 'Escape') onCancel();
+        }}
+        className="input w-full text-sm"
+        placeholder="Deal title..."
+      />
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && title.trim()) handleSubmit();
+          if (e.key === 'Escape') onCancel();
+        }}
+        className="input w-full text-sm"
+        placeholder="Value ($)"
+        min="0"
+        step="0.01"
+      />
+      <div className="flex items-center gap-2">
+        <button
+          onClick={handleSubmit}
+          disabled={isSubmitting || !title.trim()}
+          className="btn btn-primary btn-sm flex-1"
+        >
+          {isSubmitting ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Add'}
+        </button>
+        <button onClick={onCancel} className="btn btn-secondary btn-sm">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// Stage Column (Droppable) with inline add
 // =============================================================================
 
 function StageColumn({
@@ -160,15 +427,24 @@ function StageColumn({
   deals,
   summary,
   onCardClick,
+  onInlineUpdate,
+  onAddDeal,
+  isAddingDeal,
   isTerminal,
+  isDragActive,
 }: {
   stage: string;
   deals: Deal[];
   summary: { count: number; value: number };
   onCardClick: (deal: Deal) => void;
+  onInlineUpdate: (dealId: string, data: Record<string, unknown>) => void;
+  onAddDeal: (data: CreateDealInput) => void;
+  isAddingDeal: boolean;
   isTerminal: 'won' | 'lost' | null;
+  isDragActive: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
+  const [showInlineAdd, setShowInlineAdd] = useState(false);
 
   const sortedDeals = useMemo(
     () => [...deals].sort((a, b) => a.position - b.position),
@@ -187,23 +463,55 @@ function StageColumn({
       ? 'bg-gray-50'
       : 'bg-gray-50';
 
+  const dropHighlight = isDragActive && isOver
+    ? 'ring-2 ring-primary-400 bg-primary-50/30'
+    : isDragActive
+      ? 'ring-1 ring-gray-300 ring-dashed'
+      : '';
+
   return (
     <div
       ref={setNodeRef}
-      className={`flex flex-col w-72 flex-shrink-0 rounded-lg border-t-2 ${borderClass} ${isOver ? 'ring-2 ring-primary-300' : ''}`}
+      className={`flex flex-col w-72 flex-shrink-0 rounded-lg border-t-2 ${borderClass} ${dropHighlight} transition-all`}
     >
       {/* Column header */}
       <div className={`p-3 rounded-t-lg ${bgClass}`}>
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-sm text-gray-800">{stage}</h3>
-          <span className="text-xs text-gray-500 bg-white rounded-full px-2 py-0.5 font-medium">
-            {summary.count}
-          </span>
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-gray-500 bg-white rounded-full px-2 py-0.5 font-medium">
+              {summary.count}
+            </span>
+            {!isTerminal && (
+              <button
+                onClick={() => setShowInlineAdd(true)}
+                className="p-0.5 text-gray-400 hover:text-primary-600 hover:bg-white rounded transition-colors"
+                title="Add deal"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
         {summary.value > 0 && (
           <p className="text-xs text-gray-500 mt-1">{formatCurrency(summary.value)}</p>
         )}
       </div>
+
+      {/* Inline add form at top */}
+      {showInlineAdd && (
+        <div className="p-2">
+          <InlineAddDeal
+            stage={stage}
+            onSubmit={(data) => {
+              onAddDeal(data);
+              setShowInlineAdd(false);
+            }}
+            onCancel={() => setShowInlineAdd(false)}
+            isSubmitting={isAddingDeal}
+          />
+        </div>
+      )}
 
       {/* Cards */}
       <div className="flex-1 p-2 space-y-2 min-h-[100px] overflow-y-auto max-h-[calc(100vh-320px)]">
@@ -216,13 +524,18 @@ function StageColumn({
               key={deal.id}
               deal={deal}
               onClick={() => onCardClick(deal)}
+              onInlineUpdate={onInlineUpdate}
             />
           ))}
         </SortableContext>
 
-        {sortedDeals.length === 0 && (
+        {sortedDeals.length === 0 && !showInlineAdd && (
           <div className="flex items-center justify-center h-20 text-gray-400 text-xs">
-            Drop deals here
+            {isDragActive ? (
+              <span className="text-primary-500 font-medium">Drop here</span>
+            ) : (
+              'No deals'
+            )}
           </div>
         )}
       </div>
@@ -231,7 +544,7 @@ function StageColumn({
 }
 
 // =============================================================================
-// Deal Detail Panel (Slide-over)
+// Deal Detail Side Panel (fixed right panel, no backdrop)
 // =============================================================================
 
 function DealDetailPanel({
@@ -240,7 +553,6 @@ function DealDetailPanel({
   onClose,
   onSave,
   onDelete,
-  isSaving,
   isDeleting,
 }: {
   deal: Deal;
@@ -248,7 +560,6 @@ function DealDetailPanel({
   onClose: () => void;
   onSave: (data: Record<string, unknown>) => void;
   onDelete: () => void;
-  isSaving: boolean;
   isDeleting: boolean;
 }) {
   const [title, setTitle] = useState(deal.title);
@@ -260,9 +571,34 @@ function DealDetailPanel({
   const [expectedCloseDate, setExpectedCloseDate] = useState(deal.expected_close_date || '');
   const [lostReason, setLostReason] = useState(deal.lost_reason || '');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  const handleSave = () => {
-    onSave({
+  // Re-initialize when deal changes
+  useEffect(() => {
+    setTitle(deal.title);
+    setValue(deal.value.toString());
+    setStage(deal.stage);
+    setPriority(deal.priority);
+    setContactName(deal.contact_name || '');
+    setDescription(deal.description || '');
+    setExpectedCloseDate(deal.expected_close_date || '');
+    setLostReason(deal.lost_reason || '');
+    setSaved(false);
+  }, [deal.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-save with debounce
+  const debouncedSave = useDebouncedCallback(
+    (data: Record<string, unknown>) => {
+      onSave(data);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    },
+    500
+  );
+
+  const triggerSave = useCallback((overrides: Record<string, unknown> = {}) => {
+    debouncedSave({
       title,
       value: parseFloat(value) || 0,
       stage,
@@ -271,32 +607,65 @@ function DealDetailPanel({
       description: description || undefined,
       expected_close_date: expectedCloseDate || undefined,
       lost_reason: lostReason || undefined,
+      ...overrides,
     });
-  };
+  }, [title, value, stage, priority, contactName, description, expectedCloseDate, lostReason, debouncedSave]);
+
+  // Keyboard: Escape to close, Delete to delete
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'Delete' && !showDeleteConfirm) {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
+        setShowDeleteConfirm(true);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose, showDeleteConfirm]);
+
+  // Click outside panel to close
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as HTMLElement)) {
+        onClose();
+      }
+    };
+    // Delay to avoid triggering on the click that opened the panel
+    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 100);
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler); };
+  }, [onClose]);
 
   return (
     <>
-      {/* Backdrop */}
-      <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
-
-      {/* Panel */}
-      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white shadow-xl flex flex-col animate-slide-in-right">
+      <div
+        ref={panelRef}
+        className="w-[400px] bg-white border-l border-gray-200 flex flex-col h-full shadow-lg flex-shrink-0 animate-slide-in-right"
+      >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Deal Details</h2>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold text-gray-900">Deal Details</h2>
+            {saved && (
+              <span className="text-xs text-green-600 flex items-center gap-1 animate-fade-in">
+                <Check className="w-3 h-3" /> Saved
+              </span>
+            )}
+          </div>
           <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
             <input
               type="text"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => { setTitle(e.target.value); triggerSave({ title: e.target.value }); }}
               className="input w-full"
             />
           </div>
@@ -307,7 +676,7 @@ function DealDetailPanel({
               <input
                 type="number"
                 value={value}
-                onChange={(e) => setValue(e.target.value)}
+                onChange={(e) => { setValue(e.target.value); triggerSave({ value: parseFloat(e.target.value) || 0 }); }}
                 className="input w-full"
                 min="0"
                 step="0.01"
@@ -317,7 +686,7 @@ function DealDetailPanel({
               <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
               <select
                 value={priority}
-                onChange={(e) => setPriority(e.target.value as 'low' | 'medium' | 'high')}
+                onChange={(e) => { setPriority(e.target.value as 'low' | 'medium' | 'high'); triggerSave({ priority: e.target.value }); }}
                 className="input w-full"
               >
                 <option value="low">Low</option>
@@ -331,7 +700,7 @@ function DealDetailPanel({
             <label className="block text-sm font-medium text-gray-700 mb-1">Stage</label>
             <select
               value={stage}
-              onChange={(e) => setStage(e.target.value)}
+              onChange={(e) => { setStage(e.target.value); triggerSave({ stage: e.target.value }); }}
               className="input w-full"
             >
               {stages.map((s) => (
@@ -345,7 +714,7 @@ function DealDetailPanel({
             <input
               type="text"
               value={contactName}
-              onChange={(e) => setContactName(e.target.value)}
+              onChange={(e) => { setContactName(e.target.value); triggerSave({ contact_name: e.target.value || undefined }); }}
               className="input w-full"
               placeholder="Link to a contact"
             />
@@ -356,7 +725,7 @@ function DealDetailPanel({
             <input
               type="date"
               value={expectedCloseDate}
-              onChange={(e) => setExpectedCloseDate(e.target.value)}
+              onChange={(e) => { setExpectedCloseDate(e.target.value); triggerSave({ expected_close_date: e.target.value || undefined }); }}
               className="input w-full"
             />
           </div>
@@ -365,7 +734,7 @@ function DealDetailPanel({
             <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
             <textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => { setDescription(e.target.value); triggerSave({ description: e.target.value || undefined }); }}
               className="input w-full"
               rows={3}
             />
@@ -376,7 +745,7 @@ function DealDetailPanel({
               <label className="block text-sm font-medium text-gray-700 mb-1">Lost Reason</label>
               <textarea
                 value={lostReason}
-                onChange={(e) => setLostReason(e.target.value)}
+                onChange={(e) => { setLostReason(e.target.value); triggerSave({ lost_reason: e.target.value || undefined }); }}
                 className="input w-full"
                 rows={2}
                 placeholder="Why was this deal lost?"
@@ -390,8 +759,8 @@ function DealDetailPanel({
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200">
+        {/* Footer — only delete, no Save/Cancel */}
+        <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200">
           <button
             onClick={() => setShowDeleteConfirm(true)}
             className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center gap-1"
@@ -399,18 +768,7 @@ function DealDetailPanel({
             <Trash2 className="w-4 h-4" />
             Delete
           </button>
-          <div className="flex gap-2">
-            <button onClick={onClose} className="btn btn-secondary">
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              className="btn btn-primary"
-              disabled={isSaving || !title.trim()}
-            >
-              {isSaving ? 'Saving...' : 'Save'}
-            </button>
-          </div>
+          <span className="text-xs text-gray-400">Esc to close</span>
         </div>
       </div>
 
@@ -429,7 +787,7 @@ function DealDetailPanel({
 }
 
 // =============================================================================
-// Add Deal Modal
+// Add Deal Modal (kept for header-level "Add Deal" button)
 // =============================================================================
 
 function AddDealModal({
@@ -994,14 +1352,25 @@ export default function DealPipeline() {
     });
   };
 
+  const handleInlineAddDeal = (data: CreateDealInput) => {
+    createDeal.mutate(data, {
+      onSuccess: () => {
+        toast.success('Deal created');
+      },
+      onError: () => {
+        toast.error('Failed to create deal');
+      },
+    });
+  };
+
   const handleUpdateDeal = (data: Record<string, unknown>) => {
     if (!selectedDeal) return;
     updateDeal.mutate(
       { dealId: selectedDeal.id, ...data } as any,
       {
-        onSuccess: () => {
-          setSelectedDeal(null);
-          toast.success('Deal updated');
+        onSuccess: (updatedDeal) => {
+          // Keep panel open with updated data
+          if (updatedDeal) setSelectedDeal(updatedDeal as Deal);
         },
         onError: () => {
           toast.error('Failed to update deal');
@@ -1009,6 +1378,17 @@ export default function DealPipeline() {
       }
     );
   };
+
+  const handleInlineUpdate = useCallback((dealId: string, data: Record<string, unknown>) => {
+    updateDeal.mutate(
+      { dealId, ...data } as any,
+      {
+        onError: () => {
+          toast.error('Failed to update deal');
+        },
+      }
+    );
+  }, [updateDeal, toast]);
 
   const handleDeleteDeal = () => {
     if (!selectedDeal) return;
@@ -1044,6 +1424,23 @@ export default function DealPipeline() {
     }
   };
 
+  // Keyboard shortcuts (global)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Only when no panel is open and no input is focused
+      const active = document.activeElement;
+      const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT');
+      if (isInput) return;
+
+      if (e.key === 'n' && !selectedDeal && !isAddModalOpen) {
+        e.preventDefault();
+        setIsAddModalOpen(true);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [selectedDeal, isAddModalOpen]);
+
   if (isLoadingWorkspace || isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1053,140 +1450,159 @@ export default function DealPipeline() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Deals</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage your sales pipeline and track deals
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsPipelineSettingsOpen(true)}
-            className="btn btn-secondary"
-            title="Pipeline Settings"
-          >
-            <Settings2 className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="btn btn-primary"
-          >
-            <Plus className="w-4 h-4 mr-1" />
-            Add Deal
-          </button>
-        </div>
-      </div>
-
-      {/* Summary bar */}
-      {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
-            <p className="text-xs text-gray-500 uppercase font-medium">Total Deals</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{summary.total_deals}</p>
-          </div>
-          <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
-            <p className="text-xs text-gray-500 uppercase font-medium">Pipeline Value</p>
-            <p className="text-2xl font-bold text-green-600 mt-1">{formatCurrency(summary.total_value)}</p>
-          </div>
-          <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
-            <p className="text-xs text-gray-500 uppercase font-medium">Won</p>
-            <p className="text-2xl font-bold text-green-600 mt-1">
-              {formatCurrency(summary.by_stage?.['Won']?.value || 0)}
+    <div className="flex h-full">
+      {/* Main content area */}
+      <div className={`flex-1 space-y-6 min-w-0 ${selectedDeal ? 'pr-0' : ''}`}>
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Deals</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              Manage your sales pipeline and track deals
             </p>
           </div>
-          <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
-            <p className="text-xs text-gray-500 uppercase font-medium">Active Deals</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">
-              {summary.total_deals - (summary.by_stage?.['Won']?.count || 0) - (summary.by_stage?.['Lost']?.count || 0)}
-            </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsPipelineSettingsOpen(true)}
+              className="btn btn-secondary"
+              title="Pipeline Settings"
+            >
+              <Settings2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setIsAddModalOpen(true)}
+              className="btn btn-primary"
+            >
+              <Plus className="w-4 h-4 mr-1" />
+              Add Deal
+            </button>
           </div>
         </div>
-      )}
 
-      {/* Toolbar */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="input w-full pl-9"
-            placeholder="Search deals..."
+        {/* Summary bar */}
+        {summary && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
+              <p className="text-xs text-gray-500 uppercase font-medium">Total Deals</p>
+              <p className="text-2xl font-bold text-gray-900 mt-1">{summary.total_deals}</p>
+            </div>
+            <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
+              <p className="text-xs text-gray-500 uppercase font-medium">Pipeline Value</p>
+              <p className="text-2xl font-bold text-green-600 mt-1">{formatCurrency(summary.total_value)}</p>
+            </div>
+            <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
+              <p className="text-xs text-gray-500 uppercase font-medium">Won</p>
+              <p className="text-2xl font-bold text-green-600 mt-1">
+                {formatCurrency(summary.by_stage?.['Won']?.value || 0)}
+              </p>
+            </div>
+            <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
+              <p className="text-xs text-gray-500 uppercase font-medium">Active Deals</p>
+              <p className="text-2xl font-bold text-gray-900 mt-1">
+                {summary.total_deals - (summary.by_stage?.['Won']?.count || 0) - (summary.by_stage?.['Lost']?.count || 0)}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Toolbar */}
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="input w-full pl-9"
+              placeholder="Search deals..."
+            />
+          </div>
+          <div className="flex items-center bg-white border border-gray-200 rounded-lg p-0.5">
+            <button
+              onClick={() => setView('kanban')}
+              className={`p-1.5 rounded ${view === 'kanban' ? 'bg-primary-100 text-primary-700' : 'text-gray-400 hover:text-gray-600'}`}
+              title="Kanban view"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setView('table')}
+              className={`p-1.5 rounded ${view === 'table' ? 'bg-primary-100 text-primary-700' : 'text-gray-400 hover:text-gray-600'}`}
+              title="Table view"
+            >
+              <List className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Main content */}
+        {view === 'kanban' ? (
+          <DndContext
+            sensors={sensors}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+          >
+            <div className="flex gap-4 overflow-x-auto pb-4">
+              {stages.map((stage) => (
+                <StageColumn
+                  key={stage}
+                  stage={stage}
+                  deals={dealsByStage[stage] || []}
+                  summary={summary?.by_stage?.[stage] || { count: 0, value: 0 }}
+                  onCardClick={setSelectedDeal}
+                  onInlineUpdate={handleInlineUpdate}
+                  onAddDeal={handleInlineAddDeal}
+                  isAddingDeal={createDeal.isPending}
+                  isTerminal={stage === 'Won' ? 'won' : stage === 'Lost' ? 'lost' : null}
+                  isDragActive={!!activeDragId}
+                />
+              ))}
+            </div>
+
+            <DragOverlay>
+              {activeDeal ? <DealCardOverlay deal={activeDeal} /> : null}
+            </DragOverlay>
+          </DndContext>
+        ) : (
+          <TableView
+            deals={filteredDeals}
+            onRowClick={setSelectedDeal}
+            sortField={sortField}
+            sortDir={sortDir}
+            onSort={handleSort}
           />
-        </div>
-        <div className="flex items-center bg-white border border-gray-200 rounded-lg p-0.5">
-          <button
-            onClick={() => setView('kanban')}
-            className={`p-1.5 rounded ${view === 'kanban' ? 'bg-primary-100 text-primary-700' : 'text-gray-400 hover:text-gray-600'}`}
-            title="Kanban view"
-          >
-            <LayoutGrid className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setView('table')}
-            className={`p-1.5 rounded ${view === 'table' ? 'bg-primary-100 text-primary-700' : 'text-gray-400 hover:text-gray-600'}`}
-            title="Table view"
-          >
-            <List className="w-4 h-4" />
-          </button>
-        </div>
+        )}
+
+        {/* Empty state */}
+        {!isLoading && deals.length === 0 && (
+          <div className="text-center py-16">
+            <DollarSign className="w-12 h-12 text-gray-300 mx-auto" />
+            <h3 className="mt-4 text-lg font-medium text-gray-900">No deals yet</h3>
+            <p className="mt-2 text-sm text-gray-500">
+              Create your first deal to start tracking your sales pipeline.
+            </p>
+            <button
+              onClick={() => setIsAddModalOpen(true)}
+              className="btn btn-primary mt-4"
+            >
+              <Plus className="w-4 h-4 mr-1" />
+              Add Deal
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Main content */}
-      {view === 'kanban' ? (
-        <DndContext
-          sensors={sensors}
-          onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDragEnd={handleDragEnd}
-        >
-          <div className="flex gap-4 overflow-x-auto pb-4">
-            {stages.map((stage) => (
-              <StageColumn
-                key={stage}
-                stage={stage}
-                deals={dealsByStage[stage] || []}
-                summary={summary?.by_stage?.[stage] || { count: 0, value: 0 }}
-                onCardClick={setSelectedDeal}
-                isTerminal={stage === 'Won' ? 'won' : stage === 'Lost' ? 'lost' : null}
-              />
-            ))}
-          </div>
-
-          <DragOverlay>
-            {activeDeal ? <DealCardOverlay deal={activeDeal} /> : null}
-          </DragOverlay>
-        </DndContext>
-      ) : (
-        <TableView
-          deals={filteredDeals}
-          onRowClick={setSelectedDeal}
-          sortField={sortField}
-          sortDir={sortDir}
-          onSort={handleSort}
+      {/* Side panel — no backdrop, board stays interactive */}
+      {selectedDeal && (
+        <DealDetailPanel
+          deal={selectedDeal}
+          stages={stages}
+          onClose={() => setSelectedDeal(null)}
+          onSave={handleUpdateDeal}
+          onDelete={handleDeleteDeal}
+          isDeleting={deleteDeal.isPending}
         />
-      )}
-
-      {/* Empty state */}
-      {!isLoading && deals.length === 0 && (
-        <div className="text-center py-16">
-          <DollarSign className="w-12 h-12 text-gray-300 mx-auto" />
-          <h3 className="mt-4 text-lg font-medium text-gray-900">No deals yet</h3>
-          <p className="mt-2 text-sm text-gray-500">
-            Create your first deal to start tracking your sales pipeline.
-          </p>
-          <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="btn btn-primary mt-4"
-          >
-            <Plus className="w-4 h-4 mr-1" />
-            Add Deal
-          </button>
-        </div>
       )}
 
       {/* Modals */}
@@ -1207,19 +1623,6 @@ export default function DealPipeline() {
           onSave={handleSavePipeline}
           isSaving={updatePipeline.isPending}
           dealsByStage={dealCountByStage}
-        />
-      )}
-
-      {/* Deal Detail Panel */}
-      {selectedDeal && (
-        <DealDetailPanel
-          deal={selectedDeal}
-          stages={stages}
-          onClose={() => setSelectedDeal(null)}
-          onSave={handleUpdateDeal}
-          onDelete={handleDeleteDeal}
-          isSaving={updateDeal.isPending}
-          isDeleting={deleteDeal.isPending}
         />
       )}
     </div>

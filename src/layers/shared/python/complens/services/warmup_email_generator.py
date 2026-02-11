@@ -2,6 +2,10 @@
 
 Generates varied, natural-sounding business emails for domain warm-up,
 using Claude Haiku for cost-efficient content generation (~$0.001/email).
+
+When a workspace has uploaded knowledge base documents, the generator
+pulls relevant content snippets to produce emails that reference real
+business information (products, features, FAQs) instead of generic filler.
 """
 
 import random
@@ -11,6 +15,18 @@ import structlog
 from complens.services.ai_service import FAST_MODEL, get_business_context, invoke_claude_json
 
 logger = structlog.get_logger()
+
+# Maps content_type to KB retrieval queries that pull relevant context
+KB_QUERIES_BY_CONTENT_TYPE: dict[str, str] = {
+    "newsletter": "latest updates product features announcements",
+    "product_update": "product features capabilities new releases",
+    "team_announcement": "company team culture values mission",
+    "industry_insight": "industry trends market analysis competitive landscape",
+    "customer_tip": "tips best practices how to getting started",
+    "company_milestone": "achievements milestones growth metrics",
+    "event_invitation": "events webinars conferences workshops",
+    "weekly_digest": "recent updates highlights key takeaways",
+}
 
 CONTENT_TYPES = [
     "newsletter",
@@ -44,6 +60,11 @@ class WarmupEmailGenerator:
     ) -> dict:
         """Generate a warmup email using AI.
 
+        Enriches the prompt with real business data when available:
+        - KB documents (product info, FAQs, features)
+        - Published landing page titles/URLs
+        - Deal pipeline summary (total value, recent wins)
+
         Args:
             workspace_id: Workspace ID for business context.
             domain: Sending domain.
@@ -63,6 +84,21 @@ class WarmupEmailGenerator:
         except Exception:
             logger.debug("Could not load business context, using generic", workspace_id=workspace_id)
 
+        # Gather enrichment context from KB, pages, and deals
+        kb_context = self._get_kb_context(workspace_id, content_type)
+        page_context = self._get_page_context(workspace_id)
+        deal_context = self._get_deal_context(workspace_id)
+
+        enrichment_parts: list[str] = []
+        if kb_context:
+            enrichment_parts.append(f"Real business content to reference (from knowledge base):\n{kb_context}")
+        if page_context:
+            enrichment_parts.append(f"Published landing pages (use for links/references):\n{page_context}")
+        if deal_context:
+            enrichment_parts.append(f"Business metrics (use naturally for milestones/updates):\n{deal_context}")
+
+        enrichment_text = "\n\n".join(enrichment_parts)
+
         exclude_text = ""
         if exclude_subjects:
             subjects_str = "\n".join(f"- {s}" for s in exclude_subjects[:20])
@@ -78,6 +114,7 @@ Requirements:
 - Sending domain: {domain}
 - Recipient: {recipient_email}
 {f"- Business context: {business_context}" if business_context else "- Use generic but realistic business content"}
+{f"\n{enrichment_text}" if enrichment_text else ""}
 {exclude_text}
 
 The email must:
@@ -86,6 +123,7 @@ The email must:
 3. Feel like a genuine business communication, not a marketing blast
 4. Include a plain text version and an HTML version
 5. End with a casual question or call-to-action that invites a reply
+{f"6. Naturally weave in real product/business details from the knowledge base content above" if kb_context else ""}
 
 Return JSON with exactly these fields:
 - subject: string (email subject line)
@@ -96,7 +134,7 @@ Return JSON with exactly these fields:
         try:
             result = invoke_claude_json(
                 prompt=prompt,
-                system="You are an email copywriter generating warm-up emails for domain reputation building. Create natural, engaging emails that look like genuine business communications. Return valid JSON only.",
+                system="You are an email copywriter generating warm-up emails for domain reputation building. Create natural, engaging emails that look like genuine business communications. When provided with real business content from a knowledge base, incorporate it naturally - reference actual features, products, and information rather than making things up. Return valid JSON only.",
                 model=FAST_MODEL,
             )
 
@@ -110,6 +148,7 @@ Return JSON with exactly these fields:
                 domain=domain,
                 content_type=content_type,
                 subject=result["subject"][:50],
+                has_kb_context=bool(kb_context),
             )
 
             return result
@@ -121,6 +160,116 @@ Return JSON with exactly these fields:
                 content_type=content_type,
             )
             return self._fallback_email(domain, content_type)
+
+    @staticmethod
+    def _get_kb_context(workspace_id: str, content_type: str) -> str:
+        """Retrieve relevant KB snippets for the given content type.
+
+        Args:
+            workspace_id: Workspace ID.
+            content_type: Email content type (newsletter, product_update, etc.).
+
+        Returns:
+            Formatted KB snippets string, or empty string if none available.
+        """
+        try:
+            from complens.repositories.document import DocumentRepository
+            from complens.services.knowledge_base_service import KnowledgeBaseService
+
+            doc_repo = DocumentRepository()
+            indexed_docs, _ = doc_repo.list_by_workspace(workspace_id, status="indexed", limit=1)
+            if not indexed_docs:
+                return ""
+
+            kb_service = KnowledgeBaseService()
+            query = KB_QUERIES_BY_CONTENT_TYPE.get(content_type, "product features updates")
+            results = kb_service.retrieve(workspace_id, query, max_results=3)
+
+            if not results:
+                return ""
+
+            snippets = []
+            for r in results:
+                text = r.get("text", "").strip()
+                if text:
+                    # Truncate long snippets to keep prompt size manageable
+                    snippets.append(text[:500])
+
+            return "\n---\n".join(snippets) if snippets else ""
+
+        except Exception:
+            logger.debug("Could not load KB context for warmup", workspace_id=workspace_id)
+            return ""
+
+    @staticmethod
+    def _get_page_context(workspace_id: str) -> str:
+        """Get published landing page titles and URLs for email references.
+
+        Args:
+            workspace_id: Workspace ID.
+
+        Returns:
+            Formatted page list string, or empty string if none.
+        """
+        try:
+            from complens.repositories.page import PageRepository
+
+            page_repo = PageRepository()
+            pages = page_repo.list_published(workspace_id, limit=10)
+
+            if not pages:
+                return ""
+
+            lines = []
+            for page in pages:
+                title = page.title or page.slug
+                url = ""
+                if page.subdomain:
+                    url = f"https://{page.subdomain}.complens.ai"
+                elif page.custom_domain:
+                    url = f"https://{page.custom_domain}"
+                lines.append(f"- {title}" + (f" ({url})" if url else ""))
+
+            return "\n".join(lines)
+
+        except Exception:
+            logger.debug("Could not load page context for warmup", workspace_id=workspace_id)
+            return ""
+
+    @staticmethod
+    def _get_deal_context(workspace_id: str) -> str:
+        """Get pipeline summary for business milestone type emails.
+
+        Args:
+            workspace_id: Workspace ID.
+
+        Returns:
+            Formatted deal summary string, or empty string if none.
+        """
+        try:
+            from complens.repositories.deal import DealRepository
+
+            deal_repo = DealRepository()
+            deals, _ = deal_repo.list_by_workspace(workspace_id, limit=200)
+
+            if not deals:
+                return ""
+
+            total_value = sum(d.value or 0 for d in deals)
+            active_deals = [d for d in deals if d.stage not in ("Won", "Lost")]
+            won_deals = [d for d in deals if d.stage == "Won"]
+
+            parts = [f"Total pipeline value: ${total_value:,.0f}"]
+            parts.append(f"Active deals: {len(active_deals)}")
+            if won_deals:
+                won_value = sum(d.value or 0 for d in won_deals)
+                parts.append(f"Won deals: {len(won_deals)} (${won_value:,.0f})")
+
+            return "\n".join(parts)
+
+        except Exception:
+            logger.debug("Could not load deal context for warmup", workspace_id=workspace_id)
+            return ""
 
     @staticmethod
     def _fallback_email(domain: str, content_type: str) -> dict:

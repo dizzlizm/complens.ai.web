@@ -19,6 +19,150 @@ from complens.utils.responses import created, error, not_found, success, validat
 logger = structlog.get_logger()
 
 
+# Built-in templates that are always available (not stored in DB)
+BUILTIN_TEMPLATES: list[dict[str, Any]] = [
+    {
+        "id": "builtin_new_deal_notification",
+        "name": "New Deal Notification",
+        "description": "Notify the team when a new deal is created in the pipeline.",
+        "category": "deals",
+        "icon": "dollar-sign",
+        "builtin": True,
+        "nodes": [
+            {
+                "id": "trigger_1",
+                "type": "trigger",
+                "data": {
+                    "nodeType": "trigger_deal_created",
+                    "label": "Deal Created",
+                    "config": {},
+                },
+                "position": {"x": 250, "y": 50},
+            },
+            {
+                "id": "action_1",
+                "type": "action",
+                "data": {
+                    "nodeType": "action_send_email",
+                    "label": "Notify Team",
+                    "config": {
+                        "to": "{{workspace.notification_email}}",
+                        "subject": "New Deal: {{deal.title}}",
+                        "body": "A new deal has been created.\n\nTitle: {{deal.title}}\nValue: ${{deal.value}}\nStage: {{deal.stage}}\nContact: {{deal.contact_name}}",
+                    },
+                },
+                "position": {"x": 250, "y": 200},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger_1", "target": "action_1"},
+        ],
+    },
+    {
+        "id": "builtin_deal_won_celebration",
+        "name": "Deal Won Celebration",
+        "description": "Send a thank-you email when a deal is won and tag the contact as a customer.",
+        "category": "deals",
+        "icon": "trophy",
+        "builtin": True,
+        "nodes": [
+            {
+                "id": "trigger_1",
+                "type": "trigger",
+                "data": {
+                    "nodeType": "trigger_deal_won",
+                    "label": "Deal Won",
+                    "config": {},
+                },
+                "position": {"x": 250, "y": 50},
+            },
+            {
+                "id": "action_1",
+                "type": "action",
+                "data": {
+                    "nodeType": "action_send_email",
+                    "label": "Thank Customer",
+                    "config": {
+                        "to": "{{contact.email}}",
+                        "subject": "Welcome aboard! Thank you for choosing us",
+                        "body": "Hi {{contact.first_name}},\n\nThank you for choosing to work with us! We're excited to get started on {{deal.title}}.\n\nOur team will be reaching out shortly to kick things off.\n\nBest regards,\nThe Team",
+                    },
+                },
+                "position": {"x": 100, "y": 200},
+            },
+            {
+                "id": "action_2",
+                "type": "action",
+                "data": {
+                    "nodeType": "action_update_contact",
+                    "label": "Tag as Customer",
+                    "config": {
+                        "add_tags": ["customer"],
+                    },
+                },
+                "position": {"x": 400, "y": 200},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger_1", "target": "action_1"},
+            {"id": "e2", "source": "trigger_1", "target": "action_2"},
+        ],
+    },
+    {
+        "id": "builtin_form_to_deal",
+        "name": "Form to Deal",
+        "description": "Automatically create a deal in the pipeline when a form is submitted.",
+        "category": "leads",
+        "icon": "zap",
+        "builtin": True,
+        "nodes": [
+            {
+                "id": "trigger_1",
+                "type": "trigger",
+                "data": {
+                    "nodeType": "trigger_form_submitted",
+                    "label": "Form Submitted",
+                    "config": {},
+                },
+                "position": {"x": 250, "y": 50},
+            },
+            {
+                "id": "action_1",
+                "type": "action",
+                "data": {
+                    "nodeType": "action_create_deal",
+                    "label": "Create Deal",
+                    "config": {
+                        "deal_title": "{{contact.first_name}} {{contact.last_name}} - New Lead",
+                        "stage": "New Lead",
+                        "priority": "medium",
+                    },
+                },
+                "position": {"x": 250, "y": 200},
+            },
+            {
+                "id": "action_2",
+                "type": "action",
+                "data": {
+                    "nodeType": "action_send_email",
+                    "label": "Notify Owner",
+                    "config": {
+                        "to": "{{workspace.notification_email}}",
+                        "subject": "New lead from form: {{contact.first_name}} {{contact.last_name}}",
+                        "body": "A new lead has come in via form submission.\n\nName: {{contact.first_name}} {{contact.last_name}}\nEmail: {{contact.email}}\n\nA deal has been automatically created in your pipeline.",
+                    },
+                },
+                "position": {"x": 250, "y": 380},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger_1", "target": "action_1"},
+            {"id": "e2", "source": "action_1", "target": "action_2"},
+        ],
+    },
+]
+
+
 def handler(event: dict[str, Any], context: Any) -> dict:
     """Handle workflow template API requests.
 
@@ -64,7 +208,9 @@ def list_templates(
     workspace_id: str,
     event: dict,
 ) -> dict:
-    """List custom workflow templates for a workspace.
+    """List workflow templates for a workspace.
+
+    Returns both built-in templates and custom workspace templates.
 
     Args:
         repo: Template repository.
@@ -83,8 +229,15 @@ def list_templates(
         limit=100,
     )
 
+    custom_items = [t.model_dump(mode="json", by_alias=True) for t in templates]
+
+    # Include built-in templates (filtered by category if requested)
+    builtin_items = BUILTIN_TEMPLATES
+    if category:
+        builtin_items = [t for t in builtin_items if t["category"] == category]
+
     return success({
-        "items": [t.model_dump(mode="json", by_alias=True) for t in templates],
+        "items": builtin_items + custom_items,
     })
 
 

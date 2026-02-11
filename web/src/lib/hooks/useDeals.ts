@@ -172,6 +172,21 @@ export function useMoveDeal(workspaceId: string) {
   });
 }
 
+// Fetch deals linked to a specific contact
+export function useContactDeals(workspaceId: string, contactId: string | undefined) {
+  return useQuery({
+    queryKey: ['contact-deals', workspaceId, contactId],
+    queryFn: async () => {
+      const { data } = await api.get<PipelineData>(
+        `/workspaces/${workspaceId}/deals`,
+        { params: { contact_id: contactId } }
+      );
+      return data;
+    },
+    enabled: !!workspaceId && !!contactId,
+  });
+}
+
 // Get pipeline config
 export function usePipelineConfig(workspaceId: string) {
   return useQuery({

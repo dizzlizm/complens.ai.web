@@ -69,7 +69,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         if http_method == "GET" and deal_id:
             return get_deal(repo, workspace_id, deal_id)
         elif http_method == "GET":
-            return list_deals(repo, workspace_id)
+            return list_deals(repo, workspace_id, event)
         elif http_method == "POST":
             return create_deal(repo, workspace_id, event)
         elif http_method == "PUT" and deal_id:
@@ -100,20 +100,32 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 def list_deals(
     repo: DealRepository,
     workspace_id: str,
+    event: dict | None = None,
 ) -> dict:
-    """List all deals for Kanban board.
+    """List deals for Kanban board or filtered by contact.
 
     Returns all deals plus pipeline stages and summary stats.
+    Supports ?contact_id=X to filter deals linked to a specific contact.
     """
-    # Get all deals (paginate if needed)
+    # Check for contact_id filter
+    query_params = (event or {}).get("queryStringParameters", {}) or {}
+    contact_id = query_params.get("contact_id")
+
     all_deals: list[Deal] = []
-    last_key = None
-    while True:
-        deals, next_key = repo.list_by_workspace(workspace_id, limit=200, last_key=last_key)
-        all_deals.extend(deals)
-        if not next_key:
-            break
-        last_key = next_key
+
+    if contact_id:
+        # Use GSI2 for efficient contact-scoped query
+        deals, _ = repo.list_by_contact(contact_id, limit=50)
+        all_deals = deals
+    else:
+        # Get all deals (paginate if needed)
+        last_key = None
+        while True:
+            deals, next_key = repo.list_by_workspace(workspace_id, limit=200, last_key=last_key)
+            all_deals.extend(deals)
+            if not next_key:
+                break
+            last_key = next_key
 
     # Get pipeline stages from workspace settings
     ws_repo = WorkspaceRepository()

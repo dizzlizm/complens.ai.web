@@ -87,6 +87,11 @@ def process_stream_record(record: dict) -> list[dict]:
         tag_events = _create_tag_events(event_name, new_data, old_data)
         events.extend(tag_events)
 
+    # Check for deal changes
+    if pk.startswith("WS#") and sk.startswith("DEAL#"):
+        deal_events = _create_deal_events(event_name, new_data, old_data)
+        events.extend(deal_events)
+
     return events
 
 
@@ -268,6 +273,209 @@ def _route_tag_events_directly(
             method=result.method,
             success=result.success,
         )
+
+
+def _create_deal_events(event_name: str, new_data: dict, old_data: dict) -> list[dict]:
+    """Create EventBridge events for deal changes.
+
+    Args:
+        event_name: INSERT, MODIFY, REMOVE.
+        new_data: New deal data.
+        old_data: Old deal data.
+
+    Returns:
+        List of EventBridge events (empty if routed directly to sharded queue).
+    """
+    workspace_id = new_data.get("workspace_id")
+    deal_id = new_data.get("id")
+
+    if not workspace_id or not deal_id:
+        return []
+
+    deal_payload = {
+        "deal_id": deal_id,
+        "title": new_data.get("title"),
+        "value": new_data.get("value"),
+        "stage": new_data.get("stage"),
+        "priority": new_data.get("priority"),
+        "contact_id": new_data.get("contact_id"),
+        "contact_name": new_data.get("contact_name"),
+        "expected_close_date": new_data.get("expected_close_date"),
+        "lost_reason": new_data.get("lost_reason", ""),
+    }
+
+    use_direct_routing = is_flag_enabled(FeatureFlag.USE_SHARDED_QUEUES, workspace_id)
+
+    if event_name == "INSERT":
+        logger.info("Deal created event", workspace_id=workspace_id, deal_id=deal_id)
+        if use_direct_routing:
+            _route_deal_event_directly(
+                workspace_id=workspace_id,
+                trigger_type="trigger_deal_created",
+                deal_payload=deal_payload,
+                contact_id=new_data.get("contact_id"),
+            )
+            return []
+        return [_make_deal_eb_event(workspace_id, "deal.created", "trigger_deal_created", deal_payload)]
+
+    if event_name == "MODIFY":
+        events = []
+        new_stage = new_data.get("stage", "")
+        old_stage = old_data.get("stage", "")
+
+        if new_stage != old_stage:
+            deal_payload["from_stage"] = old_stage
+            deal_payload["to_stage"] = new_stage
+
+            logger.info(
+                "Deal stage changed event",
+                workspace_id=workspace_id,
+                deal_id=deal_id,
+                from_stage=old_stage,
+                to_stage=new_stage,
+            )
+
+            if use_direct_routing:
+                _route_deal_event_directly(
+                    workspace_id=workspace_id,
+                    trigger_type="trigger_deal_stage_changed",
+                    deal_payload=deal_payload,
+                    contact_id=new_data.get("contact_id"),
+                )
+            else:
+                events.append(_make_deal_eb_event(
+                    workspace_id, "deal.stage_changed", "trigger_deal_stage_changed", deal_payload
+                ))
+
+            # Check for won/lost transitions
+            if new_stage == "Won":
+                logger.info("Deal won event", workspace_id=workspace_id, deal_id=deal_id)
+                if use_direct_routing:
+                    _route_deal_event_directly(
+                        workspace_id=workspace_id,
+                        trigger_type="trigger_deal_won",
+                        deal_payload=deal_payload,
+                        contact_id=new_data.get("contact_id"),
+                    )
+                else:
+                    events.append(_make_deal_eb_event(
+                        workspace_id, "deal.won", "trigger_deal_won", deal_payload
+                    ))
+
+            elif new_stage == "Lost":
+                logger.info("Deal lost event", workspace_id=workspace_id, deal_id=deal_id)
+                if use_direct_routing:
+                    _route_deal_event_directly(
+                        workspace_id=workspace_id,
+                        trigger_type="trigger_deal_lost",
+                        deal_payload=deal_payload,
+                        contact_id=new_data.get("contact_id"),
+                    )
+                else:
+                    events.append(_make_deal_eb_event(
+                        workspace_id, "deal.lost", "trigger_deal_lost", deal_payload
+                    ))
+
+        return events
+
+    return []
+
+
+def _make_deal_eb_event(workspace_id: str, detail_type: str, trigger_type: str, deal_payload: dict) -> dict:
+    """Create an EventBridge event for a deal change.
+
+    Args:
+        workspace_id: Workspace ID.
+        detail_type: EventBridge detail type.
+        trigger_type: Workflow trigger type.
+        deal_payload: Deal data payload.
+
+    Returns:
+        EventBridge event dict.
+    """
+    return {
+        "Source": "complens.deal",
+        "DetailType": detail_type,
+        "Detail": json.dumps({
+            "workspace_id": workspace_id,
+            **deal_payload,
+            "trigger_type": trigger_type,
+        }),
+        "EventBusName": os.environ.get("EVENT_BUS_NAME"),
+    }
+
+
+def _route_deal_event_directly(
+    workspace_id: str,
+    trigger_type: str,
+    deal_payload: dict,
+    contact_id: str | None,
+) -> None:
+    """Route a deal event directly to the sharded queue.
+
+    Args:
+        workspace_id: Workspace ID.
+        trigger_type: Trigger type.
+        deal_payload: Deal data payload.
+        contact_id: Optional contact ID.
+    """
+    router = get_workflow_router()
+    message = WorkflowTriggerMessage(
+        workspace_id=workspace_id,
+        trigger_type=trigger_type,
+        trigger_data=deal_payload,
+        contact_id=contact_id,
+    )
+    result = router.route_trigger(message)
+
+    logger.info(
+        "Routed deal event directly",
+        workspace_id=workspace_id,
+        trigger_type=trigger_type,
+        deal_id=deal_payload.get("deal_id"),
+        method=result.method,
+        success=result.success,
+    )
+
+
+def trigger_deal_event(
+    workspace_id: str,
+    trigger_type: str,
+    deal_data: dict,
+    contact_id: str | None = None,
+) -> bool:
+    """Trigger a deal workflow event.
+
+    Automatically routes to sharded queue or EventBridge based on feature flags.
+
+    Args:
+        workspace_id: Workspace ID.
+        trigger_type: One of trigger_deal_created, trigger_deal_stage_changed, etc.
+        deal_data: Deal data payload.
+        contact_id: Optional contact ID.
+
+    Returns:
+        True if trigger was routed successfully.
+    """
+    if is_flag_enabled(FeatureFlag.USE_SHARDED_QUEUES, workspace_id):
+        _route_deal_event_directly(
+            workspace_id=workspace_id,
+            trigger_type=trigger_type,
+            deal_payload=deal_data,
+            contact_id=contact_id,
+        )
+        return True
+
+    detail_type_map = {
+        "trigger_deal_created": "deal.created",
+        "trigger_deal_stage_changed": "deal.stage_changed",
+        "trigger_deal_won": "deal.won",
+        "trigger_deal_lost": "deal.lost",
+    }
+    detail_type = detail_type_map.get(trigger_type, "deal.unknown")
+    event = _make_deal_eb_event(workspace_id, detail_type, trigger_type, deal_data)
+    publish_to_eventbridge([event])
+    return True
 
 
 def publish_to_eventbridge(events: list[dict]) -> None:

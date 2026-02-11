@@ -81,6 +81,14 @@ const INSERTABLE_VARIABLES = [
     { value: '{{trigger_data.form_data.message}}', label: 'Submitted Message' },
     { value: '{{trigger_data.form_data}}', label: 'All Form Data' },
   ]},
+  { category: 'Deal', items: [
+    { value: '{{deal.title}}', label: 'Deal Title' },
+    { value: '{{deal.value}}', label: 'Deal Value' },
+    { value: '{{deal.stage}}', label: 'Deal Stage' },
+    { value: '{{deal.priority}}', label: 'Deal Priority' },
+    { value: '{{deal.contact_name}}', label: 'Deal Contact' },
+    { value: '{{deal.expected_close_date}}', label: 'Expected Close' },
+  ]},
   { category: 'Workflow', items: [
     { value: '{{owner.email}}', label: 'Owner Email' },
     { value: '{{workspace.name}}', label: 'Workspace Name' },
@@ -237,6 +245,44 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
   trigger_subscription_cancelled: { title: 'Subscription Cancelled', fields: [] },
   trigger_invoice_paid: { title: 'Invoice Paid', fields: [] },
   trigger_payment_refunded: { title: 'Payment Refunded', fields: [] },
+  // Deal triggers
+  trigger_deal_created: {
+    title: 'Deal Created',
+    fields: [
+      { key: 'stage_filter', label: 'Stage Filter (optional)', type: 'select', options: [
+        { value: '', label: 'Any Stage' },
+        { value: 'New Lead', label: 'New Lead' },
+        { value: 'Qualified', label: 'Qualified' },
+        { value: 'Proposal', label: 'Proposal' },
+        { value: 'Negotiation', label: 'Negotiation' },
+      ], helperText: 'Only trigger for deals created in this stage' },
+    ],
+  },
+  trigger_deal_stage_changed: {
+    title: 'Deal Stage Changed',
+    fields: [
+      { key: 'from_stage', label: 'From Stage (optional)', type: 'select', options: [
+        { value: '', label: 'Any Stage' },
+        { value: 'New Lead', label: 'New Lead' },
+        { value: 'Qualified', label: 'Qualified' },
+        { value: 'Proposal', label: 'Proposal' },
+        { value: 'Negotiation', label: 'Negotiation' },
+        { value: 'Won', label: 'Won' },
+        { value: 'Lost', label: 'Lost' },
+      ], helperText: 'Filter by previous stage' },
+      { key: 'to_stage', label: 'To Stage (optional)', type: 'select', options: [
+        { value: '', label: 'Any Stage' },
+        { value: 'New Lead', label: 'New Lead' },
+        { value: 'Qualified', label: 'Qualified' },
+        { value: 'Proposal', label: 'Proposal' },
+        { value: 'Negotiation', label: 'Negotiation' },
+        { value: 'Won', label: 'Won' },
+        { value: 'Lost', label: 'Lost' },
+      ], helperText: 'Filter by new stage' },
+    ],
+  },
+  trigger_deal_won: { title: 'Deal Won', fields: [] },
+  trigger_deal_lost: { title: 'Deal Lost', fields: [] },
 
   // ==========================================================================
   // ACTIONS
@@ -351,6 +397,48 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
     fields: [
       { key: 'subscription_id', label: 'Subscription ID', type: 'text', placeholder: '{{variables.subscription_id}}', helperText: 'Stripe subscription ID to cancel' },
       { key: 'immediately', label: 'Cancel Immediately', type: 'checkbox', helperText: 'If unchecked, cancels at period end' },
+    ],
+  },
+  // Deal actions
+  action_create_deal: {
+    title: 'Create Deal',
+    fields: [
+      { key: 'deal_title', label: 'Deal Title', type: 'text', placeholder: 'Deal for {{contact.first_name}}', helperText: 'Supports template variables' },
+      { key: 'deal_value', label: 'Value ($)', type: 'number', placeholder: '0' },
+      { key: 'deal_stage', label: 'Stage', type: 'select', options: [
+        { value: 'New Lead', label: 'New Lead' },
+        { value: 'Qualified', label: 'Qualified' },
+        { value: 'Proposal', label: 'Proposal' },
+        { value: 'Negotiation', label: 'Negotiation' },
+      ], defaultValue: 'New Lead' },
+      { key: 'deal_priority', label: 'Priority', type: 'select', options: [
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High' },
+      ], defaultValue: 'medium' },
+    ],
+  },
+  action_update_deal: {
+    title: 'Update Deal',
+    fields: [
+      { key: 'deal_id', label: 'Deal ID', type: 'text', placeholder: '{{trigger_data.deal_id}}', helperText: 'Defaults to deal from trigger' },
+      { key: 'deal_stage', label: 'New Stage (optional)', type: 'select', options: [
+        { value: '', label: 'No change' },
+        { value: 'New Lead', label: 'New Lead' },
+        { value: 'Qualified', label: 'Qualified' },
+        { value: 'Proposal', label: 'Proposal' },
+        { value: 'Negotiation', label: 'Negotiation' },
+        { value: 'Won', label: 'Won' },
+        { value: 'Lost', label: 'Lost' },
+      ] },
+      { key: 'deal_value', label: 'New Value ($, optional)', type: 'number', placeholder: '' },
+      { key: 'deal_priority', label: 'New Priority (optional)', type: 'select', options: [
+        { value: '', label: 'No change' },
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High' },
+      ] },
+      { key: 'add_tags', label: 'Add Tags', type: 'tag_input', dataSource: 'tags', helperText: 'Tags to add to the deal' },
     ],
   },
 

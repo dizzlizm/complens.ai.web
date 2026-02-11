@@ -535,6 +535,170 @@ class PaymentRefundedTrigger(BaseTrigger):
         }
 
 
+# =============================================================================
+# Deal Triggers
+# =============================================================================
+
+
+class DealCreatedTrigger(BaseTrigger):
+    """Trigger when a new deal is created."""
+
+    node_type = "trigger_deal_created"
+
+    def validate_trigger_data(self, data: dict) -> list[str]:
+        """Validate deal data."""
+        errors = []
+        if not data.get("deal_id"):
+            errors.append("deal_id is required")
+        return errors
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract deal creation data."""
+        return {
+            "deal_id": data.get("deal_id"),
+            "title": data.get("title"),
+            "value": data.get("value"),
+            "stage": data.get("stage"),
+            "priority": data.get("priority"),
+            "contact_id": data.get("contact_id"),
+            "contact_name": data.get("contact_name"),
+            "expected_close_date": data.get("expected_close_date"),
+        }
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Check optional stage filter.
+
+        Args:
+            context: Execution context with trigger data.
+
+        Returns:
+            NodeResult - completed if matches, skipped otherwise.
+        """
+        stage_filter = self._get_config_value("stage_filter")
+
+        if not stage_filter:
+            return await super().execute(context)
+
+        deal_stage = context.trigger_data.get("stage", "")
+        if deal_stage == stage_filter:
+            return await super().execute(context)
+
+        return NodeResult.completed(
+            output={"skipped": True, "reason": f"Stage '{deal_stage}' does not match filter '{stage_filter}'"},
+        )
+
+
+class DealStageChangedTrigger(BaseTrigger):
+    """Trigger when a deal's stage changes.
+
+    Can filter by from_stage and/or to_stage.
+    """
+
+    node_type = "trigger_deal_stage_changed"
+
+    def validate_trigger_data(self, data: dict) -> list[str]:
+        """Validate deal stage change data."""
+        errors = []
+        if not data.get("deal_id"):
+            errors.append("deal_id is required")
+        return errors
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract deal stage change data."""
+        return {
+            "deal_id": data.get("deal_id"),
+            "title": data.get("title"),
+            "value": data.get("value"),
+            "from_stage": data.get("from_stage"),
+            "to_stage": data.get("to_stage"),
+            "stage": data.get("to_stage"),
+            "priority": data.get("priority"),
+            "contact_id": data.get("contact_id"),
+            "contact_name": data.get("contact_name"),
+            "expected_close_date": data.get("expected_close_date"),
+        }
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Check from_stage/to_stage filters.
+
+        Args:
+            context: Execution context with trigger data.
+
+        Returns:
+            NodeResult - completed if matches, skipped otherwise.
+        """
+        from_filter = self._get_config_value("from_stage")
+        to_filter = self._get_config_value("to_stage")
+
+        from_stage = context.trigger_data.get("from_stage", "")
+        to_stage = context.trigger_data.get("to_stage", "")
+
+        if from_filter and from_stage != from_filter:
+            return NodeResult.completed(
+                output={"skipped": True, "reason": f"from_stage '{from_stage}' does not match filter '{from_filter}'"},
+            )
+
+        if to_filter and to_stage != to_filter:
+            return NodeResult.completed(
+                output={"skipped": True, "reason": f"to_stage '{to_stage}' does not match filter '{to_filter}'"},
+            )
+
+        return await super().execute(context)
+
+
+class DealWonTrigger(BaseTrigger):
+    """Trigger when a deal is marked as won."""
+
+    node_type = "trigger_deal_won"
+
+    def validate_trigger_data(self, data: dict) -> list[str]:
+        """Validate deal won data."""
+        errors = []
+        if not data.get("deal_id"):
+            errors.append("deal_id is required")
+        return errors
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract deal won data."""
+        return {
+            "deal_id": data.get("deal_id"),
+            "title": data.get("title"),
+            "value": data.get("value"),
+            "stage": data.get("stage", "Won"),
+            "priority": data.get("priority"),
+            "contact_id": data.get("contact_id"),
+            "contact_name": data.get("contact_name"),
+            "expected_close_date": data.get("expected_close_date"),
+        }
+
+
+class DealLostTrigger(BaseTrigger):
+    """Trigger when a deal is marked as lost."""
+
+    node_type = "trigger_deal_lost"
+
+    def validate_trigger_data(self, data: dict) -> list[str]:
+        """Validate deal lost data."""
+        errors = []
+        if not data.get("deal_id"):
+            errors.append("deal_id is required")
+        return errors
+
+    def extract_trigger_output(self, data: dict) -> dict:
+        """Extract deal lost data including lost reason."""
+        return {
+            "deal_id": data.get("deal_id"),
+            "title": data.get("title"),
+            "value": data.get("value"),
+            "stage": data.get("stage", "Lost"),
+            "priority": data.get("priority"),
+            "contact_id": data.get("contact_id"),
+            "contact_name": data.get("contact_name"),
+            "lost_reason": data.get("lost_reason", ""),
+            "expected_close_date": data.get("expected_close_date"),
+        }
+
+
 # Registry of trigger node classes
 TRIGGER_NODES = {
     # Lead generation triggers
@@ -559,4 +723,9 @@ TRIGGER_NODES = {
     "trigger_subscription_cancelled": SubscriptionCancelledTrigger,
     "trigger_invoice_paid": InvoicePaidTrigger,
     "trigger_payment_refunded": PaymentRefundedTrigger,
+    # Deal triggers
+    "trigger_deal_created": DealCreatedTrigger,
+    "trigger_deal_stage_changed": DealStageChangedTrigger,
+    "trigger_deal_won": DealWonTrigger,
+    "trigger_deal_lost": DealLostTrigger,
 }

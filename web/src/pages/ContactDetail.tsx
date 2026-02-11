@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Loader2, AlertTriangle, Trash2 } from 'lucide-react';
+import { ArrowLeft, Loader2, AlertTriangle, Trash2, DollarSign } from 'lucide-react';
 import Tabs from '../components/ui/Tabs';
 import {
   useContact, useUpdateContact, useDeleteContact,
   useContactActivity, useContactNotes,
   useCreateContactNote, useDeleteContactNote,
   useCurrentWorkspace,
+  useContactDeals,
 } from '../lib/hooks';
 import { useToast } from '../components/Toast';
 import ContactProfileCard from '../components/contacts/ContactProfileCard';
@@ -15,7 +16,7 @@ import ContactNotes from '../components/contacts/ContactNotes';
 import ContactEditForm from '../components/contacts/ContactEditForm';
 import { ConfirmDialog } from '../components/ui/Modal';
 
-type Tab = 'activity' | 'details' | 'notes';
+type Tab = 'activity' | 'details' | 'notes' | 'deals';
 
 export default function ContactDetail() {
   const { id: contactId } = useParams<{ id: string }>();
@@ -47,6 +48,9 @@ export default function ContactDetail() {
 
   const createNote = useCreateContactNote(workspaceId || '', contactId || '');
   const deleteNote = useDeleteContactNote(workspaceId || '', contactId || '');
+
+  const { data: contactDealsData } = useContactDeals(workspaceId || '', contactId);
+  const contactDeals = contactDealsData?.deals || [];
 
   const handleEditTags = async (tags: string[]) => {
     try {
@@ -120,6 +124,7 @@ export default function ContactDetail() {
     { id: 'activity', label: 'Activity' },
     { id: 'details', label: 'Details' },
     { id: 'notes', label: `Notes${notes.length > 0 ? ` (${notes.length})` : ''}` },
+    { id: 'deals', label: `Deals${contactDeals.length > 0 ? ` (${contactDeals.length})` : ''}` },
   ];
 
   return (
@@ -187,6 +192,9 @@ export default function ContactDetail() {
                 isCreating={createNote.isPending}
               />
             )}
+            {activeTab === 'deals' && (
+              <ContactDealsTab deals={contactDeals} />
+            )}
           </div>
         </div>
       </div>
@@ -202,6 +210,80 @@ export default function ContactDetail() {
         isDestructive
         isLoading={deleteContact.isPending}
       />
+    </div>
+  );
+}
+
+interface ContactDeal {
+  id: string;
+  title: string;
+  value: number;
+  stage: string;
+  priority: 'low' | 'medium' | 'high';
+  created_at: string;
+  expected_close_date?: string;
+}
+
+const PRIORITY_STYLES: Record<string, string> = {
+  high: 'bg-red-100 text-red-700',
+  medium: 'bg-amber-100 text-amber-700',
+  low: 'bg-green-100 text-green-700',
+};
+
+function ContactDealsTab({ deals }: { deals: ContactDeal[] }) {
+  if (deals.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <DollarSign className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+        <p className="text-gray-500 font-medium">No deals linked to this contact</p>
+        <p className="text-sm text-gray-400 mt-1">
+          Deals will appear here when created with this contact attached.
+        </p>
+        <Link to="/deals" className="text-sm text-primary-600 hover:text-primary-700 mt-3 inline-block">
+          Go to Deal Pipeline
+        </Link>
+      </div>
+    );
+  }
+
+  const totalValue = deals.reduce((sum, d) => sum + (d.value || 0), 0);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm text-gray-500">{deals.length} deal{deals.length !== 1 ? 's' : ''}</p>
+        <p className="text-sm font-medium text-gray-700">
+          Total: ${totalValue.toLocaleString()}
+        </p>
+      </div>
+      <div className="space-y-2">
+        {deals.map((deal) => (
+          <Link
+            key={deal.id}
+            to={`/deals?selected=${deal.id}`}
+            className="flex items-center justify-between p-3 rounded-lg border border-gray-200 hover:border-primary-300 hover:bg-primary-50/30 transition-colors"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-gray-900 truncate">{deal.title}</p>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-xs text-gray-500">{deal.stage}</span>
+                <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${PRIORITY_STYLES[deal.priority] || PRIORITY_STYLES.low}`}>
+                  {deal.priority}
+                </span>
+                {deal.expected_close_date && (
+                  <span className="text-xs text-gray-400">
+                    Close: {new Date(deal.expected_close_date).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="text-right shrink-0 ml-3">
+              <p className="font-semibold text-gray-900">${(deal.value || 0).toLocaleString()}</p>
+              <p className="text-xs text-gray-400">{new Date(deal.created_at).toLocaleDateString()}</p>
+            </div>
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }

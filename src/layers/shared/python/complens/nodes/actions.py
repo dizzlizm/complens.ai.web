@@ -1001,6 +1001,210 @@ class StripeCancelSubscriptionAction(BaseNode):
         return ["subscription_id"]
 
 
+# =============================================================================
+# Deal Actions
+# =============================================================================
+
+
+class CreateDealAction(BaseNode):
+    """Create a new deal in the pipeline."""
+
+    node_type = "action_create_deal"
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Create a deal with configured fields.
+
+        Args:
+            context: Execution context.
+
+        Returns:
+            NodeResult with created deal details.
+        """
+        from complens.repositories.deal import DealRepository
+
+        title_template = self._get_config_value("deal_title", "")
+        title = context.render_template(title_template)
+
+        if not title:
+            return NodeResult.failed(error="Deal title is required")
+
+        value = self._get_config_value("deal_value", 0)
+        if isinstance(value, str):
+            value_str = context.render_template(value)
+            try:
+                value = float(value_str) if value_str else 0
+            except ValueError:
+                value = 0
+
+        stage = self._get_config_value("deal_stage", "Lead")
+        priority = self._get_config_value("deal_priority", "medium")
+
+        # Auto-link contact if available
+        contact_id = None
+        contact_name = ""
+        if context.contact:
+            contact_id = context.contact.id
+            contact_name = context.contact.full_name
+
+        self.logger.info(
+            "Creating deal",
+            title=title,
+            value=value,
+            stage=stage,
+            contact_id=contact_id,
+        )
+
+        try:
+            from complens.models.deal import Deal
+
+            deal_repo = DealRepository()
+            deal = Deal(
+                workspace_id=context.workspace_id,
+                title=title,
+                value=value,
+                stage=stage,
+                priority=priority,
+                contact_id=contact_id,
+                contact_name=contact_name,
+            )
+            deal = deal_repo.create_deal(deal)
+
+            return NodeResult.completed(
+                output={
+                    "deal_id": deal.id,
+                    "title": deal.title,
+                    "value": deal.value,
+                    "stage": deal.stage,
+                    "priority": deal.priority,
+                    "contact_id": contact_id,
+                },
+                variables={"last_deal_id": deal.id},
+            )
+
+        except Exception as e:
+            self.logger.error("Failed to create deal", error=str(e))
+            return NodeResult.failed(
+                error=f"Failed to create deal: {e}",
+                error_details={"title": title},
+            )
+
+    def get_required_config(self) -> list[str]:
+        """Get required configuration."""
+        return ["deal_title"]
+
+
+class UpdateDealAction(BaseNode):
+    """Update an existing deal."""
+
+    node_type = "action_update_deal"
+
+    async def execute(self, context: NodeContext) -> NodeResult:
+        """Update deal with configured changes.
+
+        Args:
+            context: Execution context.
+
+        Returns:
+            NodeResult with update status.
+        """
+        from complens.repositories.deal import DealRepository
+
+        # Get deal ID - default to trigger data deal_id
+        deal_id_template = self._get_config_value(
+            "deal_id", "{{trigger_data.deal_id}}"
+        )
+        deal_id = context.render_template(deal_id_template)
+
+        if not deal_id:
+            return NodeResult.failed(error="Deal ID is required")
+
+        deal_repo = DealRepository()
+
+        try:
+            deal = deal_repo.get_by_id(context.workspace_id, deal_id)
+        except Exception:
+            deal = None
+
+        if not deal:
+            return NodeResult.failed(
+                error=f"Deal not found: {deal_id}",
+                error_details={"deal_id": deal_id},
+            )
+
+        changes_made = []
+
+        # Update stage
+        new_stage = self._get_config_value("deal_stage")
+        if new_stage:
+            deal.stage = new_stage
+            changes_made.append(f"stage={new_stage}")
+
+        # Update value
+        new_value = self._get_config_value("deal_value")
+        if new_value is not None:
+            if isinstance(new_value, str):
+                new_value = context.render_template(new_value)
+                try:
+                    new_value = float(new_value)
+                except ValueError:
+                    new_value = None
+            if new_value is not None:
+                deal.value = new_value
+                changes_made.append(f"value={new_value}")
+
+        # Update priority
+        new_priority = self._get_config_value("deal_priority")
+        if new_priority:
+            deal.priority = new_priority
+            changes_made.append(f"priority={new_priority}")
+
+        # Add tags
+        add_tags = self._get_config_value("add_tags", [])
+        for tag in add_tags:
+            tag = context.render_template(tag)
+            if tag not in (deal.tags or []):
+                if not deal.tags:
+                    deal.tags = []
+                deal.tags.append(tag)
+                changes_made.append(f"+tag:{tag}")
+
+        # Update custom fields
+        custom_fields = self._get_config_value("custom_fields", {})
+        for field_name, value_template in custom_fields.items():
+            value = context.render_template(str(value_template))
+            if not deal.custom_fields:
+                deal.custom_fields = {}
+            deal.custom_fields[field_name] = value
+            changes_made.append(f"custom.{field_name}={value}")
+
+        if not changes_made:
+            return NodeResult.completed(
+                output={"deal_id": deal_id, "changes": [], "skipped": True}
+            )
+
+        self.logger.info(
+            "Updating deal",
+            deal_id=deal_id,
+            changes=changes_made,
+        )
+
+        try:
+            deal_repo.update_deal(deal)
+        except Exception as e:
+            self.logger.error("Failed to update deal", error=str(e))
+            return NodeResult.failed(
+                error=f"Failed to update deal: {e}",
+                error_details={"deal_id": deal_id, "changes": changes_made},
+            )
+
+        return NodeResult.completed(
+            output={
+                "deal_id": deal_id,
+                "changes": changes_made,
+            }
+        )
+
+
 # Registry of action node classes
 ACTION_NODES = {
     "action_send_sms": SendSmsAction,
@@ -1014,4 +1218,7 @@ ACTION_NODES = {
     "action_stripe_checkout": StripeCheckoutAction,
     "action_stripe_subscription": StripeSubscriptionAction,
     "action_stripe_cancel_subscription": StripeCancelSubscriptionAction,
+    # Deal actions
+    "action_create_deal": CreateDealAction,
+    "action_update_deal": UpdateDealAction,
 }
