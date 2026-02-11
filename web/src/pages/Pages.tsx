@@ -2,13 +2,17 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { usePages, useDeletePage, useCreatePage, type Page } from '../lib/hooks/usePages';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
+import { useSite, useUpdateSite } from '../lib/hooks/useSites';
 import Modal from '../components/ui/Modal';
 import { useToast } from '../components/Toast';
+import { Home } from 'lucide-react';
 
 export default function Pages() {
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { siteId } = useParams<{ siteId: string }>();
   const { data: pages, isLoading, error, refetch } = usePages(workspaceId, siteId);
+  const { data: siteData } = useSite(workspaceId, siteId);
+  const updateSite = useUpdateSite(workspaceId || '', siteId || '');
   const deletePage = useDeletePage(workspaceId || '');
   const createPage = useCreatePage(workspaceId || '');
   const navigate = useNavigate();
@@ -53,6 +57,24 @@ export default function Pages() {
     }
   };
 
+  const handleSetHomePage = async (pageId: string) => {
+    try {
+      await updateSite.mutateAsync({ default_page_id: pageId });
+      toast.success('Home page set — this page will be served at your root domain');
+    } catch (err) {
+      toast.error('Failed to set home page');
+    }
+  };
+
+  const handleClearHomePage = async () => {
+    try {
+      await updateSite.mutateAsync({ default_page_id: null });
+      toast.success('Home page cleared');
+    } catch (err) {
+      toast.error('Failed to clear home page');
+    }
+  };
+
   const getStatusBadge = (status: Page['status']) => {
     const styles = {
       draft: 'bg-yellow-100 text-yellow-800',
@@ -92,6 +114,8 @@ export default function Pages() {
       </div>
     );
   }
+
+  const defaultPageId = siteData?.default_page_id;
 
   return (
     <div className="space-y-6">
@@ -138,66 +162,90 @@ export default function Pages() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {pages.map((page) => (
-                <tr key={page.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <Link
-                      to={`${siteId ? `/sites/${siteId}` : ''}/pages/${page.id}`}
-                      className="text-indigo-600 hover:text-indigo-800 font-medium"
-                    >
-                      {page.name}
-                    </Link>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <code className="bg-gray-100 px-2 py-1 rounded">
-                      /p/{page.slug}
-                    </code>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {getStatusBadge(page.status)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {page.view_count.toLocaleString()}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {page.form_submission_count.toLocaleString()}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                    <div className="flex items-center justify-end gap-2">
-                      <a
-                        href={`/p/${page.slug}?ws=${workspaceId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-gray-500 hover:text-gray-700"
-                        title="Preview"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                        </svg>
-                      </a>
-                      <Link
-                        to={`${siteId ? `/sites/${siteId}` : ''}/pages/${page.id}`}
-                        className="text-indigo-600 hover:text-indigo-800"
-                        title="Edit"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                        </svg>
-                      </Link>
-                      <button
-                        onClick={() => setDeleteConfirm(page.id)}
-                        className="text-red-500 hover:text-red-700"
-                        title="Delete"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {pages.map((page) => {
+                const isHomePage = defaultPageId === page.id;
+                return (
+                  <tr key={page.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <Link
+                          to={`${siteId ? `/sites/${siteId}` : ''}/pages/${page.id}`}
+                          className="text-indigo-600 hover:text-indigo-800 font-medium"
+                        >
+                          {page.name}
+                        </Link>
+                        {isHomePage && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-indigo-100 text-indigo-700" title="Served at root domain">
+                            <Home className="w-3 h-3" />
+                            Home
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <code className="bg-gray-100 px-2 py-1 rounded">
+                        /p/{page.slug}
+                      </code>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {getStatusBadge(page.status)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {page.view_count.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {page.form_submission_count.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                      <div className="flex items-center justify-end gap-2">
+                        {siteId && (
+                          <button
+                            onClick={() => isHomePage ? handleClearHomePage() : handleSetHomePage(page.id)}
+                            className={`p-1 rounded transition-colors ${
+                              isHomePage
+                                ? 'text-indigo-600 hover:text-gray-400'
+                                : 'text-gray-400 hover:text-indigo-600'
+                            }`}
+                            title={isHomePage ? 'Remove as home page' : 'Set as home page (root domain)'}
+                          >
+                            <Home className="w-4 h-4" />
+                          </button>
+                        )}
+                        <a
+                          href={`/p/${page.slug}?ws=${workspaceId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-gray-500 hover:text-gray-700"
+                          title="Preview"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        </a>
+                        <Link
+                          to={`${siteId ? `/sites/${siteId}` : ''}/pages/${page.id}`}
+                          className="text-indigo-600 hover:text-indigo-800"
+                          title="Edit"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </Link>
+                        <button
+                          onClick={() => setDeleteConfirm(page.id)}
+                          className="text-red-500 hover:text-red-700"
+                          title="Delete"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

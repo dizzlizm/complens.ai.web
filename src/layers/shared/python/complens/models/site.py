@@ -33,6 +33,7 @@ class Site(BaseModel):
     )
     name: str = Field(..., min_length=1, max_length=255, description="Display name")
     description: str | None = Field(None, max_length=1000, description="Site description")
+    default_page_id: str | None = Field(None, description="Page served at root domain")
     settings: dict = Field(default_factory=dict, description="Site-specific settings")
 
     @field_validator("domain_name")
@@ -56,6 +57,13 @@ class Site(BaseModel):
             "GSI1SK": self.domain_name,
         }
 
+    def get_gsi3_keys(self) -> dict[str, str]:
+        """Get GSI3 keys for global domain lookup."""
+        return {
+            "GSI3PK": f"SITE_DOMAIN#{self.domain_name}",
+            "GSI3SK": f"SITE#{self.id}",
+        }
+
 
 class CreateSiteRequest(PydanticBaseModel):
     """Request model for creating a site."""
@@ -72,4 +80,5 @@ class UpdateSiteRequest(PydanticBaseModel):
     domain_name: str | None = Field(None, min_length=1, max_length=255)
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = Field(None, max_length=1000)
+    default_page_id: str | None = None
     settings: dict | None = None

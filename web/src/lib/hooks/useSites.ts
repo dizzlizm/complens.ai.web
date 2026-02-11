@@ -8,6 +8,7 @@ export interface Site {
   domain_name: string;
   name: string;
   description: string | null;
+  default_page_id: string | null;
   settings: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -24,6 +25,7 @@ export interface UpdateSiteInput {
   domain_name?: string;
   name?: string;
   description?: string;
+  default_page_id?: string | null;
   settings?: Record<string, unknown>;
 }
 

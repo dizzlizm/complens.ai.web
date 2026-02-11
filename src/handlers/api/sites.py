@@ -185,9 +185,20 @@ def update_site(
                 error_code="DUPLICATE_DOMAIN",
             )
 
+    # Validate default_page_id if being set
+    if request.default_page_id is not None and "default_page_id" in request.model_fields_set:
+        from complens.repositories.page import PageRepository
+        page_repo = PageRepository()
+        page = page_repo.get_by_id(workspace_id, request.default_page_id)
+        if not page:
+            return error("Page not found", 404)
+        if page.site_id and page.site_id != site_id:
+            return error("Page does not belong to this site", 400)
+
     update_data = request.model_dump(exclude_unset=True)
     for field, value in update_data.items():
-        if value is not None:
+        # Allow None for default_page_id (to clear it)
+        if value is not None or field == "default_page_id":
             setattr(site, field, value)
 
     site = repo.update_site(site)

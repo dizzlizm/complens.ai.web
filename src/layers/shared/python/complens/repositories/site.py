@@ -15,6 +15,12 @@ class SiteRepository(BaseRepository[Site]):
         """Initialize site repository."""
         super().__init__(Site, table_name)
 
+    def _all_gsi_keys(self, site: Site) -> dict[str, str]:
+        """Merge GSI1 + GSI3 keys for a site."""
+        keys = site.get_gsi1_keys()
+        keys.update(site.get_gsi3_keys())
+        return keys
+
     def get_by_id(self, workspace_id: str, site_id: str) -> Site | None:
         """Get site by ID.
 
@@ -41,6 +47,23 @@ class SiteRepository(BaseRepository[Site]):
             pk=f"WS#{workspace_id}#SITES",
             sk_begins_with=domain_name.lower(),
             index_name="GSI1",
+            limit=1,
+        )
+        return items[0] if items else None
+
+    def get_by_domain_global(self, domain_name: str) -> Site | None:
+        """Get site by domain name without workspace_id (global lookup via GSI3).
+
+        Args:
+            domain_name: The domain name (e.g., 'itsross.com').
+
+        Returns:
+            Site or None if not found.
+        """
+        items, _ = self.query(
+            pk=f"SITE_DOMAIN#{domain_name.lower()}",
+            sk_begins_with="SITE#",
+            index_name="GSI3",
             limit=1,
         )
         return items[0] if items else None
@@ -77,7 +100,7 @@ class SiteRepository(BaseRepository[Site]):
         Returns:
             The created site.
         """
-        return self.create(site, gsi_keys=site.get_gsi1_keys())
+        return self.create(site, gsi_keys=self._all_gsi_keys(site))
 
     def update_site(self, site: Site) -> Site:
         """Update an existing site.
@@ -88,7 +111,7 @@ class SiteRepository(BaseRepository[Site]):
         Returns:
             The updated site.
         """
-        return self.update(site, gsi_keys=site.get_gsi1_keys())
+        return self.update(site, gsi_keys=self._all_gsi_keys(site))
 
     def delete_site(self, workspace_id: str, site_id: str) -> bool:
         """Delete a site.

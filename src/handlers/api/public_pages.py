@@ -416,8 +416,11 @@ def get_page_by_domain(domain: str) -> dict:
     page = repo.get_by_custom_domain(domain)
     canonical_domain = domain
 
-    # 2. If no match, try subdomain.rootdomain pattern (e.g., "findme.itsross.com")
+    # 2. If no match, try subdomain.rootdomain or site default page
     if not page:
+        from complens.repositories.site import SiteRepository
+        site_repo = SiteRepository()
+
         parts = domain.split('.', 1)  # ["findme", "itsross.com"]
         if len(parts) == 2 and '.' in parts[1]:  # Ensure root has at least one dot
             subdomain_part = parts[0]
@@ -428,8 +431,6 @@ def get_page_by_domain(domain: str) -> dict:
 
             if page and page.site_id:
                 # Verify page's site matches the root domain
-                from complens.repositories.site import SiteRepository
-                site_repo = SiteRepository()
                 site = site_repo.get_by_id(page.workspace_id, page.site_id)
                 if not site or site.domain_name != root_domain:
                     page = None  # Wrong site — don't serve
@@ -437,6 +438,14 @@ def get_page_by_domain(domain: str) -> dict:
                     canonical_domain = domain  # subdomain.rootdomain
             elif page:
                 page = None  # No site association, can't verify domain ownership
+
+        # 3. If still no match, try site's default page (root domain homepage)
+        if not page:
+            site = site_repo.get_by_domain_global(domain)
+            if site and site.default_page_id:
+                page = repo.get_by_id(site.workspace_id, site.default_page_id)
+                if page:
+                    canonical_domain = domain
 
     if not page:
         logger.info("Page not found for domain", domain=domain)
