@@ -23,6 +23,7 @@ export interface WorkflowEdge {
 export interface Workflow {
   id: string;
   workspace_id: string;
+  site_id?: string | null;
   page_id?: string | null; // Page-specific workflows have page_id, workspace-level don't
   name: string;
   description?: string;
@@ -42,6 +43,7 @@ export interface Workflow {
 // Note: trigger_type/trigger_config are NOT backend fields - they're derived from the trigger node
 export interface CreateWorkflowInput {
   name: string;
+  site_id?: string;
   description?: string;
   nodes?: WorkflowNode[];
   edges?: WorkflowEdge[];
@@ -61,13 +63,14 @@ export interface UpdateWorkflowInput {
   settings?: Record<string, unknown>;
 }
 
-// Fetch all workflows for a workspace
-export function useWorkflows(workspaceId: string) {
+// Fetch all workflows for a workspace, optionally scoped to a site
+export function useWorkflows(workspaceId: string, siteId?: string) {
   return useQuery({
-    queryKey: ['workflows', workspaceId],
+    queryKey: ['workflows', workspaceId, siteId],
     queryFn: async () => {
+      const params = siteId ? `?site_id=${siteId}` : '';
       const { data } = await api.get<{ items: Workflow[] }>(
-        `/workspaces/${workspaceId}/workflows`
+        `/workspaces/${workspaceId}/workflows${params}`
       );
       return data.items;
     },

@@ -23,12 +23,13 @@ import api from '../lib/api';
 import { useToast } from '../components/Toast';
 
 export default function WorkflowEditor() {
-  const { id } = useParams();
+  const { id, siteId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isNew = id === 'new';
   const canvasRef = useRef<WorkflowCanvasRef>(null);
   const toast = useToast();
+  const basePath = siteId ? `/sites/${siteId}` : '';
 
   // Get pageId from query params (for page-level workflows)
   const pageId = searchParams.get('pageId') || undefined;
@@ -214,7 +215,7 @@ export default function WorkflowEditor() {
         setHasChanges(false);
         toast.success('Workflow created and activated!');
         // Navigate to the created workflow
-        navigate(`/workflows/${created.id}`, { replace: true });
+        navigate(`${basePath}/workflows/${created.id}`, { replace: true });
       } else {
         // Include status: active if still in draft (auto-publish on save)
         const currentStatus = workflow?.status;
@@ -398,7 +399,7 @@ export default function WorkflowEditor() {
       <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => navigate('/workflows')}
+            onClick={() => navigate(`${basePath}/workflows`)}
             className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"
           >
             <ArrowLeft className="w-5 h-5" />

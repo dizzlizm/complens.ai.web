@@ -24,6 +24,46 @@ class WorkflowRepository(BaseRepository[Workflow]):
         """
         return self.get(pk=f"WS#{workspace_id}", sk=f"WF#{workflow_id}")
 
+    def list_by_site(
+        self,
+        workspace_id: str,
+        site_id: str,
+        status: WorkflowStatus | None = None,
+        limit: int = 50,
+        last_key: dict | None = None,
+    ) -> tuple[list[Workflow], dict | None]:
+        """List workflows for a specific site.
+
+        Uses FilterExpression on the workspace partition to find workflows
+        with a matching site_id.
+
+        Args:
+            workspace_id: The workspace ID.
+            site_id: The site ID.
+            status: Optional status filter.
+            limit: Maximum workflows to return.
+            last_key: Pagination cursor.
+
+        Returns:
+            Tuple of (workflows, next_page_key).
+        """
+        filter_expression = "site_id = :site_id"
+        expression_values: dict = {":site_id": site_id}
+
+        if status:
+            filter_expression += " AND #status = :status"
+            expression_values[":status"] = status.value
+
+        return self.query(
+            pk=f"WS#{workspace_id}",
+            sk_begins_with="WF#",
+            limit=limit,
+            last_key=last_key,
+            filter_expression=filter_expression,
+            expression_values=expression_values,
+            expression_names={"#status": "status"} if status else None,
+        )
+
     def list_by_workspace(
         self,
         workspace_id: str,

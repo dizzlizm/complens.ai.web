@@ -90,7 +90,13 @@ def list_documents(
     Returns:
         API response with document list.
     """
-    documents, last_key = repo.list_by_workspace(workspace_id, limit=100)
+    query_params = event.get("queryStringParameters", {}) or {}
+    site_id = query_params.get("site_id")
+
+    if site_id:
+        documents, last_key = repo.list_by_site(workspace_id, site_id, limit=100)
+    else:
+        documents, last_key = repo.list_by_workspace(workspace_id, limit=100)
 
     return success({
         "items": [d.model_dump(mode="json", by_alias=True) for d in documents],
@@ -121,8 +127,10 @@ def create_document(
     body = json.loads(event.get("body", "{}"))
     request = CreateDocumentRequest.model_validate(body)
 
+    site_id = body.get("site_id")
     document = Document(
         workspace_id=workspace_id,
+        site_id=site_id,
         name=request.name,
         content_type=request.content_type,
         file_size=request.file_size,

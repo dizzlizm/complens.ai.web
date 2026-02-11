@@ -20,6 +20,7 @@ import WorkflowEditor from './pages/WorkflowEditor';
 import Contacts from './pages/Contacts';
 import ContactDetail from './pages/ContactDetail';
 import DealPipeline from './pages/DealPipeline';
+import Sites from './pages/Sites';
 import Pages from './pages/Pages';
 import PageEditor from './pages/PageEditor';
 // Forms removed - now managed inside Page Editor
@@ -27,6 +28,9 @@ import Settings from './pages/Settings';
 import EmailWarmup from './pages/EmailWarmup';
 import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
+
+// Site-scoped layout
+import SiteLayout from './layouts/SiteLayout';
 
 // Admin pages
 import {
@@ -70,17 +74,29 @@ function App() {
           >
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/workflows" element={<Workflows />} />
-            <Route path="/workflows/:id" element={<WorkflowEditor />} />
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/contacts/:id" element={<ContactDetail />} />
             <Route path="/deals" element={<DealPipeline />} />
-            <Route path="/pages" element={<Pages />} />
-            <Route path="/pages/:id" element={<PageEditor />} />
-            {/* Forms routes removed - forms are now managed inside Page Editor */}
-            <Route path="/email-warmup" element={<EmailWarmup />} />
+            <Route path="/sites" element={<Sites />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/profile" element={<Profile />} />
+
+            {/* Site-scoped routes */}
+            <Route path="/sites/:siteId" element={<SiteLayout />}>
+              <Route path="pages" element={<Pages />} />
+              <Route path="pages/:id" element={<PageEditor />} />
+              <Route path="workflows" element={<Workflows />} />
+              <Route path="workflows/:id" element={<WorkflowEditor />} />
+              <Route path="email-warmup" element={<EmailWarmup />} />
+              <Route path="knowledge-base" element={<Pages />} />
+            </Route>
+
+            {/* Global fallback routes (backwards compat for direct links) */}
+            <Route path="/pages" element={<Pages />} />
+            <Route path="/pages/:id" element={<PageEditor />} />
+            <Route path="/workflows" element={<Workflows />} />
+            <Route path="/workflows/:id" element={<WorkflowEditor />} />
+            <Route path="/email-warmup" element={<EmailWarmup />} />
           </Route>
 
           {/* Accept invitation (handles both auth states internally) */}

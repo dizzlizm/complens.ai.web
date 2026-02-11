@@ -114,18 +114,19 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         if workspace_id:
             require_workspace_access(auth, workspace_id)
 
-        # Extract page_id from query params if present
+        # Extract page_id and site_id from query params if present
         query_params = event.get("queryStringParameters") or {}
         page_id = query_params.get("page_id")
+        site_id = query_params.get("site_id")
 
         # Route to appropriate handler
         if "/ai/profile/analyze" in path and http_method == "POST":
-            return analyze_content_for_profile(workspace_id, event, page_id)
+            return analyze_content_for_profile(workspace_id, event, page_id, site_id)
         elif "/ai/profile" in path:
             if http_method == "GET":
-                return get_business_profile(workspace_id, page_id)
+                return get_business_profile(workspace_id, page_id, site_id)
             elif http_method == "PUT":
-                return update_business_profile(workspace_id, event, page_id)
+                return update_business_profile(workspace_id, event, page_id, site_id)
         elif "/ai/onboarding/question" in path and http_method == "GET":
             return get_onboarding_question(workspace_id)
         elif "/ai/onboarding/answer" in path and http_method == "POST":
@@ -177,12 +178,16 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         return error("Internal server error", 500)
 
 
-def get_business_profile(workspace_id: str, page_id: str | None = None) -> dict:
-    """Get the business profile for a workspace or page."""
+def get_business_profile(
+    workspace_id: str,
+    page_id: str | None = None,
+    site_id: str | None = None,
+) -> dict:
+    """Get the business profile for a workspace, site, or page."""
     repo = BusinessProfileRepository()
 
     try:
-        profile = repo.get_or_create(workspace_id, page_id)
+        profile = repo.get_or_create(workspace_id, page_id, site_id)
         return success(profile.model_dump(mode="json"))
     except Exception as e:
         # If profile is corrupted, try to reset it
@@ -190,25 +195,31 @@ def get_business_profile(workspace_id: str, page_id: str | None = None) -> dict:
             "Failed to load business profile, attempting reset",
             workspace_id=workspace_id,
             page_id=page_id,
+            site_id=site_id,
             error=str(e),
         )
         try:
             # Delete corrupted profile and create fresh one
-            repo.delete_profile(workspace_id, page_id)
+            repo.delete_profile(workspace_id, page_id, site_id)
             from complens.models.business_profile import BusinessProfile
-            profile = BusinessProfile(workspace_id=workspace_id, page_id=page_id)
+            profile = BusinessProfile(workspace_id=workspace_id, page_id=page_id, site_id=site_id)
             profile = repo.create_profile(profile, page_id)
-            logger.info("Reset corrupted business profile", workspace_id=workspace_id, page_id=page_id)
+            logger.info("Reset corrupted business profile", workspace_id=workspace_id, page_id=page_id, site_id=site_id)
             return success(profile.model_dump(mode="json"))
         except Exception as reset_error:
             logger.error("Failed to reset business profile", error=str(reset_error))
             return error(f"Profile data corrupted: {str(e)}", 500)
 
 
-def update_business_profile(workspace_id: str, event: dict, page_id: str | None = None) -> dict:
+def update_business_profile(
+    workspace_id: str,
+    event: dict,
+    page_id: str | None = None,
+    site_id: str | None = None,
+) -> dict:
     """Update the business profile."""
     repo = BusinessProfileRepository()
-    profile = repo.get_or_create(workspace_id, page_id)
+    profile = repo.get_or_create(workspace_id, page_id, site_id)
 
     try:
         body = json.loads(event.get("body", "{}"))
@@ -237,13 +248,19 @@ def update_business_profile(workspace_id: str, event: dict, page_id: str | None 
     return success(profile.model_dump(mode="json"))
 
 
-def analyze_content_for_profile(workspace_id: str, event: dict, page_id: str | None = None) -> dict:
+def analyze_content_for_profile(
+    workspace_id: str,
+    event: dict,
+    page_id: str | None = None,
+    site_id: str | None = None,
+) -> dict:
     """Analyze pasted content to extract profile information."""
     try:
         body = json.loads(event.get("body", "{}"))
         content = body.get("content", "")
-        # Allow page_id from body to override query param
+        # Allow page_id/site_id from body to override query param
         page_id = body.get("page_id", page_id)
+        site_id = body.get("site_id", site_id)
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
@@ -259,7 +276,7 @@ def analyze_content_for_profile(workspace_id: str, event: dict, page_id: str | N
         # Optionally auto-update the profile
         if body.get("auto_update", False):
             repo = BusinessProfileRepository()
-            profile = repo.get_or_create(workspace_id, page_id)
+            profile = repo.get_or_create(workspace_id, page_id, site_id)
 
             for field, value in extracted.items():
                 if value and hasattr(profile, field):

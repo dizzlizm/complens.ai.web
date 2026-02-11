@@ -37,6 +37,7 @@ interface AgenticPageBuilderProps {
   }) => void;
   onClose: () => void;
   pageId?: string;
+  siteId?: string;
   useSynthesisEngine?: boolean; // Feature flag to enable new synthesis engine
 }
 
@@ -110,10 +111,11 @@ export default function AgenticPageBuilder({
   onComplete,
   onClose,
   pageId,
+  siteId,
   useSynthesisEngine = false, // Default to false for gradual rollout
 }: AgenticPageBuilderProps) {
   const { workspaceId } = useCurrentWorkspace();
-  const { data: profile, isLoading: profileLoading } = useBusinessProfile(workspaceId, pageId);
+  const { data: profile, isLoading: profileLoading } = useBusinessProfile(workspaceId, pageId, siteId);
   const generateImage = useGenerateImage(workspaceId || '');
   const generatePageContent = useGeneratePageContent(workspaceId || '');
   const refinePageContent = useRefinePageContent(workspaceId || '');

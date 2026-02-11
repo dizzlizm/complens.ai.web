@@ -945,6 +945,47 @@ Resources:
             Path: /team/accept-invite
             Method: POST
 
+  SitesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: sites.handler
+      CodeUri: src/handlers/api/
+      Description: Sites CRUD operations (domain-centric organization)
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MainTable
+      Events:
+        List:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/sites
+            Method: GET
+        Create:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/sites
+            Method: POST
+        Get:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/sites/{site_id}
+            Method: GET
+        Update:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/sites/{site_id}
+            Method: PUT
+        Delete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/sites/{site_id}
+            Method: DELETE
+
   ContactsFunction:
     Type: AWS::Serverless::Function
     Properties:

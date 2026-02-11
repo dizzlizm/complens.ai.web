@@ -106,6 +106,7 @@ def list_workflows(
 
     limit = min(int(query_params.get("limit", 50)), 100)
     status_filter = query_params.get("status")
+    site_id = query_params.get("site_id")
     include_page_workflows = query_params.get("include_page_workflows", "").lower() == "true"
 
     status = None
@@ -115,7 +116,10 @@ def list_workflows(
         except ValueError:
             return error(f"Invalid status: {status_filter}", 400)
 
-    if include_page_workflows:
+    if site_id:
+        # Return workflows scoped to a specific site
+        workflows, next_key = repo.list_by_site(workspace_id, site_id, status, limit)
+    elif include_page_workflows:
         # Return all workflows (both workspace-level and page-specific)
         workflows, next_key = repo.list_by_workspace(workspace_id, status, limit)
     else:
@@ -209,6 +213,7 @@ def create_workflow(
     # Create workflow
     workflow = Workflow(
         workspace_id=workspace_id,
+        site_id=request.site_id,
         name=request.name,
         description=request.description,
         nodes=nodes,

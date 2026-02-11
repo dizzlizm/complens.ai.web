@@ -31,6 +31,36 @@ class DocumentRepository(BaseRepository[Document]):
         """
         return self.get(pk=f"WS#{workspace_id}", sk=f"DOC#{document_id}")
 
+    def list_by_site(
+        self,
+        workspace_id: str,
+        site_id: str,
+        limit: int = 100,
+        last_key: dict | None = None,
+    ) -> tuple[list[Document], dict | None]:
+        """List documents for a specific site.
+
+        Uses FilterExpression on the workspace partition to find documents
+        with a matching site_id.
+
+        Args:
+            workspace_id: Workspace ID.
+            site_id: Site ID.
+            limit: Maximum items to return.
+            last_key: Pagination key.
+
+        Returns:
+            Tuple of (documents, last_evaluated_key).
+        """
+        return self.query(
+            pk=f"WS#{workspace_id}",
+            sk_begins_with="DOC#",
+            limit=limit,
+            last_key=last_key,
+            filter_expression="site_id = :site_id",
+            expression_values={":site_id": site_id},
+        )
+
     def list_by_workspace(
         self,
         workspace_id: str,

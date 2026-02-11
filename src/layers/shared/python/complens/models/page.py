@@ -135,6 +135,7 @@ class Page(BaseModel):
     _sk_prefix: ClassVar[str] = "PAGE#"
 
     workspace_id: str = Field(..., description="Parent workspace ID")
+    site_id: str | None = Field(None, description="Parent site ID (None for unassigned pages)")
 
     # Page metadata
     name: str = Field(..., min_length=1, max_length=255, description="Page name")
@@ -330,6 +331,7 @@ class CreatePageRequest(PydanticBaseModel):
 
     name: str = Field(..., min_length=1, max_length=255)
     slug: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-z0-9-]+$")
+    site_id: str | None = None
     headline: str = Field(default="", max_length=500)
     subheadline: str | None = Field(None, max_length=1000)
     hero_image_url: str | None = None
@@ -347,6 +349,7 @@ class UpdatePageRequest(PydanticBaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=255)
     slug: str | None = Field(None, min_length=1, max_length=100, pattern=r"^[a-z0-9-]+$")
+    site_id: str | None = None
     status: PageStatus | None = None
     headline: str | None = Field(None, max_length=500)
     subheadline: str | None = Field(None, max_length=1000)

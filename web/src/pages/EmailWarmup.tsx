@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import {
   Loader2, Check, AlertCircle, Globe, Plus, ChevronRight, ChevronDown, Mail,
   Pause, Play, Trash2, AlertTriangle, TrendingUp, X, Eye, RefreshCw, SlidersHorizontal, Shield,
@@ -53,6 +53,7 @@ const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => ({
 
 export default function EmailWarmup() {
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
+  const { siteId } = useParams<{ siteId: string }>();
 
   if (isLoadingWorkspace) {
     return (
@@ -71,13 +72,14 @@ export default function EmailWarmup() {
         </p>
       </div>
 
-      <EmailWarmupSection workspaceId={workspaceId} />
+      <EmailWarmupSection workspaceId={workspaceId} siteId={siteId} />
     </div>
   );
 }
 
-function EmailWarmupSection({ workspaceId }: {
+function EmailWarmupSection({ workspaceId, siteId }: {
   workspaceId: string | undefined;
+  siteId?: string;
 }) {
   const { data: warmupsData, isLoading } = useWarmups(workspaceId);
   const startWarmup = useStartWarmup(workspaceId || '');
@@ -372,6 +374,7 @@ function EmailWarmupSection({ workspaceId }: {
             <WarmupDomainCard
               key={warmup.domain}
               warmup={warmup}
+              siteId={siteId}
               workspaceId={workspaceId || ''}
               onPause={(d) => pauseWarmup.mutate(d)}
               onResume={(d) => resumeWarmup.mutate(d)}
@@ -391,6 +394,7 @@ function EmailWarmupSection({ workspaceId }: {
 function WarmupDomainCard({
   warmup,
   workspaceId,
+  siteId,
   onPause,
   onResume,
   onCancel,
@@ -398,6 +402,7 @@ function WarmupDomainCard({
 }: {
   warmup: WarmupDomain;
   workspaceId: string;
+  siteId?: string;
   onPause: (domain: string) => void;
   onResume: (domain: string) => void;
   onCancel: (domain: string) => void;
@@ -1056,7 +1061,7 @@ function WarmupDomainCard({
 
           {/* Content Library Panel */}
           {activePanel === 'content' && (
-            <ContentLibraryPanel workspaceId={workspaceId} />
+            <ContentLibraryPanel workspaceId={workspaceId} siteId={siteId} />
           )}
 
           {/* Warmup Log Panel */}
@@ -1095,8 +1100,8 @@ function WarmupDomainCard({
 
 const ACCEPTED_FILE_TYPES = '.pdf,.docx,.doc,.txt,.md,.csv';
 
-function ContentLibraryPanel({ workspaceId }: { workspaceId: string }) {
-  const { data: documents = [], isLoading } = useKBDocuments(workspaceId);
+function ContentLibraryPanel({ workspaceId, siteId }: { workspaceId: string; siteId?: string }) {
+  const { data: documents = [], isLoading } = useKBDocuments(workspaceId, siteId);
   const createDoc = useCreateKBDocument(workspaceId);
   const confirmUpload = useConfirmKBUpload(workspaceId);
   const deleteDoc = useDeleteKBDocument(workspaceId);

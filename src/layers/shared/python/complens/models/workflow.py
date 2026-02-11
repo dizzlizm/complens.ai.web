@@ -76,6 +76,7 @@ class Workflow(BaseModel):
     _sk_prefix: ClassVar[str] = "WF#"
 
     workspace_id: str = Field(..., description="Parent workspace ID")
+    site_id: str | None = Field(None, description="Parent site ID (None for unassigned workflows)")
     page_id: str | None = Field(None, description="Parent page ID (None for workspace-level workflows)")
 
     # Workflow metadata
@@ -208,6 +209,7 @@ class CreateWorkflowRequest(PydanticBaseModel):
     """Request model for creating a workflow."""
 
     name: str = Field(..., min_length=1, max_length=255)
+    site_id: str | None = None
     description: str | None = Field(None, max_length=1000)
     nodes: list[dict] = Field(default_factory=list)
     edges: list[dict] = Field(default_factory=list)

@@ -21,6 +21,18 @@ class BusinessProfileRepository(BaseRepository[BusinessProfile]):
         """Initialize business profile repository."""
         super().__init__(BusinessProfile, table_name)
 
+    def get_by_site(self, workspace_id: str, site_id: str) -> BusinessProfile | None:
+        """Get the business profile for a specific site.
+
+        Args:
+            workspace_id: The workspace ID.
+            site_id: The site ID.
+
+        Returns:
+            The site-specific profile, or None if not found.
+        """
+        return self.get(pk=f"WS#{workspace_id}", sk=f"PROFILE#SITE#{site_id}")
+
     def get_by_page(self, workspace_id: str, page_id: str) -> BusinessProfile | None:
         """Get the business profile for a specific page.
 
@@ -45,22 +57,30 @@ class BusinessProfileRepository(BaseRepository[BusinessProfile]):
         return self.get(pk=f"WS#{workspace_id}", sk="BUSINESS_PROFILE")
 
     def get_effective_profile(
-        self, workspace_id: str, page_id: str | None = None
+        self,
+        workspace_id: str,
+        page_id: str | None = None,
+        site_id: str | None = None,
     ) -> BusinessProfile | None:
         """Get the effective profile for a context.
 
-        If page_id is provided, returns page-specific profile if it exists,
-        otherwise falls back to workspace profile.
+        Cascade order: page profile -> site profile -> workspace profile.
+        Returns the most specific profile available.
 
         Args:
             workspace_id: The workspace ID.
             page_id: Optional page ID for page-specific lookup.
+            site_id: Optional site ID for site-specific lookup.
 
         Returns:
             The most specific profile available, or None.
         """
         if page_id:
             profile = self.get_by_page(workspace_id, page_id)
+            if profile:
+                return profile
+        if site_id:
+            profile = self.get_by_site(workspace_id, site_id)
             if profile:
                 return profile
         return self.get_by_workspace(workspace_id)
@@ -118,29 +138,40 @@ class BusinessProfileRepository(BaseRepository[BusinessProfile]):
         return profile
 
     def get_or_create(
-        self, workspace_id: str, page_id: str | None = None
+        self,
+        workspace_id: str,
+        page_id: str | None = None,
+        site_id: str | None = None,
     ) -> BusinessProfile:
         """Get the business profile, creating one if it doesn't exist.
 
         Args:
             workspace_id: The workspace ID.
             page_id: Optional page ID for page-specific profile.
+            site_id: Optional site ID for site-specific profile.
 
         Returns:
             The existing or newly created profile.
         """
         if page_id:
             profile = self.get_by_page(workspace_id, page_id)
+        elif site_id:
+            profile = self.get_by_site(workspace_id, site_id)
         else:
             profile = self.get_by_workspace(workspace_id)
 
         if not profile:
-            profile = BusinessProfile(workspace_id=workspace_id, page_id=page_id)
+            profile = BusinessProfile(
+                workspace_id=workspace_id,
+                page_id=page_id,
+                site_id=site_id,
+            )
             profile = self.create_profile(profile, page_id)
             logger.info(
                 "Created new business profile",
                 workspace_id=workspace_id,
                 page_id=page_id,
+                site_id=site_id,
             )
 
         return profile
@@ -181,16 +212,24 @@ class BusinessProfileRepository(BaseRepository[BusinessProfile]):
 
         return self.update_profile(profile)
 
-    def delete_profile(self, workspace_id: str, page_id: str | None = None) -> bool:
+    def delete_profile(
+        self,
+        workspace_id: str,
+        page_id: str | None = None,
+        site_id: str | None = None,
+    ) -> bool:
         """Delete a business profile.
 
         Args:
             workspace_id: The workspace ID.
             page_id: Optional page ID for page-specific profile.
+            site_id: Optional site ID for site-specific profile.
 
         Returns:
             True if deleted, False if not found.
         """
         if page_id:
             return self.delete(pk=f"WS#{workspace_id}", sk=f"PROFILE#PAGE#{page_id}")
+        if site_id:
+            return self.delete(pk=f"WS#{workspace_id}", sk=f"PROFILE#SITE#{site_id}")
         return self.delete(pk=f"WS#{workspace_id}", sk="BUSINESS_PROFILE")

@@ -32,12 +32,13 @@ export interface CreateDocumentResult extends KBDocument {
   upload_url: string;
 }
 
-export function useKBDocuments(workspaceId: string | undefined) {
+export function useKBDocuments(workspaceId: string | undefined, siteId?: string) {
   return useQuery({
-    queryKey: ['kb-documents', workspaceId],
+    queryKey: ['kb-documents', workspaceId, siteId],
     queryFn: async () => {
+      const params = siteId ? `?site_id=${siteId}` : '';
       const { data } = await api.get<{ items: KBDocument[] }>(
-        `/workspaces/${workspaceId}/knowledge-base/documents`
+        `/workspaces/${workspaceId}/knowledge-base/documents${params}`
       );
       return data.items;
     },

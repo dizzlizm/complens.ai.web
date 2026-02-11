@@ -66,6 +66,7 @@ from complens.models.warmup_domain import (
     WarmupStatusResponse,
     DEFAULT_WARMUP_SCHEDULE,
 )
+from complens.models.site import Site, CreateSiteRequest, UpdateSiteRequest
 from complens.models.deferred_email import DeferredEmail
 
 __all__ = [
@@ -145,6 +146,10 @@ __all__ = [
     "StartWarmupRequest",
     "WarmupStatusResponse",
     "DEFAULT_WARMUP_SCHEDULE",
+    # Site
+    "Site",
+    "CreateSiteRequest",
+    "UpdateSiteRequest",
     # Deferred Email
     "DeferredEmail",
 ]

@@ -26,6 +26,7 @@ export type PageLayout = 'full-bleed' | 'contained';
 export interface Page {
   id: string;
   workspace_id: string;
+  site_id?: string | null;
   name: string;
   slug: string;
   status: 'draft' | 'published' | 'archived';
@@ -64,6 +65,7 @@ export interface Page {
 export interface CreatePageInput {
   name: string;
   slug: string;
+  site_id?: string;
   headline?: string;
   subheadline?: string;
   hero_image_url?: string;
@@ -81,6 +83,7 @@ export interface CreatePageInput {
 export interface UpdatePageInput {
   name?: string;
   slug?: string;
+  site_id?: string;
   status?: Page['status'];
   headline?: string;
   subheadline?: string;
@@ -108,13 +111,14 @@ export interface UpdatePageInput {
   custom_domain?: string;
 }
 
-// Fetch all pages for a workspace
-export function usePages(workspaceId: string | undefined) {
+// Fetch all pages for a workspace, optionally scoped to a site
+export function usePages(workspaceId: string | undefined, siteId?: string) {
   return useQuery({
-    queryKey: ['pages', workspaceId],
+    queryKey: ['pages', workspaceId, siteId],
     queryFn: async () => {
+      const params = siteId ? `?site_id=${siteId}` : '';
       const { data } = await api.get<{ items: Page[] }>(
-        `/workspaces/${workspaceId}/pages`
+        `/workspaces/${workspaceId}/pages${params}`
       );
       return data.items;
     },

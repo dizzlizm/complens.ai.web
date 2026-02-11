@@ -31,6 +31,7 @@ class Document(BaseModel):
     _sk_prefix: ClassVar[str] = "DOC#"
 
     workspace_id: str = Field(..., description="Owning workspace ID")
+    site_id: str | None = Field(None, description="Parent site ID (None for unassigned documents)")
     name: str = Field(..., min_length=1, max_length=255, description="Document name")
     file_key: str = Field(default="", description="S3 object key")
     processed_key: str = Field(default="", description="S3 key for processed markdown")

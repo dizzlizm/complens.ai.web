@@ -28,9 +28,10 @@ const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '') || 'complens.a
 type Tab = 'content' | 'forms' | 'workflows' | 'ai' | 'domain';
 
 export default function PageEditor() {
-  const { id: pageId } = useParams<{ id: string }>();
+  const { id: pageId, siteId } = useParams<{ id: string; siteId: string }>();
   const navigate = useNavigate();
   const { workspaceId } = useCurrentWorkspace();
+  const basePath = siteId ? `/sites/${siteId}` : '';
   const toast = useToast();
 
   const { data: page, isLoading } = usePage(workspaceId, pageId);
@@ -39,7 +40,7 @@ export default function PageEditor() {
   const updatePage = useUpdatePage(workspaceId || '', pageId || '');
 
   // AI Profile hook - only for profile score in ContentTabV2
-  const { data: profile } = useBusinessProfile(workspaceId, pageId);
+  const { data: profile } = useBusinessProfile(workspaceId, pageId, siteId);
 
   const [activeTab, setActiveTab] = useState<Tab>('content');
   const [aiSubTab, setAISubTab] = useState<AISubTab>('profile');
@@ -308,7 +309,7 @@ export default function PageEditor() {
     return (
       <div className="bg-red-50 text-red-600 rounded-lg p-4">
         Page not found.{' '}
-        <Link to="/pages" className="underline">
+        <Link to={`${basePath}/pages`} className="underline">
           Go back to pages
         </Link>
       </div>
@@ -329,7 +330,7 @@ export default function PageEditor() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => navigate('/pages')}
+            onClick={() => navigate(`${basePath}/pages`)}
             className="text-gray-500 hover:text-gray-700"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -494,6 +495,7 @@ export default function PageEditor() {
           onComplete={handleAIGeneratedBlocks}
           onClose={() => setShowAIGenerator(false)}
           pageId={pageId}
+          siteId={siteId}
           useSynthesisEngine={true}
         />
       )}

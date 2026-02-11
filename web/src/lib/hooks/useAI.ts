@@ -33,6 +33,7 @@ export interface FAQ {
 export interface BusinessProfile {
   id: string;
   workspace_id: string;
+  site_id?: string;  // If set, this is a site-specific profile
   page_id?: string;  // If set, this is a page-specific profile
   business_name: string;
   tagline: string;
@@ -393,14 +394,17 @@ export interface CompletePageResult {
 
 // ==================== HOOKS ====================
 
-// Fetch business profile (workspace-level or page-specific)
-export function useBusinessProfile(workspaceId: string | undefined, pageId?: string) {
+// Fetch business profile (workspace-level, site-specific, or page-specific)
+export function useBusinessProfile(workspaceId: string | undefined, pageId?: string, siteId?: string) {
   return useQuery({
-    queryKey: ['businessProfile', workspaceId, pageId],
+    queryKey: ['businessProfile', workspaceId, pageId, siteId],
     queryFn: async () => {
-      const params = pageId ? `?page_id=${pageId}` : '';
+      const searchParams = new URLSearchParams();
+      if (pageId) searchParams.set('page_id', pageId);
+      if (siteId) searchParams.set('site_id', siteId);
+      const qs = searchParams.toString();
       const { data } = await api.get<BusinessProfile>(
-        `/workspaces/${workspaceId}/ai/profile${params}`
+        `/workspaces/${workspaceId}/ai/profile${qs ? `?${qs}` : ''}`
       );
       return data;
     },
@@ -408,21 +412,24 @@ export function useBusinessProfile(workspaceId: string | undefined, pageId?: str
   });
 }
 
-// Update business profile (workspace-level or page-specific)
-export function useUpdateBusinessProfile(workspaceId: string, pageId?: string) {
+// Update business profile (workspace-level, site-specific, or page-specific)
+export function useUpdateBusinessProfile(workspaceId: string, pageId?: string, siteId?: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (input: UpdateProfileInput) => {
-      const params = pageId ? `?page_id=${pageId}` : '';
+      const searchParams = new URLSearchParams();
+      if (pageId) searchParams.set('page_id', pageId);
+      if (siteId) searchParams.set('site_id', siteId);
+      const qs = searchParams.toString();
       const { data } = await api.put<BusinessProfile>(
-        `/workspaces/${workspaceId}/ai/profile${params}`,
+        `/workspaces/${workspaceId}/ai/profile${qs ? `?${qs}` : ''}`,
         input
       );
       return data;
     },
     onSuccess: (updatedProfile) => {
-      queryClient.setQueryData(['businessProfile', workspaceId, pageId], updatedProfile);
+      queryClient.setQueryData(['businessProfile', workspaceId, pageId, siteId], updatedProfile);
     },
   });
 }

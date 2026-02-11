@@ -290,6 +290,7 @@ def list_pages(
 
     limit = min(int(query_params.get("limit", 50)), 100)
     status_filter = query_params.get("status")
+    site_id = query_params.get("site_id")
 
     status = None
     if status_filter:
@@ -298,7 +299,10 @@ def list_pages(
         except ValueError:
             return error(f"Invalid status: {status_filter}", 400)
 
-    pages, next_key = repo.list_by_workspace(workspace_id, status=status, limit=limit)
+    if site_id:
+        pages, next_key = repo.list_by_site(workspace_id, site_id, status=status, limit=limit)
+    else:
+        pages, next_key = repo.list_by_workspace(workspace_id, status=status, limit=limit)
 
     return success({
         "items": [p.model_dump(mode="json") for p in pages],
@@ -373,6 +377,7 @@ def create_page(
     # Create page
     page = Page(
         workspace_id=workspace_id,
+        site_id=request.site_id,
         name=request.name,
         slug=request.slug,
         headline=request.headline,

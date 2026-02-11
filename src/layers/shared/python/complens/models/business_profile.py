@@ -101,6 +101,7 @@ class BusinessProfile(BaseModel):
     # Core identity
     id: str = Field(default_factory=lambda: str(uuid4()))
     workspace_id: str
+    site_id: str | None = None  # If set, this is a site-specific profile
     page_id: str | None = None  # If set, this is a page-specific profile
     business_name: str = ""
     tagline: str = ""  # Short memorable phrase
@@ -165,12 +166,18 @@ class BusinessProfile(BaseModel):
         """DynamoDB key structure for business profile.
 
         Page-specific profiles use: PK=WS#{ws_id}, SK=PROFILE#PAGE#{page_id}
+        Site-specific profiles use: PK=WS#{ws_id}, SK=PROFILE#SITE#{site_id}
         Workspace profiles use: PK=WS#{ws_id}, SK=BUSINESS_PROFILE
         """
         if self.page_id:
             return {
                 "PK": f"WS#{self.workspace_id}",
                 "SK": f"PROFILE#PAGE#{self.page_id}",
+            }
+        if self.site_id:
+            return {
+                "PK": f"WS#{self.workspace_id}",
+                "SK": f"PROFILE#SITE#{self.site_id}",
             }
         return {
             "PK": f"WS#{self.workspace_id}",

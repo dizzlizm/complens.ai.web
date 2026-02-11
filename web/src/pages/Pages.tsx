@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { usePages, useDeletePage, useCreatePage, type Page } from '../lib/hooks/usePages';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import Modal from '../components/ui/Modal';
@@ -7,7 +7,8 @@ import { useToast } from '../components/Toast';
 
 export default function Pages() {
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
-  const { data: pages, isLoading, error, refetch } = usePages(workspaceId);
+  const { siteId } = useParams<{ siteId: string }>();
+  const { data: pages, isLoading, error, refetch } = usePages(workspaceId, siteId);
   const deletePage = useDeletePage(workspaceId || '');
   const createPage = useCreatePage(workspaceId || '');
   const navigate = useNavigate();
@@ -27,12 +28,14 @@ export default function Pages() {
         name: newPageName,
         slug: newPageSlug.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
         headline: newPageName,
+        site_id: siteId,
       });
       setShowCreateModal(false);
       setNewPageName('');
       setNewPageSlug('');
       toast.success('Page created successfully');
-      navigate(`/pages/${page.id}`);
+      const basePath = siteId ? `/sites/${siteId}` : '';
+      navigate(`${basePath}/pages/${page.id}`);
     } catch (err) {
       console.error('Failed to create page:', err);
       toast.error('Failed to create page. Please try again.');
@@ -139,7 +142,7 @@ export default function Pages() {
                 <tr key={page.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <Link
-                      to={`/pages/${page.id}`}
+                      to={`${siteId ? `/sites/${siteId}` : ''}/pages/${page.id}`}
                       className="text-indigo-600 hover:text-indigo-800 font-medium"
                     >
                       {page.name}
@@ -174,7 +177,7 @@ export default function Pages() {
                         </svg>
                       </a>
                       <Link
-                        to={`/pages/${page.id}`}
+                        to={`${siteId ? `/sites/${siteId}` : ''}/pages/${page.id}`}
                         className="text-indigo-600 hover:text-indigo-800"
                         title="Edit"
                       >

@@ -1,6 +1,7 @@
-import { Link, useLocation, Outlet } from 'react-router-dom';
+import { Link, useLocation, useParams, Outlet } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { useCurrentWorkspace } from '@/lib/hooks/useWorkspaces';
+import SiteSwitcher from '@/components/SiteSwitcher';
 import {
   LayoutDashboard,
   GitBranch,
@@ -17,20 +18,30 @@ import {
   Check,
   Building2,
   Shield,
+  Globe,
+  BookOpen,
+  ArrowLeft,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
-// Navigation items - Forms removed (now managed inside Page Editor)
-// AI Profile also removed - profiles are now per-page
-const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Workflows', href: '/workflows', icon: GitBranch },
+// Global navigation items
+const globalNavigation = [
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Contacts', href: '/contacts', icon: Users },
   { name: 'Deals', href: '/deals', icon: DollarSign },
-  { name: 'Pages', href: '/pages', icon: FileText },
-  { name: 'Email Warmup', href: '/email-warmup', icon: Flame },
+  { name: 'Sites', href: '/sites', icon: Globe },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
+
+// Site-scoped navigation items (siteId will be interpolated)
+function getSiteNavigation(siteId: string) {
+  return [
+    { name: 'Pages', href: `/sites/${siteId}/pages`, icon: FileText },
+    { name: 'Workflows', href: `/sites/${siteId}/workflows`, icon: GitBranch },
+    { name: 'Email Warmup', href: `/sites/${siteId}/email-warmup`, icon: Flame },
+    { name: 'Knowledge Base', href: `/sites/${siteId}/knowledge-base`, icon: BookOpen },
+  ];
+}
 
 function WorkspaceSwitcher() {
   const { workspace, workspaces, setCurrentWorkspaceId } = useCurrentWorkspace();
@@ -98,7 +109,12 @@ function WorkspaceSwitcher() {
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const { siteId } = useParams<{ siteId: string }>();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Determine if we're inside a site context
+  const isInSite = !!siteId && location.pathname.startsWith(`/sites/${siteId}`);
+  const navigation = isInSite ? getSiteNavigation(siteId) : globalNavigation;
 
   const handleLogout = async () => {
     await logout();
@@ -129,9 +145,23 @@ export default function AppLayout() {
         <div className="px-2 pt-3 pb-1 border-b border-gray-100">
           <WorkspaceSwitcher />
         </div>
+        {isInSite && (
+          <div className="px-2 pt-2 pb-1 border-b border-gray-100">
+            <SiteSwitcher />
+            <Link
+              to="/sites"
+              onClick={() => setSidebarOpen(false)}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700"
+            >
+              <ArrowLeft className="w-3 h-3" />
+              All Sites
+            </Link>
+          </div>
+        )}
         <nav className="mt-4 px-2">
           {navigation.map((item) => {
-            const isActive = location.pathname === item.href;
+            const isActive = location.pathname === item.href ||
+              (item.href !== '/dashboard' && location.pathname.startsWith(item.href));
             return (
               <Link
                 key={item.name}
@@ -164,11 +194,25 @@ export default function AppLayout() {
             <WorkspaceSwitcher />
           </div>
 
+          {/* Site switcher (when inside a site) */}
+          {isInSite && (
+            <div className="px-3 pt-2 pb-1 border-b border-gray-100">
+              <SiteSwitcher />
+              <Link
+                to="/sites"
+                className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+              >
+                <ArrowLeft className="w-3 h-3" />
+                All Sites
+              </Link>
+            </div>
+          )}
+
           {/* Navigation */}
           <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto scrollbar-thin">
             {navigation.map((item) => {
               const isActive = location.pathname === item.href ||
-                (item.href !== '/' && location.pathname.startsWith(item.href));
+                (item.href !== '/dashboard' && location.pathname.startsWith(item.href));
               return (
                 <Link
                   key={item.name}
