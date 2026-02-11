@@ -39,7 +39,7 @@ function getSiteNavigation(siteId: string) {
     { name: 'Pages', href: `/sites/${siteId}/pages`, icon: FileText },
     { name: 'Workflows', href: `/sites/${siteId}/workflows`, icon: GitBranch },
     { name: 'Email Warmup', href: `/sites/${siteId}/email-warmup`, icon: Flame },
-    { name: 'Knowledge Base', href: `/sites/${siteId}/knowledge-base`, icon: BookOpen },
+    { name: 'AI & Knowledge Base', href: `/sites/${siteId}/ai`, icon: BookOpen },
   ];
 }
 

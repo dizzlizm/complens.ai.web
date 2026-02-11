@@ -26,6 +26,7 @@ import PageEditor from './pages/PageEditor';
 // Forms removed - now managed inside Page Editor
 import Settings from './pages/Settings';
 import EmailWarmup from './pages/EmailWarmup';
+import SiteAISettings from './pages/SiteAISettings';
 import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
 
@@ -89,7 +90,7 @@ function App() {
               <Route path="workflows" element={<Workflows />} />
               <Route path="workflows/:id" element={<WorkflowEditor />} />
               <Route path="email-warmup" element={<EmailWarmup />} />
-              <Route path="knowledge-base" element={<Pages />} />
+              <Route path="ai" element={<SiteAISettings />} />
             </Route>
 
             {/* Global fallback routes (backwards compat for direct links) */}

@@ -7,6 +7,7 @@ Shorter, high-impact templates with just 3 sections:
 """
 
 import html as html_module
+import json
 import re
 
 from complens.utils.css_sanitizer import sanitize_css
@@ -961,12 +962,126 @@ def _escape_js_string(s: str) -> str:
     )
 
 
+def _generate_structured_data(
+    page: dict,
+    canonical_url: str = "",
+    business_profile: dict | None = None,
+) -> str:
+    """Generate Schema.org JSON-LD structured data for AEO.
+
+    Produces JSON-LD script tags for:
+    - WebPage (always)
+    - Organization (if business profile provided)
+    - FAQPage (if page has FAQ blocks with Q&A items)
+    - LocalBusiness (if profile has industry data)
+
+    Args:
+        page: Page data dict.
+        canonical_url: Canonical URL for the page.
+        business_profile: Optional business profile dict.
+
+    Returns:
+        HTML string with JSON-LD script tags for the <head>.
+    """
+    schemas: list[dict] = []
+    blocks = page.get("blocks", [])
+    meta_title = page.get("meta_title") or page.get("name", "")
+    meta_description = page.get("meta_description") or page.get("subheadline", "")
+
+    # 1. WebPage schema (always)
+    web_page: dict = {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "name": meta_title,
+        "description": meta_description,
+    }
+    if canonical_url:
+        web_page["url"] = canonical_url
+    created_at = page.get("created_at")
+    updated_at = page.get("updated_at")
+    if created_at:
+        web_page["datePublished"] = str(created_at)[:10]
+    if updated_at:
+        web_page["dateModified"] = str(updated_at)[:10]
+    schemas.append(web_page)
+
+    # 2. Organization schema (from business profile)
+    profile = business_profile or {}
+    biz_name = profile.get("business_name")
+    if biz_name:
+        org: dict = {
+            "@context": "https://schema.org",
+            "@type": "Organization",
+            "name": biz_name,
+        }
+        if profile.get("description"):
+            org["description"] = profile["description"]
+        if profile.get("website"):
+            org["url"] = profile["website"]
+        if profile.get("industry"):
+            org["industry"] = profile["industry"]
+        schemas.append(org)
+
+        # 3. LocalBusiness schema (if industry data present)
+        industry = profile.get("industry")
+        if industry:
+            local_biz: dict = {
+                "@context": "https://schema.org",
+                "@type": "LocalBusiness",
+                "name": biz_name,
+            }
+            if profile.get("description"):
+                local_biz["description"] = profile["description"]
+            if canonical_url:
+                local_biz["url"] = canonical_url
+            schemas.append(local_biz)
+
+    # 4. FAQPage schema (if page has FAQ blocks)
+    faq_items: list[dict] = []
+    for block in blocks:
+        if block.get("type") == "faq":
+            config = block.get("config", {})
+            for item in config.get("items", []):
+                question = item.get("question", "").strip()
+                answer = item.get("answer", "").strip()
+                if question and answer:
+                    faq_items.append({
+                        "@type": "Question",
+                        "name": question,
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": answer,
+                        },
+                    })
+
+    if faq_items:
+        faq_schema: dict = {
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": faq_items,
+        }
+        schemas.append(faq_schema)
+
+    if not schemas:
+        return ""
+
+    # Build script tags
+    parts = []
+    for schema in schemas:
+        json_str = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+        parts.append(
+            f'    <script type="application/ld+json">{json_str}</script>'
+        )
+    return "\n".join(parts)
+
+
 def render_full_page(
     page: dict,
     ws_url: str,
     api_url: str,
     forms: list[dict] | None = None,
     canonical_url: str = "",
+    business_profile: dict | None = None,
 ) -> str:
     """Render a page to a complete HTML document.
 
@@ -975,6 +1090,8 @@ def render_full_page(
         ws_url: WebSocket API URL for chat.
         api_url: REST API URL for form submissions.
         forms: List of form data dicts to render on the page.
+        canonical_url: Canonical URL for the page.
+        business_profile: Optional business profile dict for structured data.
 
     Returns:
         Complete HTML document string.
@@ -1363,6 +1480,9 @@ def render_full_page(
 }})();
 </script>"""
 
+    # Generate structured data for AEO
+    structured_data = _generate_structured_data(page, canonical_url, business_profile)
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1380,6 +1500,7 @@ def render_full_page(
     <meta name="twitter:description" content="{meta_description}">
     <link rel="canonical" href="{canonical_url}">{f"""
     <meta property="og:url" content="{canonical_url}">""" if canonical_url else ""}
+{structured_data}
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {{

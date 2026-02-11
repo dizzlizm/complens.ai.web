@@ -5,6 +5,7 @@ import DocumentContentModal from './DocumentContentModal';
 
 interface KnowledgeBaseSettingsProps {
   workspaceId: string;
+  siteId?: string;
 }
 
 const statusIcons: Record<string, React.ReactNode> = {
@@ -20,9 +21,9 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-export default function KnowledgeBaseSettings({ workspaceId }: KnowledgeBaseSettingsProps) {
-  const { data: documents = [], isLoading: loadingDocs } = useKBDocuments(workspaceId || undefined);
-  const { data: status } = useKBStatus(workspaceId || undefined);
+export default function KnowledgeBaseSettings({ workspaceId, siteId }: KnowledgeBaseSettingsProps) {
+  const { data: documents = [], isLoading: loadingDocs } = useKBDocuments(workspaceId || undefined, siteId);
+  const { data: status } = useKBStatus(workspaceId || undefined, siteId);
   const createDocument = useCreateKBDocument(workspaceId);
   const confirmUpload = useConfirmKBUpload(workspaceId);
   const deleteDocument = useDeleteKBDocument(workspaceId);

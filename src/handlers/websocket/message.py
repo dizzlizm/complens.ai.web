@@ -176,19 +176,22 @@ def handle_public_chat(
             business_context = {}
 
         # Fetch business profile for richer AI context
+        # Pass site_id for site-scoped profile lookup
+        site_id = getattr(page, "site_id", None)
         profile_context = ""
         try:
             profile_repo = BusinessProfileRepository()
-            profile = profile_repo.get_effective_profile(page.workspace_id, page_id)
+            profile = profile_repo.get_effective_profile(page.workspace_id, page_id, site_id)
             if profile:
                 profile_context = profile.get_ai_context()
         except Exception as e:
             logger.warning("Business profile fetch skipped", error=str(e))
 
         # Fetch knowledge base documents directly from S3
+        # Pass site_id for site-filtered KB retrieval
         kb_context = ""
         try:
-            kb_context = _get_document_context(page.workspace_id)
+            kb_context = _get_document_context(page.workspace_id, site_id=site_id)
         except Exception as e:
             logger.warning("KB document fetch skipped", error=str(e))
 
@@ -240,7 +243,11 @@ You may use markdown formatting (bold, lists, links) when it improves readabilit
         return {"statusCode": 500}
 
 
-def _get_document_context(workspace_id: str, max_chars: int = 8000) -> str:
+def _get_document_context(
+    workspace_id: str,
+    max_chars: int = 8000,
+    site_id: str | None = None,
+) -> str:
     """Fetch indexed KB document content directly from S3.
 
     Reads text-based documents and concatenates them for the system prompt.
@@ -249,12 +256,15 @@ def _get_document_context(workspace_id: str, max_chars: int = 8000) -> str:
     Args:
         workspace_id: Workspace ID.
         max_chars: Maximum characters of document content to include.
+        site_id: Optional site ID to filter documents by site.
 
     Returns:
         Formatted document context string, or empty string if none.
     """
     doc_repo = DocumentRepository()
-    documents, _ = doc_repo.list_by_workspace(workspace_id, status="indexed", limit=20)
+    documents, _ = doc_repo.list_by_workspace(
+        workspace_id, status="indexed", limit=20, site_id=site_id
+    )
 
     if not documents:
         return ""

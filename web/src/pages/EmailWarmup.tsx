@@ -1,16 +1,15 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   Loader2, Check, AlertCircle, Globe, Plus, ChevronRight, ChevronDown, Mail,
   Pause, Play, Trash2, AlertTriangle, TrendingUp, X, Eye, RefreshCw, SlidersHorizontal, Shield,
-  BookOpen, Upload, FileText,
+  BookOpen,
 } from 'lucide-react';
 import {
   useCurrentWorkspace, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup,
   useCancelWarmup, getWarmupStatusInfo, useUpdateSeedList,
   useUpdateWarmupSettings, useWarmupLog, useDomainHealth, getHealthStatusInfo,
   useListDomains,
-  useKBDocuments, useCreateKBDocument, useConfirmKBUpload, useDeleteKBDocument, useSyncKB,
 } from '../lib/hooks';
 import type { WarmupDomain } from '../lib/hooks/useEmailWarmup';
 
@@ -1061,7 +1060,23 @@ function WarmupDomainCard({
 
           {/* Content Library Panel */}
           {activePanel === 'content' && (
-            <ContentLibraryPanel workspaceId={workspaceId} siteId={siteId} />
+            <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="flex items-center gap-3 mb-2">
+                <BookOpen className="w-5 h-5 text-violet-600" />
+                <h4 className="text-sm font-medium text-gray-700">Content Library</h4>
+              </div>
+              <p className="text-sm text-gray-600 mb-3">
+                Manage your knowledge base documents in the site-level AI & Knowledge Base settings.
+                Warmup emails will reference this content to sound more authentic.
+              </p>
+              <Link
+                to={siteId ? `/sites/${siteId}/ai` : '/sites'}
+                className="inline-flex items-center gap-2 text-sm font-medium text-primary-600 hover:text-primary-700"
+              >
+                <BookOpen className="w-4 h-4" />
+                Go to AI & Knowledge Base
+              </Link>
+            </div>
           )}
 
           {/* Warmup Log Panel */}
@@ -1098,164 +1113,3 @@ function WarmupDomainCard({
   );
 }
 
-const ACCEPTED_FILE_TYPES = '.pdf,.docx,.doc,.txt,.md,.csv';
-
-function ContentLibraryPanel({ workspaceId, siteId }: { workspaceId: string; siteId?: string }) {
-  const { data: documents = [], isLoading } = useKBDocuments(workspaceId, siteId);
-  const createDoc = useCreateKBDocument(workspaceId);
-  const confirmUpload = useConfirmKBUpload(workspaceId);
-  const deleteDoc = useDeleteKBDocument(workspaceId);
-  const syncKB = useSyncKB(workspaceId);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-
-  const indexedCount = documents.filter((d) => d.status === 'indexed').length;
-
-  const handleUpload = useCallback(async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    setUploading(true);
-    try {
-      for (const file of Array.from(files)) {
-        const result = await createDoc.mutateAsync({
-          name: file.name,
-          content_type: file.type || 'application/octet-stream',
-          file_size: file.size,
-        });
-
-        // Upload to presigned URL
-        await fetch(result.upload_url, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        });
-
-        // Confirm upload
-        await confirmUpload.mutateAsync(result.id);
-      }
-
-      // Trigger KB sync after all uploads
-      syncKB.mutate();
-    } catch {
-      // Error handled by mutation state
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  }, [createDoc, confirmUpload, syncKB]);
-
-  const handleDelete = async (docId: string) => {
-    try {
-      await deleteDoc.mutateAsync(docId);
-      setConfirmDeleteId(null);
-      syncKB.mutate();
-    } catch {
-      // Error handled by mutation state
-    }
-  };
-
-  const statusBadge = (status: string) => {
-    const styles: Record<string, string> = {
-      indexed: 'bg-green-100 text-green-700',
-      processing: 'bg-blue-100 text-blue-700',
-      pending: 'bg-gray-100 text-gray-600',
-      failed: 'bg-red-100 text-red-700',
-    };
-    return (
-      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${styles[status] || styles.pending}`}>
-        {status}
-      </span>
-    );
-  };
-
-  return (
-    <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
-      <div className="flex items-center justify-between mb-1">
-        <h4 className="text-sm font-medium text-gray-700">Content Library</h4>
-        {indexedCount > 0 && (
-          <span className="text-xs text-green-600 font-medium">{indexedCount} indexed</span>
-        )}
-      </div>
-      <p className="text-xs text-gray-500 mb-3">
-        Upload documents about your business (product info, FAQs, case studies). Warmup emails will
-        reference this content to sound more authentic.
-      </p>
-
-      {/* Upload area */}
-      <div
-        className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-primary-400 transition-colors cursor-pointer"
-        onClick={() => fileInputRef.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          handleUpload(e.dataTransfer.files);
-        }}
-      >
-        {uploading ? (
-          <div className="flex items-center justify-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin text-primary-600" />
-            <span className="text-sm text-gray-600">Uploading...</span>
-          </div>
-        ) : (
-          <>
-            <Upload className="w-5 h-5 text-gray-400 mx-auto mb-1" />
-            <p className="text-xs text-gray-600">
-              Drop files here or <span className="text-primary-600 font-medium">browse</span>
-            </p>
-            <p className="text-xs text-gray-400 mt-0.5">PDF, DOCX, TXT, MD, CSV</p>
-          </>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          accept={ACCEPTED_FILE_TYPES}
-          multiple
-          onChange={(e) => handleUpload(e.target.files)}
-        />
-      </div>
-
-      {/* Document list */}
-      {isLoading ? (
-        <div className="flex items-center justify-center py-4">
-          <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
-        </div>
-      ) : documents.length > 0 ? (
-        <div className="mt-3 space-y-1.5">
-          {documents.map((doc) => (
-            <div key={doc.id} className="flex items-center justify-between py-1.5 px-2 bg-white rounded border border-gray-100">
-              <div className="flex items-center gap-2 min-w-0">
-                <FileText className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                <span className="text-xs text-gray-800 truncate">{doc.name}</span>
-                {statusBadge(doc.status)}
-              </div>
-              <button
-                onClick={() => confirmDeleteId === doc.id ? handleDelete(doc.id) : setConfirmDeleteId(doc.id)}
-                className={`p-1 rounded transition-colors shrink-0 ${
-                  confirmDeleteId === doc.id
-                    ? 'text-red-600 bg-red-50'
-                    : 'text-gray-400 hover:text-red-500 hover:bg-red-50'
-                }`}
-                title={confirmDeleteId === doc.id ? 'Click again to confirm' : 'Delete document'}
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="text-xs text-gray-400 mt-3 italic">
-          No documents yet. Upload product docs, FAQs, or case studies to enrich warmup emails.
-        </p>
-      )}
-
-      {createDoc.isError && (
-        <p className="text-xs text-red-600 mt-2 flex items-center gap-1">
-          <AlertCircle className="w-3 h-3" />
-          Failed to upload document
-        </p>
-      )}
-    </div>
-  );
-}

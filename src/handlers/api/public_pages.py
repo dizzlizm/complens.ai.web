@@ -35,6 +35,7 @@ from complens.models.contact import Contact
 from complens.models.form import FormSubmission, SubmitFormRequest
 from complens.repositories.contact import ContactRepository
 from complens.repositories.form import FormRepository, FormSubmissionRepository
+from complens.repositories.business_profile import BusinessProfileRepository
 from complens.repositories.page import PageRepository
 from complens.services.page_templates import render_full_page
 from complens.utils.rate_limiter import (
@@ -344,10 +345,20 @@ def get_page_by_subdomain(subdomain: str) -> dict:
         blocks_count_in_data=len(page_data.get("blocks", [])),
     )
 
+    # Fetch business profile for structured data (AEO)
+    profile_repo = BusinessProfileRepository()
+    site_id = getattr(page, "site_id", None)
+    profile = profile_repo.get_effective_profile(page.workspace_id, page.id, site_id)
+    profile_data = profile.model_dump(mode="json") if profile else None
+
     stage = os.environ.get("STAGE", "dev")
     subdomain_suffix = "complens.ai" if stage == "prod" else f"{stage}.complens.ai"
     canonical = f"https://{subdomain}.{subdomain_suffix}"
-    html = render_full_page(page_data, ws_url, api_url, forms=forms, canonical_url=canonical)
+    html = render_full_page(
+        page_data, ws_url, api_url,
+        forms=forms, canonical_url=canonical,
+        business_profile=profile_data,
+    )
 
     logger.info(
         "Rendered page for subdomain",
@@ -460,8 +471,19 @@ def get_page_by_domain(domain: str) -> dict:
 
     # Render full HTML page with forms
     page_data = page.model_dump(mode="json")
+
+    # Fetch business profile for structured data (AEO)
+    profile_repo = BusinessProfileRepository()
+    site_id = getattr(page, "site_id", None)
+    profile = profile_repo.get_effective_profile(page.workspace_id, page.id, site_id)
+    profile_data = profile.model_dump(mode="json") if profile else None
+
     canonical = f"https://{domain}"
-    html = render_full_page(page_data, ws_url, api_url, forms=forms, canonical_url=canonical)
+    html = render_full_page(
+        page_data, ws_url, api_url,
+        forms=forms, canonical_url=canonical,
+        business_profile=profile_data,
+    )
 
     logger.info(
         "Rendered page for custom domain",

@@ -596,7 +596,7 @@ export default function ContentTabV2({
       <PillTabs
         tabs={[
           { id: 'blocks' as const, label: 'Blocks' },
-          { id: 'seo' as const, label: 'SEO & Social' },
+          { id: 'seo' as const, label: 'Discoverability' },
           { id: 'scripts' as const, label: 'Scripts & Tracking' },
         ]}
         activeTab={contentSubTab}
@@ -657,6 +657,8 @@ export default function ContentTabV2({
           onOgImageUrlChange={(value) => onOgImageUrlChange?.(value)}
           onGenerateOgImage={workspaceId ? handleGenerateOgImage : undefined}
           isGeneratingOgImage={generateImage.isPending}
+          blocks={blocks}
+          profileScore={profileScore}
           defaultOpen
         />
       )}

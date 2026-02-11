@@ -67,18 +67,27 @@ class DocumentRepository(BaseRepository[Document]):
         status: str | None = None,
         limit: int = 100,
         last_key: dict | None = None,
+        site_id: str | None = None,
     ) -> tuple[list[Document], dict | None]:
-        """List documents for a workspace.
+        """List documents for a workspace, optionally filtered by site.
 
         Args:
             workspace_id: Workspace ID.
             status: Optional status filter.
             limit: Maximum items to return.
             last_key: Pagination key.
+            site_id: Optional site ID to filter documents.
 
         Returns:
             Tuple of (documents, last_evaluated_key).
         """
+        # If site_id is provided, use the site-filtered query
+        if site_id:
+            docs, key = self.list_by_site(workspace_id, site_id, limit, last_key)
+            if status:
+                docs = [d for d in docs if d.status == status]
+            return docs, key
+
         sk_prefix = f"{status}#" if status else None
         return self.query(
             pk=f"WS#{workspace_id}#DOCS",

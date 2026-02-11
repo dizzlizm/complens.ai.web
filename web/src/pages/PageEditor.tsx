@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { usePage, useUpdatePage, type UpdatePageInput, type ChatConfig, type PageLayout } from '../lib/hooks/usePages';
+import { usePage, useUpdatePage, type UpdatePageInput, type PageLayout } from '../lib/hooks/usePages';
 import { usePageForms, type Form } from '../lib/hooks/useForms';
 import { usePageWorkflows } from '../lib/hooks/useWorkflows';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
+import { useSite } from '../lib/hooks/useSites';
 import {
   useBusinessProfile,
   GeneratedPageContent,
@@ -16,7 +17,6 @@ import Tabs from '../components/ui/Tabs';
 import DomainTab from '../components/page-editor/DomainTab';
 import WorkflowsTab from '../components/page-editor/WorkflowsTab';
 import FormsTab from '../components/page-editor/FormsTab';
-import AITab, { type AISubTab } from '../components/page-editor/AITab';
 
 // Auto-save delay in milliseconds
 const AUTO_SAVE_DELAY = 3000;
@@ -25,7 +25,7 @@ const AUTO_SAVE_DELAY = 3000;
 const API_URL = import.meta.env.VITE_API_URL || '';
 const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '') || 'complens.ai';
 
-type Tab = 'content' | 'forms' | 'workflows' | 'ai' | 'domain';
+type Tab = 'content' | 'forms' | 'workflows' | 'domain';
 
 export default function PageEditor() {
   const { id: pageId, siteId } = useParams<{ id: string; siteId: string }>();
@@ -41,9 +41,10 @@ export default function PageEditor() {
 
   // AI Profile hook - only for profile score in ContentTabV2
   const { data: profile } = useBusinessProfile(workspaceId, pageId, siteId);
+  // Site data - for domain info in DomainTab
+  const { data: siteData } = useSite(workspaceId, siteId);
 
   const [activeTab, setActiveTab] = useState<Tab>('content');
-  const [aiSubTab, setAISubTab] = useState<AISubTab>('profile');
   const [formData, setFormData] = useState<UpdatePageInput>({});
   const [hasChanges, setHasChanges] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -169,17 +170,6 @@ export default function PageEditor() {
     value: UpdatePageInput[K]
   ) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
-    setHasChanges(true);
-  };
-
-  const handleChatConfigChange = <K extends keyof ChatConfig>(
-    key: K,
-    value: ChatConfig[K]
-  ) => {
-    setFormData((prev) => ({
-      ...prev,
-      chat_config: { ...prev.chat_config, [key]: value } as ChatConfig,
-    }));
     setHasChanges(true);
   };
 
@@ -318,7 +308,6 @@ export default function PageEditor() {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'content', label: 'Content' },
-    { id: 'ai', label: 'AI' },
     { id: 'forms', label: `Forms${pageForms?.length ? ` (${pageForms.length})` : ''}` },
     { id: 'workflows', label: `Workflows${pageWorkflows?.length ? ` (${pageWorkflows.length})` : ''}` },
     { id: 'domain', label: 'Domain' },
@@ -411,7 +400,7 @@ export default function PageEditor() {
             workspaceId={workspaceId}
             pageId={pageId}
             profileScore={profile?.profile_score || 0}
-            onGoToProfile={() => { setActiveTab('ai'); setAISubTab('profile'); }}
+            onGoToProfile={() => navigate(siteId ? `/sites/${siteId}/ai` : '/sites')}
             pageName={formData.name}
             pageSlug={formData.slug}
             pageUrl={page?.subdomain ? `https://${page.subdomain}.${SUBDOMAIN_SUFFIX}` : `/p/${page?.slug}?ws=${workspaceId}`}
@@ -442,18 +431,6 @@ export default function PageEditor() {
           />
         )}
 
-        {activeTab === 'ai' && (
-          <AITab
-            workspaceId={workspaceId || ''}
-            pageId={pageId || ''}
-            chatConfig={formData.chat_config}
-            onChatConfigChange={handleChatConfigChange}
-            activeSubTab={aiSubTab}
-            onSubTabChange={setAISubTab}
-            pageStatus={page.status}
-          />
-        )}
-
         {activeTab === 'forms' && (
           <FormsTab
             workspaceId={workspaceId || ''}
@@ -474,6 +451,8 @@ export default function PageEditor() {
             pageId={pageId || ''}
             pageSlug={page.slug}
             subdomain={formData.subdomain ?? page.subdomain ?? ''}
+            siteId={siteId}
+            siteDomain={siteData?.domain_name}
             onSaveSubdomain={async (newSubdomain) => {
               try {
                 await updatePage.mutateAsync({ subdomain: newSubdomain });

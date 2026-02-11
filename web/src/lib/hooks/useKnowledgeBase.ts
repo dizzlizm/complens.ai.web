@@ -26,6 +26,7 @@ export interface CreateDocumentInput {
   name: string;
   content_type: string;
   file_size: number;
+  site_id?: string;
 }
 
 export interface CreateDocumentResult extends KBDocument {
@@ -46,12 +47,13 @@ export function useKBDocuments(workspaceId: string | undefined, siteId?: string)
   });
 }
 
-export function useKBStatus(workspaceId: string | undefined) {
+export function useKBStatus(workspaceId: string | undefined, siteId?: string) {
   return useQuery({
-    queryKey: ['kb-status', workspaceId],
+    queryKey: ['kb-status', workspaceId, siteId],
     queryFn: async () => {
+      const params = siteId ? `?site_id=${siteId}` : '';
       const { data } = await api.get<KBStatus>(
-        `/workspaces/${workspaceId}/knowledge-base/status`
+        `/workspaces/${workspaceId}/knowledge-base/status${params}`
       );
       return data;
     },
