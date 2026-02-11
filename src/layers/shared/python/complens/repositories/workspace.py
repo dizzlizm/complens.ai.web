@@ -131,13 +131,15 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         """
         # Try GSI4 first (efficient)
         try:
-            return self.query(
+            workspaces, next_key = self.query(
                 pk="ALL_WORKSPACES",
                 sk_begins_with="WS#",
                 index_name="GSI4",
                 limit=limit,
                 last_key=last_key,
             )
+            if workspaces:
+                return workspaces, next_key
         except Exception:
             pass
 
