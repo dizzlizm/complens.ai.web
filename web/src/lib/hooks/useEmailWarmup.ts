@@ -302,7 +302,7 @@ export function useCheckDomainAuth(workspaceId: string | undefined, domain: stri
       return data;
     },
     enabled: !!workspaceId && !!domain && domain.includes('.'),
-    staleTime: 30000, // Cache for 30s
+    staleTime: 0, // Always refetch — SES verification status changes asynchronously
   });
 }
 
@@ -317,7 +317,7 @@ export function useListDomains(workspaceId: string | undefined) {
       return data;
     },
     enabled: !!workspaceId,
-    staleTime: 30000,
+    staleTime: 0, // Always refetch — verification status can change any time via DNS propagation
   });
 }
 
