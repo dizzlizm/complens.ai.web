@@ -144,27 +144,37 @@ class WorkspaceRepository(BaseRepository[Workspace]):
             pass
 
         # Fallback to scan for pre-GSI4 data
+        # Note: DynamoDB Limit applies BEFORE FilterExpression, so a scan
+        # with Limit=50 may return only 1-2 matching items if most items
+        # in the table don't match. We must loop until we have enough.
         from botocore.exceptions import ClientError
 
         try:
-            kwargs = {
+            workspaces: list[Workspace] = []
+            scan_kwargs: dict = {
                 "FilterExpression": "begins_with(SK, :sk_prefix)",
                 "ExpressionAttributeValues": {":sk_prefix": "WS#"},
-                "Limit": limit,
+                "Limit": 500,
             }
 
             if last_key:
-                kwargs["ExclusiveStartKey"] = last_key
+                scan_kwargs["ExclusiveStartKey"] = last_key
 
-            response = self.table.scan(**kwargs)
+            while len(workspaces) < limit:
+                response = self.table.scan(**scan_kwargs)
+                workspaces.extend(
+                    self.model_class.from_dynamodb(item)
+                    for item in response.get("Items", [])
+                )
+                last_evaluated_key = response.get("LastEvaluatedKey")
+                if not last_evaluated_key:
+                    break
+                scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
 
-            workspaces = [
-                self.model_class.from_dynamodb(item)
-                for item in response.get("Items", [])
-            ]
-            last_evaluated_key = response.get("LastEvaluatedKey")
-
-            return workspaces, last_evaluated_key
+            # If we got more than requested, there's still data to page through
+            if len(workspaces) >= limit and last_evaluated_key:
+                return workspaces[:limit], last_evaluated_key
+            return workspaces, None
 
         except ClientError as e:
             import structlog
