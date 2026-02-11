@@ -171,9 +171,6 @@ def create_cloudfront_distribution(
         # Origin: API Gateway public domain endpoint
         api_origin = API_GATEWAY_DOMAIN or f"api.dev.complens.ai"
 
-        # Wildcard aliases so subdomain.domain also routes here
-        aliases = [domain, f"*.{domain}"]
-
         # Build default cache behavior — with CloudFront Function if available
         default_cache_behavior = {
             "TargetOriginId": "api-gateway",
@@ -202,39 +199,53 @@ def create_cloudfront_distribution(
                 }],
             }
 
-        distribution_config = {
-            "CallerReference": f"complens-{workspace_id}-{domain}",
-            "Comment": f"Complens custom domain: {domain}",
-            "Enabled": True,
-            "Aliases": {"Quantity": len(aliases), "Items": aliases},
-            "Origins": {
-                "Quantity": 1,
-                "Items": [
-                    {
-                        "Id": "api-gateway",
-                        "DomainName": api_origin.replace("https://", ""),
-                        "OriginPath": "/public/domain",
-                        "CustomOriginConfig": {
-                            "HTTPPort": 80,
-                            "HTTPSPort": 443,
-                            "OriginProtocolPolicy": "https-only",
-                            "OriginSslProtocols": {"Quantity": 1, "Items": ["TLSv1.2"]},
-                        },
-                    }
-                ],
-            },
-            "DefaultCacheBehavior": default_cache_behavior,
-            "ViewerCertificate": {
-                "ACMCertificateArn": certificate_arn,
-                "SSLSupportMethod": "sni-only",
-                "MinimumProtocolVersion": "TLSv1.2_2021",
-            },
-            "PriceClass": "PriceClass_100",
-            "HttpVersion": "http2and3",
-            "IsIPV6Enabled": True,
-        }
+        def _build_distribution_config(aliases: list[str], caller_suffix: str = "") -> dict:
+            return {
+                "CallerReference": f"complens-{workspace_id}-{domain}{caller_suffix}",
+                "Comment": f"Complens custom domain: {domain}",
+                "Enabled": True,
+                "Aliases": {"Quantity": len(aliases), "Items": aliases},
+                "Origins": {
+                    "Quantity": 1,
+                    "Items": [
+                        {
+                            "Id": "api-gateway",
+                            "DomainName": api_origin.replace("https://", ""),
+                            "OriginPath": "/public/domain",
+                            "CustomOriginConfig": {
+                                "HTTPPort": 80,
+                                "HTTPSPort": 443,
+                                "OriginProtocolPolicy": "https-only",
+                                "OriginSslProtocols": {"Quantity": 1, "Items": ["TLSv1.2"]},
+                            },
+                        }
+                    ],
+                },
+                "DefaultCacheBehavior": default_cache_behavior,
+                "ViewerCertificate": {
+                    "ACMCertificateArn": certificate_arn,
+                    "SSLSupportMethod": "sni-only",
+                    "MinimumProtocolVersion": "TLSv1.2_2021",
+                },
+                "PriceClass": "PriceClass_100",
+                "HttpVersion": "http2and3",
+                "IsIPV6Enabled": True,
+            }
 
-        response = cf.create_distribution(DistributionConfig=distribution_config)
+        # Try both root + wildcard aliases first; fall back to wildcard-only
+        # if the root domain is already claimed by another CloudFront distribution
+        try:
+            distribution_config = _build_distribution_config([domain, f"*.{domain}"])
+            response = cf.create_distribution(DistributionConfig=distribution_config)
+        except cf.exceptions.CNAMEAlreadyExists:
+            logger.info(
+                "Root domain alias already claimed, using wildcard-only",
+                domain=domain,
+            )
+            distribution_config = _build_distribution_config(
+                [f"*.{domain}"], caller_suffix="-wildcard"
+            )
+            response = cf.create_distribution(DistributionConfig=distribution_config)
         distribution = response["Distribution"]
         distribution_id = distribution["Id"]
         distribution_domain = distribution["DomainName"]
