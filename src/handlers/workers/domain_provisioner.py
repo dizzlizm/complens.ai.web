@@ -171,18 +171,49 @@ def create_cloudfront_distribution(
         # Origin: API Gateway public domain endpoint
         api_origin = API_GATEWAY_DOMAIN or f"api.dev.complens.ai"
 
+        # Wildcard aliases so subdomain.domain also routes here
+        aliases = [domain, f"*.{domain}"]
+
+        # Build default cache behavior — with CloudFront Function if available
+        default_cache_behavior = {
+            "TargetOriginId": "api-gateway",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": {
+                "Quantity": 3,
+                "Items": ["GET", "HEAD", "OPTIONS"],
+                "CachedMethods": {"Quantity": 2, "Items": ["GET", "HEAD"]},
+            },
+            "Compress": True,
+            # CachingDisabled policy
+            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            # AllViewerExceptHostHeader policy
+            "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+        }
+
+        # Attach CloudFront Function to rewrite URI to /{host} so the API
+        # Gateway handler receives the full domain (including subdomain)
+        pages_router_arn = os.environ.get("PAGES_ROUTER_FUNCTION_ARN", "")
+        if pages_router_arn:
+            default_cache_behavior["FunctionAssociations"] = {
+                "Quantity": 1,
+                "Items": [{
+                    "EventType": "viewer-request",
+                    "FunctionARN": pages_router_arn,
+                }],
+            }
+
         distribution_config = {
             "CallerReference": f"complens-{workspace_id}-{domain}",
             "Comment": f"Complens custom domain: {domain}",
             "Enabled": True,
-            "Aliases": {"Quantity": 1, "Items": [domain]},
+            "Aliases": {"Quantity": len(aliases), "Items": aliases},
             "Origins": {
                 "Quantity": 1,
                 "Items": [
                     {
                         "Id": "api-gateway",
                         "DomainName": api_origin.replace("https://", ""),
-                        "OriginPath": f"/public/domain/{domain}",
+                        "OriginPath": "/public/domain",
                         "CustomOriginConfig": {
                             "HTTPPort": 80,
                             "HTTPSPort": 443,
@@ -192,20 +223,7 @@ def create_cloudfront_distribution(
                     }
                 ],
             },
-            "DefaultCacheBehavior": {
-                "TargetOriginId": "api-gateway",
-                "ViewerProtocolPolicy": "redirect-to-https",
-                "AllowedMethods": {
-                    "Quantity": 3,
-                    "Items": ["GET", "HEAD", "OPTIONS"],
-                    "CachedMethods": {"Quantity": 2, "Items": ["GET", "HEAD"]},
-                },
-                "Compress": True,
-                # CachingDisabled policy
-                "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
-                # AllViewerExceptHostHeader policy
-                "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
-            },
+            "DefaultCacheBehavior": default_cache_behavior,
             "ViewerCertificate": {
                 "ACMCertificateArn": certificate_arn,
                 "SSLSupportMethod": "sni-only",

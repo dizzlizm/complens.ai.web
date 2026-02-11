@@ -402,6 +402,68 @@ def _auto_set_from_email(workspace_id: str, domain: str) -> None:
         )
 
 
+def _auto_create_site(workspace_id: str, domain: str):
+    """Auto-create a Site for this domain if one doesn't exist.
+
+    Also assigns any orphan pages (pages with no site_id) to the new site.
+
+    Args:
+        workspace_id: Workspace ID.
+        domain: The newly verified domain.
+
+    Returns:
+        The Site (existing or newly created), or None on error.
+    """
+    try:
+        from complens.models.site import Site
+        from complens.repositories.site import SiteRepository
+        from complens.repositories.page import PageRepository
+
+        site_repo = SiteRepository()
+        existing = site_repo.get_by_domain(workspace_id, domain)
+        if existing:
+            return existing
+
+        # Generate display name from domain (e.g., "itsross.com" -> "Itsross")
+        name = domain.split('.')[0].capitalize()
+
+        site = Site(
+            workspace_id=workspace_id,
+            domain_name=domain,
+            name=name,
+        )
+        site_repo.create_site(site)
+        logger.info(
+            "Auto-created site for domain",
+            workspace_id=workspace_id,
+            domain=domain,
+            site_id=site.id,
+        )
+
+        # Assign orphan pages (no site_id) to the new site
+        page_repo = PageRepository()
+        pages, _ = page_repo.list_by_workspace(workspace_id)
+        for page in pages:
+            if not page.site_id:
+                page.site_id = site.id
+                page_repo.update_page(page)
+                logger.info(
+                    "Assigned orphan page to site",
+                    page_id=page.id,
+                    site_id=site.id,
+                )
+
+        return site
+    except Exception:
+        logger.warning(
+            "Failed to auto-create site",
+            workspace_id=workspace_id,
+            domain=domain,
+            exc_info=True,
+        )
+        return None
+
+
 def _get_table():
     """Get DynamoDB table resource."""
     return boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
@@ -497,7 +559,13 @@ def setup_domain_handler(event: dict, workspace_id: str) -> dict:
     # Auto-populate workspace from_email if not set
     _auto_set_from_email(workspace_id, domain)
 
+    # Auto-create a site for this domain if one doesn't exist
+    site = _auto_create_site(workspace_id, domain)
+
     logger.info("Domain setup saved", workspace_id=workspace_id, domain=domain)
+
+    if site:
+        result["site_id"] = site.id
 
     return success(result)
 

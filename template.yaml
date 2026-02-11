@@ -1657,6 +1657,7 @@ Resources:
         Variables:
           API_GATEWAY_DOMAIN: !Sub "api.${DomainName}"
           STAGE: !Ref Stage
+          PAGES_ROUTER_FUNCTION_ARN: !GetAtt PagesDomainRouterFunction.FunctionMetadata.FunctionARN
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
@@ -1668,6 +1669,7 @@ Resources:
             - Effect: Allow
               Action:
                 - cloudfront:GetDistribution
+                - cloudfront:GetFunction
                 - cloudfront:UpdateDistribution
                 - cloudfront:DeleteDistribution
                 - cloudfront:TagResource

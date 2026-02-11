@@ -21,9 +21,9 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-export default function KnowledgeBaseSettings({ workspaceId, siteId }: KnowledgeBaseSettingsProps) {
-  const { data: documents = [], isLoading: loadingDocs } = useKBDocuments(workspaceId || undefined, siteId);
-  const { data: status } = useKBStatus(workspaceId || undefined, siteId);
+export default function KnowledgeBaseSettings({ workspaceId }: KnowledgeBaseSettingsProps) {
+  const { data: documents = [], isLoading: loadingDocs } = useKBDocuments(workspaceId || undefined);
+  const { data: status } = useKBStatus(workspaceId || undefined);
   const createDocument = useCreateKBDocument(workspaceId);
   const confirmUpload = useConfirmKBUpload(workspaceId);
   const deleteDocument = useDeleteKBDocument(workspaceId);

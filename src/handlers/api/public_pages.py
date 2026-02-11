@@ -400,6 +400,9 @@ def get_page_by_subdomain(subdomain: str) -> dict:
 def get_page_by_domain(domain: str) -> dict:
     """Get and render a page by custom domain.
 
+    Supports both root domain (e.g., itsross.com) and subdomain.rootdomain
+    patterns (e.g., findme.itsross.com).
+
     Returns full HTML for the page, suitable for serving directly.
     """
     if not domain:
@@ -408,9 +411,32 @@ def get_page_by_domain(domain: str) -> dict:
     # Normalize domain
     domain = domain.lower().strip()
 
-    # Look up page by domain
+    # 1. Try exact domain match (root domain like "itsross.com")
     repo = PageRepository()
     page = repo.get_by_custom_domain(domain)
+    canonical_domain = domain
+
+    # 2. If no match, try subdomain.rootdomain pattern (e.g., "findme.itsross.com")
+    if not page:
+        parts = domain.split('.', 1)  # ["findme", "itsross.com"]
+        if len(parts) == 2 and '.' in parts[1]:  # Ensure root has at least one dot
+            subdomain_part = parts[0]
+            root_domain = parts[1]
+
+            # Look up page by subdomain via GSI3
+            page = repo.get_by_subdomain(subdomain_part)
+
+            if page and page.site_id:
+                # Verify page's site matches the root domain
+                from complens.repositories.site import SiteRepository
+                site_repo = SiteRepository()
+                site = site_repo.get_by_id(page.workspace_id, page.site_id)
+                if not site or site.domain_name != root_domain:
+                    page = None  # Wrong site — don't serve
+                else:
+                    canonical_domain = domain  # subdomain.rootdomain
+            elif page:
+                page = None  # No site association, can't verify domain ownership
 
     if not page:
         logger.info("Page not found for domain", domain=domain)
@@ -478,7 +504,7 @@ def get_page_by_domain(domain: str) -> dict:
     profile = profile_repo.get_effective_profile(page.workspace_id, page.id, site_id)
     profile_data = profile.model_dump(mode="json") if profile else None
 
-    canonical = f"https://{domain}"
+    canonical = f"https://{canonical_domain}"
     html = render_full_page(
         page_data, ws_url, api_url,
         forms=forms, canonical_url=canonical,

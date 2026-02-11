@@ -185,6 +185,7 @@ def create_domain(workspace_id: str, event: dict) -> dict:
 
         cert_response = acm.request_certificate(
             DomainName=request.domain,
+            SubjectAlternativeNames=[request.domain, f"*.{request.domain}"],
             ValidationMethod="DNS",
             Tags=[
                 {"Key": "Service", "Value": "complens"},

@@ -1,47 +1,20 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSites, useCreateSite, useDeleteSite } from '../lib/hooks/useSites';
+import { useSites, useDeleteSite } from '../lib/hooks/useSites';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import Modal from '../components/ui/Modal';
 import { useToast } from '../components/Toast';
-import { Globe, Plus, Trash2, ArrowRight, Search } from 'lucide-react';
+import { Globe, Trash2, ArrowRight, Search, Settings } from 'lucide-react';
 
 export default function Sites() {
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { data: sites, isLoading, error } = useSites(workspaceId);
-  const createSite = useCreateSite(workspaceId || '');
   const deleteSite = useDeleteSite(workspaceId || '');
   const navigate = useNavigate();
   const toast = useToast();
 
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [domainName, setDomainName] = useState('');
-  const [siteName, setSiteName] = useState('');
-  const [siteDescription, setSiteDescription] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-
-  const handleCreateSite = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!domainName.trim() || !siteName.trim()) return;
-
-    try {
-      const site = await createSite.mutateAsync({
-        domain_name: domainName.toLowerCase().trim(),
-        name: siteName.trim(),
-        description: siteDescription.trim() || undefined,
-      });
-      setShowCreateModal(false);
-      setDomainName('');
-      setSiteName('');
-      setSiteDescription('');
-      toast.success('Site created successfully');
-      navigate(`/sites/${site.id}/pages`);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to create site';
-      toast.error(message);
-    }
-  };
 
   const handleDeleteSite = async (siteId: string) => {
     try {
@@ -51,21 +24,6 @@ export default function Sites() {
     } catch (err) {
       toast.error('Failed to delete site. Please try again.');
     }
-  };
-
-  // Auto-generate name from domain
-  const handleDomainChange = (value: string) => {
-    setDomainName(value);
-    if (!siteName || siteName === domainToName(domainName)) {
-      setSiteName(domainToName(value));
-    }
-  };
-
-  const domainToName = (domain: string) => {
-    if (!domain) return '';
-    // "example.com" -> "Example"
-    const parts = domain.split('.');
-    return parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
   };
 
   const filteredSites = sites?.filter(
@@ -99,13 +57,6 @@ export default function Sites() {
             Organize your pages, workflows, and content by domain.
           </p>
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="btn btn-primary flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          New Site
-        </button>
       </div>
 
       {/* Search */}
@@ -128,13 +79,14 @@ export default function Sites() {
           <Globe className="w-12 h-12 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">No sites yet</h3>
           <p className="text-gray-500 mb-6 max-w-md mx-auto">
-            Create a site to organize your pages, workflows, and knowledge base under a domain.
+            Sites are created automatically when you verify a domain in Settings.
           </p>
           <button
-            onClick={() => setShowCreateModal(true)}
-            className="btn btn-primary"
+            onClick={() => navigate('/settings/domains')}
+            className="btn btn-primary inline-flex items-center gap-2"
           >
-            Create Your First Site
+            <Settings className="w-4 h-4" />
+            Go to Domains & Email
           </button>
         </div>
       )}
@@ -183,72 +135,6 @@ export default function Sites() {
             </div>
           ))}
         </div>
-      )}
-
-      {/* Create Site Modal */}
-      {showCreateModal && (
-        <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create New Site">
-          <form onSubmit={handleCreateSite} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Domain
-              </label>
-              <input
-                type="text"
-                value={domainName}
-                onChange={(e) => handleDomainChange(e.target.value)}
-                placeholder="example.com"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                required
-                autoFocus
-              />
-              <p className="mt-1 text-xs text-gray-400">
-                The internet domain this site represents
-              </p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Display Name
-              </label>
-              <input
-                type="text"
-                value={siteName}
-                onChange={(e) => setSiteName(e.target.value)}
-                placeholder="My Site"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Description <span className="text-gray-400">(optional)</span>
-              </label>
-              <textarea
-                value={siteDescription}
-                onChange={(e) => setSiteDescription(e.target.value)}
-                placeholder="What is this site for?"
-                rows={2}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
-            <div className="flex justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowCreateModal(false)}
-                className="btn btn-secondary"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={createSite.isPending}
-                className="btn btn-primary"
-              >
-                {createSite.isPending ? 'Creating...' : 'Create Site'}
-              </button>
-            </div>
-          </form>
-        </Modal>
       )}
 
       {/* Delete Confirmation Modal */}

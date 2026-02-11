@@ -56,11 +56,11 @@ export default function SiteAISettings() {
               Knowledge Base
             </h3>
             <p className="text-sm text-gray-500 mt-1">
-              Upload documents to give your site's AI chat widget relevant context about your business.
-              Documents are shared across all pages in this site.
+              Upload documents to give your AI chat widget relevant context about your business.
+              Documents are shared across your entire workspace.
             </p>
           </div>
-          <KnowledgeBaseSettings workspaceId={workspaceId} siteId={siteId} />
+          <KnowledgeBaseSettings workspaceId={workspaceId} />
         </div>
       )}
 
