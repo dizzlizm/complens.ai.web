@@ -967,6 +967,21 @@ function WarmupDomainCard({
                     </button>
                   </div>
 
+                  {/* MX warning */}
+                  {!healthData.mx_valid && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-sm font-medium text-red-800">No MX records found</p>
+                          <p className="text-xs text-red-600 mt-0.5">
+                            This domain cannot receive replies. Bounced replies hurt your sender reputation and can trigger blacklisting. Add MX records pointing to your mail provider.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Authentication</h5>
                     <div className="space-y-1.5">
@@ -987,6 +1002,21 @@ function WarmupDomainCard({
                   </div>
 
                   <div>
+                    <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Infrastructure</h5>
+                    <div className="flex items-center justify-between text-sm">
+                      <div className="flex items-center gap-2">
+                        {healthData.mx_valid ? <Check className="w-3.5 h-3.5 text-green-600" /> : <X className="w-3.5 h-3.5 text-red-500" />}
+                        <span className="text-gray-700">
+                          {healthData.mx_valid
+                            ? `MX records (${healthData.mx_hosts?.join(', ') || 'found'})`
+                            : 'MX records missing — replies will bounce'}
+                        </span>
+                      </div>
+                      <span className="text-xs text-gray-500">+{healthData.score_breakdown?.mx || 0}/10</span>
+                    </div>
+                  </div>
+
+                  <div>
                     <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Blacklist</h5>
                     <div className="flex items-center justify-between text-sm">
                       <div className="flex items-center gap-2">
@@ -995,7 +1025,7 @@ function WarmupDomainCard({
                           {healthData.blacklisted ? `Listed on ${healthData.blacklist_listings.length} blacklist(s)` : 'Not blacklisted'}
                         </span>
                       </div>
-                      <span className="text-xs text-gray-500">+{healthData.score_breakdown?.blacklist || 0}/20</span>
+                      <span className="text-xs text-gray-500">+{healthData.score_breakdown?.blacklist || 0}/10</span>
                     </div>
                     {healthData.blacklisted && healthData.blacklist_listings.length > 0 && (
                       <div className="mt-1 ml-6 text-xs text-red-600">{healthData.blacklist_listings.join(', ')}</div>

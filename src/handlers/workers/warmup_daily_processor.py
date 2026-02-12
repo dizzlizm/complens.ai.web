@@ -105,6 +105,7 @@ def _refresh_domain_health(
                 dkim_enabled=dkim_enabled,
                 dmarc_valid=dns_result["dmarc_valid"],
                 dmarc_policy=dns_result["dmarc_policy"],
+                mx_valid=dns_result["mx_valid"],
                 blacklist_count=len(dns_result["blacklist_listings"]),
                 bounce_rate=warmup.bounce_rate,
                 complaint_rate=warmup.complaint_rate,

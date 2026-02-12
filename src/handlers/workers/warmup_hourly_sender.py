@@ -41,6 +41,15 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             logger.debug("Skipping domain with empty seed list", domain=warmup.domain)
             continue
 
+        # Only send from SES-verified domains
+        auth = email_service.check_domain_auth(warmup.domain)
+        if not auth.get("verified"):
+            logger.warning(
+                "Skipping unverified domain",
+                domain=warmup.domain,
+            )
+            continue
+
         now = datetime.now(timezone.utc)
         current_hour = now.hour
 

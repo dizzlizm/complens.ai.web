@@ -213,6 +213,7 @@ class DomainHealthService:
         dkim_enabled: bool = False,
         dmarc_valid: bool = False,
         dmarc_policy: str | None = None,
+        mx_valid: bool = False,
         blacklist_count: int = 0,
         bounce_rate: float = 0.0,
         complaint_rate: float = 0.0,
@@ -225,6 +226,7 @@ class DomainHealthService:
             dkim_enabled: Whether DKIM is configured in SES.
             dmarc_valid: Whether DMARC record exists and is valid.
             dmarc_policy: DMARC policy value (none, quarantine, reject).
+            mx_valid: Whether MX records exist for the domain.
             blacklist_count: Number of blacklists the domain appears on.
             bounce_rate: Bounce rate percentage.
             complaint_rate: Complaint rate percentage.
@@ -248,8 +250,11 @@ class DomainHealthService:
         enforcing = dmarc_policy in ("quarantine", "reject") if dmarc_policy else False
         breakdown["dmarc_enforce"] = 5 if enforcing else 0
 
-        # Blacklist (20 points, deduct 10 per listing, min 0)
-        bl_score = max(0, 20 - (blacklist_count * 10))
+        # MX records (10 points) — required for replies to land
+        breakdown["mx"] = 10 if mx_valid else 0
+
+        # Blacklist (10 points, deduct 10 per listing, min 0)
+        bl_score = max(0, 10 - (blacklist_count * 10))
         breakdown["blacklist"] = bl_score
 
         # Bounce rate (15 points)
