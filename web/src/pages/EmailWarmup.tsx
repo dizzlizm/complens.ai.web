@@ -1,17 +1,18 @@
 import { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
-  Loader2, Check, AlertCircle, Globe, Plus, ChevronRight, ChevronDown, Mail,
+  Loader2, Check, AlertCircle, Globe, Plus, ChevronRight, ChevronDown, Mail, Send,
   Pause, Play, Trash2, AlertTriangle, TrendingUp, X, Eye, RefreshCw, SlidersHorizontal, Shield,
-  BookOpen,
+  BookOpen, Users, Search,
 } from 'lucide-react';
 import {
   useCurrentWorkspace, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup,
-  useCancelWarmup, getWarmupStatusInfo, useUpdateSeedList,
+  useCancelWarmup, getWarmupStatusInfo, useUpdateSeedList, useSendWarmupTestEmail,
   useUpdateWarmupSettings, useWarmupLog, useDomainHealth, getHealthStatusInfo,
-  useListDomains,
+  useListDomains, useVerifyFromEmail, useConfirmFromEmail,
 } from '../lib/hooks';
 import type { WarmupDomain } from '../lib/hooks/useEmailWarmup';
+import { useContacts } from '../lib/hooks/useContacts';
 
 // Email provider detection for seed list coverage indicator
 const EMAIL_PROVIDERS: { name: string; domains: string[]; color: string }[] = [
@@ -69,6 +70,156 @@ function buildHourOptions(timezone: string): { value: number; label: string }[] 
   }));
 }
 
+function ContactImportPicker({
+  workspaceId,
+  existingEmails,
+  maxEmails,
+  onImport,
+  onClose,
+}: {
+  workspaceId: string;
+  existingEmails: string[];
+  maxEmails: number;
+  onImport: (emails: string[]) => void;
+  onClose: () => void;
+}) {
+  const { data, isLoading } = useContacts(workspaceId, { limit: 100 });
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const existingSet = new Set(existingEmails.map(e => e.toLowerCase()));
+  const contacts = (data?.contacts || []).filter(c => c.email && !existingSet.has(c.email.toLowerCase()));
+  const filtered = contacts.filter(c => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      c.email?.toLowerCase().includes(q) ||
+      c.first_name?.toLowerCase().includes(q) ||
+      c.last_name?.toLowerCase().includes(q)
+    );
+  });
+
+  const remaining = maxEmails - existingEmails.length;
+  const allFilteredSelected = filtered.length > 0 && filtered.every(c => selected.has(c.email!));
+
+  const toggleAll = () => {
+    if (allFilteredSelected) {
+      const filteredEmails = new Set(filtered.map(c => c.email!));
+      setSelected(new Set([...selected].filter(e => !filteredEmails.has(e))));
+    } else {
+      const next = new Set(selected);
+      for (const c of filtered) {
+        if (next.size < remaining) next.add(c.email!);
+      }
+      setSelected(next);
+    }
+  };
+
+  const toggle = (email: string) => {
+    const next = new Set(selected);
+    if (next.has(email)) {
+      next.delete(email);
+    } else if (next.size < remaining) {
+      next.add(email);
+    }
+    setSelected(next);
+  };
+
+  return (
+    <div className="mt-2 border border-gray-200 rounded-lg bg-white shadow-sm">
+      <div className="p-3 border-b border-gray-100 flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-700">Import from Contacts</span>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div className="p-3 border-b border-gray-100">
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            className="input text-sm pl-8"
+            placeholder="Search contacts..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-6">
+          <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+          <span className="text-sm text-gray-500 ml-2">Loading contacts...</span>
+        </div>
+      ) : contacts.length === 0 ? (
+        <div className="p-4 text-center text-sm text-gray-500">
+          No contacts with email addresses found, or all are already in the seed list.
+        </div>
+      ) : (
+        <>
+          <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
+            <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allFilteredSelected}
+                onChange={toggleAll}
+                className="rounded border-gray-300"
+              />
+              Select all{search ? ' (filtered)' : ''}
+            </label>
+            <span className="text-xs text-gray-400">
+              {selected.size} selected ({Math.max(remaining - selected.size, 0)} remaining capacity)
+            </span>
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            {filtered.map((c) => (
+              <label
+                key={c.id}
+                className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(c.email!)}
+                  onChange={() => toggle(c.email!)}
+                  disabled={!selected.has(c.email!) && selected.size >= remaining}
+                  className="rounded border-gray-300"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-gray-800 truncate">{c.email}</p>
+                  {(c.first_name || c.last_name) && (
+                    <p className="text-xs text-gray-500 truncate">
+                      {[c.first_name, c.last_name].filter(Boolean).join(' ')}
+                    </p>
+                  )}
+                </div>
+              </label>
+            ))}
+            {filtered.length === 0 && search && (
+              <p className="p-3 text-xs text-gray-500 text-center">No contacts match "{search}"</p>
+            )}
+          </div>
+        </>
+      )}
+
+      <div className="p-3 border-t border-gray-100 flex items-center justify-end gap-2">
+        <button onClick={onClose} className="btn btn-secondary btn-sm">Cancel</button>
+        <button
+          onClick={() => {
+            onImport([...selected]);
+            onClose();
+          }}
+          disabled={selected.size === 0}
+          className="btn btn-primary btn-sm inline-flex items-center gap-1"
+        >
+          <Users className="w-3.5 h-3.5" />
+          Import {selected.size > 0 ? `(${selected.size})` : ''}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function EmailWarmup() {
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { siteId } = useParams<{ siteId: string }>();
@@ -86,7 +237,7 @@ export default function EmailWarmup() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Email Warmup</h1>
         <p className="mt-1 text-gray-500">
-          Gradually ramp up sending volume on new domains to build reputation and avoid spam filters
+          Build sending reputation by gradually ramping up email volume. Warmup emails are AI-generated and sent automatically to your seed list.
         </p>
       </div>
 
@@ -120,6 +271,7 @@ function EmailWarmupSection({ workspaceId, siteId }: {
   const [initSeedInput, setInitSeedInput] = useState('');
   const [initSeedList, setInitSeedList] = useState<string[]>([]);
   const [initAutoWarmup, setInitAutoWarmup] = useState(false);
+  const [showInitContactPicker, setShowInitContactPicker] = useState(false);
   const [startedSuccess, setStartedSuccess] = useState(false);
 
   const warmups = warmupsData?.items || [];
@@ -185,7 +337,7 @@ function EmailWarmupSection({ workspaceId, siteId }: {
         )}
       </div>
       <p className="text-sm text-gray-500 mb-4">
-        Gradually ramp up sending volume on new domains to build reputation and avoid spam filters.{' '}
+        Build sending reputation by gradually ramping up email volume on new domains.{' '}
         <Link to="/settings" className="text-primary-600 hover:text-primary-700">
           Set up sending domains
         </Link>{' '}
@@ -254,8 +406,7 @@ function EmailWarmupSection({ workspaceId, siteId }: {
               )}
             </div>
             <p className="text-xs text-gray-500 mb-2">
-              Add email addresses you control (team inboxes, aliases) to receive warmup emails.
-              Paste multiple emails separated by commas, spaces, or newlines.
+              Add email addresses you own across different providers (Gmail, Outlook, Yahoo). Open and reply to warmup emails to build positive engagement signals.
             </p>
             <div className="flex gap-2 mb-2">
               <input
@@ -299,7 +450,24 @@ function EmailWarmupSection({ workspaceId, siteId }: {
               >
                 Add
               </button>
+              <button
+                onClick={() => setShowInitContactPicker(!showInitContactPicker)}
+                disabled={initSeedList.length >= 50}
+                className="btn btn-secondary btn-sm inline-flex items-center gap-1"
+              >
+                <Users className="w-3.5 h-3.5" />
+                Import from Contacts
+              </button>
             </div>
+            {showInitContactPicker && workspaceId && (
+              <ContactImportPicker
+                workspaceId={workspaceId}
+                existingEmails={initSeedList}
+                maxEmails={50}
+                onImport={(emails) => setInitSeedList([...initSeedList, ...emails].slice(0, 50))}
+                onClose={() => setShowInitContactPicker(false)}
+              />
+            )}
             {initSeedList.length > 0 && (
               <>
                 {/* Provider coverage */}
@@ -328,7 +496,7 @@ function EmailWarmupSection({ workspaceId, siteId }: {
                       onChange={(e) => setInitAutoWarmup(e.target.checked)}
                       className="rounded border-gray-300"
                     />
-                    Enable auto-warmup (send AI emails hourly)
+                    Enable auto-warmup (AI generates and sends emails on schedule)
                   </label>
                   <button
                     onClick={() => setInitSeedList([])}
@@ -364,7 +532,7 @@ function EmailWarmupSection({ workspaceId, siteId }: {
             </p>
           )}
           <p className="text-xs text-gray-500 mt-2">
-            Emails from this domain will be gradually ramped up over 6 weeks (10 &rarr; 10,000/day)
+            Emails from this domain will be gradually ramped up over 6 weeks. Default schedule starts at 10/day, customizable in Settings.
           </p>
         </div>
       )}
@@ -455,6 +623,7 @@ function WarmupDomainCard({
   const [activePanel, setActivePanel] = useState<'health' | 'seedlist' | 'log' | 'settings' | 'content' | null>(null);
   const [seedInput, setSeedInput] = useState('');
   const [editSeedList, setEditSeedList] = useState<string[]>(warmup.seed_list || []);
+  const [showContactPicker, setShowContactPicker] = useState(false);
   const [editAutoWarmup, setEditAutoWarmup] = useState(warmup.auto_warmup_enabled);
   const [editFromName, setEditFromName] = useState(warmup.from_name || '');
   const [seedListSaved, setSeedListSaved] = useState(false);
@@ -471,6 +640,13 @@ function WarmupDomainCard({
 
   const updateSeedList = useUpdateSeedList(workspaceId);
   const updateSettings = useUpdateWarmupSettings(workspaceId);
+  const sendTestEmail = useSendWarmupTestEmail(workspaceId);
+  const verifyFromEmail = useVerifyFromEmail(workspaceId);
+  const confirmFromEmail = useConfirmFromEmail(workspaceId);
+  const [testEmailSent, setTestEmailSent] = useState(false);
+  const [editFromEmailLocal, setEditFromEmailLocal] = useState(warmup.from_email_local || '');
+  const [verificationSent, setVerificationSent] = useState(false);
+  const [fromEmailVerified, setFromEmailVerified] = useState(warmup.from_email_verified);
   const { data: healthData, isLoading: healthLoading, refetch: refetchHealth } = useDomainHealth(
     workspaceId,
     warmup.domain,
@@ -492,6 +668,7 @@ function WarmupDomainCard({
         seed_list: editSeedList,
         auto_warmup_enabled: editAutoWarmup,
         from_name: editFromName || undefined,
+        from_email_local: editFromEmailLocal || undefined,
       });
       setSeedListSaved(true);
       setTimeout(() => setSeedListSaved(false), 2000);
@@ -857,8 +1034,7 @@ function WarmupDomainCard({
                 <span className="text-xs text-gray-400">{editSeedList.length}/50 emails</span>
               </div>
               <p className="text-xs text-gray-500 mb-3">
-                Add email addresses you control (team inboxes, aliases) that receive your warmup emails.
-                Open and reply to these to signal positive engagement. Use addresses across different providers (Gmail, Outlook, Yahoo) for better coverage.
+                Add email addresses you own across different providers (Gmail, Outlook, Yahoo). Open and reply to warmup emails to build positive engagement signals.
               </p>
 
               <div className="flex gap-2 mb-2">
@@ -903,7 +1079,24 @@ function WarmupDomainCard({
                 >
                   Add
                 </button>
+                <button
+                  onClick={() => setShowContactPicker(!showContactPicker)}
+                  disabled={editSeedList.length >= 50}
+                  className="btn btn-secondary btn-sm inline-flex items-center gap-1"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  Import from Contacts
+                </button>
               </div>
+              {showContactPicker && (
+                <ContactImportPicker
+                  workspaceId={workspaceId}
+                  existingEmails={editSeedList}
+                  maxEmails={50}
+                  onImport={(emails) => setEditSeedList([...editSeedList, ...emails].slice(0, 50))}
+                  onClose={() => setShowContactPicker(false)}
+                />
+              )}
 
               {editSeedList.length > 0 && (
                 <>
@@ -955,7 +1148,7 @@ function WarmupDomainCard({
               <div className="flex items-center justify-between py-2 border-t border-gray-200">
                 <div>
                   <p className="text-sm font-medium text-gray-700">Auto-warmup</p>
-                  <p className="text-xs text-gray-500">Send AI-generated warmup emails hourly</p>
+                  <p className="text-xs text-gray-500">AI generates and sends warmup emails on schedule</p>
                 </div>
                 <button
                   onClick={() => setEditAutoWarmup(!editAutoWarmup)}
@@ -979,6 +1172,133 @@ function WarmupDomainCard({
                   onChange={(e) => setEditFromName(e.target.value)}
                 />
               </div>
+
+              {/* From Email Address */}
+              <div className="py-2 border-t border-gray-200">
+                <label className="block text-xs font-medium text-gray-600 mb-1">From Email Address</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    className="input text-sm flex-1"
+                    placeholder="noreply"
+                    value={editFromEmailLocal}
+                    onChange={(e) => {
+                      setEditFromEmailLocal(e.target.value.replace(/[^a-zA-Z0-9._%+-]/g, ''));
+                      setFromEmailVerified(false);
+                      setVerificationSent(false);
+                    }}
+                  />
+                  <span className="text-sm text-gray-500 shrink-0">@{warmup.domain}</span>
+                </div>
+                {editFromEmailLocal && (
+                  <div className="mt-2">
+                    {fromEmailVerified && editFromEmailLocal === warmup.from_email_local ? (
+                      <span className="text-xs text-green-600 flex items-center gap-1">
+                        <Check className="w-3 h-3" /> Verified
+                      </span>
+                    ) : verificationSent ? (
+                      <div className="space-y-2">
+                        <p className="text-xs text-blue-600">
+                          Verification email sent to <strong>{editFromEmailLocal}@{warmup.domain}</strong>.
+                          Check your inbox and click the link from AWS, then click below.
+                        </p>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const result = await confirmFromEmail.mutateAsync({ domain: warmup.domain });
+                              if ('verified' in result && !result.verified) {
+                                // Not yet verified — keep waiting
+                              } else {
+                                setFromEmailVerified(true);
+                                setVerificationSent(false);
+                              }
+                            } catch {
+                              // Error handled by mutation state
+                            }
+                          }}
+                          disabled={confirmFromEmail.isPending}
+                          className="btn btn-primary btn-sm text-xs inline-flex items-center gap-1"
+                        >
+                          {confirmFromEmail.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                          Check Verification
+                        </button>
+                        {confirmFromEmail.isError && (
+                          <p className="text-xs text-red-600">
+                            {(confirmFromEmail.error as any)?.response?.data?.error || 'Failed to check status'}
+                          </p>
+                        )}
+                        {confirmFromEmail.isSuccess && !fromEmailVerified && (
+                          <p className="text-xs text-amber-600">
+                            Not verified yet. Click the link in the email from AWS, then try again.
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        onClick={async () => {
+                          try {
+                            await verifyFromEmail.mutateAsync({ domain: warmup.domain, from_email_local: editFromEmailLocal });
+                            setVerificationSent(true);
+                          } catch {
+                            // Error handled by mutation state
+                          }
+                        }}
+                        disabled={verifyFromEmail.isPending}
+                        className="btn btn-secondary btn-sm text-xs inline-flex items-center gap-1"
+                      >
+                        {verifyFromEmail.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mail className="w-3 h-3" />}
+                        Verify Address
+                      </button>
+                    )}
+                    {verifyFromEmail.isError && !verificationSent && (
+                      <p className="text-xs text-red-600 mt-1">
+                        {(verifyFromEmail.error as any)?.response?.data?.error || 'Failed to send verification'}
+                      </p>
+                    )}
+                  </div>
+                )}
+                <p className="text-xs text-gray-400 mt-1">
+                  {editFromEmailLocal ? `Warmup emails will come from ${editFromEmailLocal}@${warmup.domain}` : `Default: noreply@${warmup.domain}`}
+                </p>
+              </div>
+
+              {/* Send Test Email */}
+              {editSeedList.length > 0 && (
+                <div className="flex items-center justify-between py-2 border-t border-gray-200">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Send Test Email</p>
+                    <p className="text-xs text-gray-500">
+                      Send an AI-generated warmup email to {editSeedList[0]}
+                    </p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await sendTestEmail.mutateAsync({ domain: warmup.domain, recipient: editSeedList[0] });
+                        setTestEmailSent(true);
+                        setTimeout(() => setTestEmailSent(false), 3000);
+                      } catch {
+                        // Error handled by mutation state
+                      }
+                    }}
+                    disabled={sendTestEmail.isPending}
+                    className="btn btn-secondary btn-sm inline-flex items-center gap-1"
+                  >
+                    {sendTestEmail.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                    Send Test
+                  </button>
+                </div>
+              )}
+              {testEmailSent && (
+                <p className="text-xs text-green-600 flex items-center gap-1">
+                  <Check className="w-3 h-3" /> Test email sent! Check your inbox.
+                </p>
+              )}
+              {sendTestEmail.isError && (
+                <p className="text-xs text-red-600 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {(sendTestEmail.error as any)?.response?.data?.error || 'Failed to send test email'}
+                </p>
+              )}
 
               <div className="flex items-center gap-2 mt-3">
                 <button
@@ -1102,8 +1422,7 @@ function WarmupDomainCard({
                 <h4 className="text-sm font-medium text-gray-700">Content Library</h4>
               </div>
               <p className="text-sm text-gray-600 mb-3">
-                Manage your knowledge base documents in the site-level AI & Knowledge Base settings.
-                Warmup emails will reference this content to sound more authentic.
+                Warmup emails reference your knowledge base content to sound authentic. Manage documents in your site's AI & Knowledge Base settings.
               </p>
               <Link
                 to={siteId ? `/sites/${siteId}/ai` : '/sites'}
@@ -1131,7 +1450,8 @@ function WarmupDomainCard({
                       <div className="min-w-0 flex-1">
                         <p className="font-medium text-gray-800 truncate">{entry.subject}</p>
                         <p className="text-gray-500">
-                          To: {entry.recipient} &middot; {entry.content_type}
+                          To: {entry.recipient}
+                          {entry.from_email && <> &middot; From: {entry.from_email}</>}
                           {entry.sent_at && <> &middot; {new Date(entry.sent_at).toLocaleString()}</>}
                         </p>
                       </div>
