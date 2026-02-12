@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Plus, Mail, MessageSquare, Tag, Clock, Sparkles, GitBranch, Webhook, Filter, Target, PlayCircle } from 'lucide-react';
+import { Plus, Mail, MessageSquare, Tag, Clock, Sparkles, GitBranch, Webhook, Filter, Target, PlayCircle, Loader2 } from 'lucide-react';
+import { useSuggestNextStep, type WorkflowStepSuggestion } from '../../lib/hooks/useAI';
 
 interface QuickNodeOption {
   type: string;
@@ -36,11 +37,26 @@ interface AddNodeButtonProps {
 
 export default function AddNodeButton({
   sourceNodeId,
+  workspaceId,
+  nodes,
+  edges,
   onAddNode,
   style,
 }: AddNodeButtonProps) {
   const [showPopover, setShowPopover] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<WorkflowStepSuggestion[]>([]);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const suggestNextStep = useSuggestNextStep(workspaceId);
+
+  // Fetch AI suggestions when popover opens
+  useEffect(() => {
+    if (!showPopover || !workspaceId) return;
+    setAiSuggestions([]);
+    suggestNextStep
+      .mutateAsync({ nodes, edges, source_node_id: sourceNodeId })
+      .then((suggestions) => setAiSuggestions(suggestions))
+      .catch(() => {/* graceful fallback: just show quickNodes */});
+  }, [showPopover]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close popover on outside click or Escape
   useEffect(() => {
@@ -98,12 +114,52 @@ export default function AddNodeButton({
       {showPopover && (
         <div
           ref={popoverRef}
-          className="absolute top-14 z-50 w-56 bg-white rounded-xl shadow-xl border border-gray-200 overflow-hidden"
+          className="absolute top-14 z-50 w-64 bg-white rounded-xl shadow-xl border border-gray-200 overflow-hidden"
         >
-          <div className="px-3 py-2 border-b border-gray-100">
-            <span className="text-xs font-medium text-gray-500">Add a step</span>
+          {/* AI Suggestions Section */}
+          <div className="px-3 py-2 border-b border-gray-100 bg-purple-50/50">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-3 h-3 text-purple-500" />
+              <span className="text-xs font-medium text-purple-700">AI Suggested</span>
+            </div>
           </div>
-          <div className="max-h-72 overflow-y-auto divide-y divide-gray-50">
+          <div className="border-b border-gray-100">
+            {suggestNextStep.isPending ? (
+              <div className="flex items-center justify-center gap-2 py-3 text-purple-500">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span className="text-xs">Thinking...</span>
+              </div>
+            ) : aiSuggestions.length > 0 ? (
+              aiSuggestions.map((suggestion, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    setShowPopover(false);
+                    onAddNode(suggestion, sourceNodeId);
+                  }}
+                  className="w-full px-3 py-2 text-left hover:bg-purple-50 transition-colors flex items-center gap-2.5"
+                >
+                  <div className="p-1 rounded bg-purple-100 shrink-0">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-sm font-medium text-gray-900 block truncate">{suggestion.label}</span>
+                    {suggestion.description && (
+                      <span className="text-xs text-gray-500 block truncate">{suggestion.description}</span>
+                    )}
+                  </div>
+                </button>
+              ))
+            ) : (
+              <div className="py-2.5 px-3 text-xs text-gray-400 text-center">No suggestions</div>
+            )}
+          </div>
+
+          {/* Quick Nodes */}
+          <div className="px-3 py-2 border-b border-gray-100">
+            <span className="text-xs font-medium text-gray-500">All steps</span>
+          </div>
+          <div className="max-h-56 overflow-y-auto divide-y divide-gray-50">
             {quickNodes.map((node) => (
               <button
                 key={node.nodeType}

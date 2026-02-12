@@ -24,6 +24,8 @@ import Sites from './pages/Sites';
 import Pages from './pages/Pages';
 import PageEditor from './pages/PageEditor';
 // Forms removed - now managed inside Page Editor
+import Analytics from './pages/Analytics';
+import Conversations from './pages/Conversations';
 import Settings from './pages/Settings';
 import EmailWarmup from './pages/EmailWarmup';
 import SiteAISettings from './pages/SiteAISettings';
@@ -35,6 +37,7 @@ import SiteLayout from './layouts/SiteLayout';
 
 // Admin pages
 import {
+  AdminDashboard,
   AdminWorkspaces,
   AdminWorkspaceDetail,
   AdminUsers,
@@ -76,6 +79,8 @@ function App() {
           >
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/analytics" element={<Analytics />} />
+            <Route path="/inbox" element={<Conversations />} />
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/contacts/:id" element={<ContactDetail />} />
             <Route path="/deals" element={<DealPipeline />} />
@@ -112,7 +117,7 @@ function App() {
               </AdminProtectedRoute>
             }
           >
-            <Route path="/admin" element={<Navigate to="/admin/workspaces" replace />} />
+            <Route path="/admin" element={<AdminDashboard />} />
             <Route path="/admin/workspaces" element={<AdminWorkspaces />} />
             <Route path="/admin/workspaces/:id" element={<AdminWorkspaceDetail />} />
             <Route path="/admin/users" element={<AdminUsers />} />

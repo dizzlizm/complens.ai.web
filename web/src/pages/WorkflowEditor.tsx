@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Play, Loader2, Sparkles, X } from 'lucide-react';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
+import { ArrowLeft, Save, Play, Loader2, Sparkles, X, LayoutTemplate, ChevronDown, ChevronRight } from 'lucide-react';
 import { type Node, type Edge } from '@xyflow/react';
 import WorkflowCanvas, { type WorkflowCanvasRef } from '../components/workflow/WorkflowCanvas';
 import NodeToolbar from '../components/workflow/NodeToolbar';
@@ -19,17 +19,21 @@ import {
   type CreateWorkflowInput,
 } from '../lib/hooks';
 import { useGenerateWorkflow, useGeneratePageWorkflow } from '../lib/hooks/useAI';
+import { useCreateTemplate } from '../lib/hooks/useWorkflowTemplates';
+import { useWorkflowEvents, type WorkflowEvent } from '../lib/hooks/useWorkflowEvents';
 import api from '../lib/api';
 import { useToast } from '../components/Toast';
 
 export default function WorkflowEditor() {
   const { id, siteId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const isNew = id === 'new';
   const canvasRef = useRef<WorkflowCanvasRef>(null);
   const toast = useToast();
   const basePath = siteId ? `/sites/${siteId}` : '';
+  const templateFromState = (location.state as { template?: Record<string, unknown> })?.template;
 
   // Get pageId from query params (for page-level workflows)
   const pageId = searchParams.get('pageId') || undefined;
@@ -57,6 +61,73 @@ export default function WorkflowEditor() {
 
   const generatePageWorkflow = useGeneratePageWorkflow(workspaceId || '');
   const createWorkspace = useCreateWorkspace();
+
+  // Save as template state
+  const createTemplate = useCreateTemplate(workspaceId || '');
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateDescription, setTemplateDescription] = useState('');
+
+  // Execution log state
+  const [executionEvents, setExecutionEvents] = useState<WorkflowEvent[]>([]);
+  // Track which nodes are currently executing (for potential future canvas highlighting)
+  const [executingNodeIds, setExecutingNodeIds] = useState<Set<string>>(new Set());
+  void executingNodeIds; // Used by event callbacks below
+  const [showExecutionLog, setShowExecutionLog] = useState(false);
+
+  // Real-time workflow events (Part 4)
+  useWorkflowEvents({
+    workspaceId: workspaceId || '',
+    enabled: !!workspaceId && !isNew,
+    autoInvalidate: true,
+    onWorkflowStarted: useCallback((event: WorkflowEvent) => {
+      if (event.workflow_id === id) {
+        setExecutionEvents([event]);
+        setExecutingNodeIds(new Set());
+        setShowExecutionLog(true);
+      }
+    }, [id]),
+    onWorkflowCompleted: useCallback((event: WorkflowEvent) => {
+      if (event.workflow_id === id) {
+        setExecutionEvents((prev) => [...prev, event]);
+        setExecutingNodeIds(new Set());
+        toast.success('Workflow execution completed!');
+      }
+    }, [id, toast]),
+    onWorkflowFailed: useCallback((event: WorkflowEvent) => {
+      if (event.workflow_id === id) {
+        setExecutionEvents((prev) => [...prev, event]);
+        setExecutingNodeIds(new Set());
+        toast.error(`Workflow failed: ${event.error || 'Unknown error'}`);
+      }
+    }, [id, toast]),
+    onNodeExecuting: useCallback((event: WorkflowEvent) => {
+      if (event.workflow_id === id && event.node_id) {
+        setExecutionEvents((prev) => [...prev, event]);
+        setExecutingNodeIds((prev) => new Set(prev).add(event.node_id!));
+      }
+    }, [id]),
+    onNodeCompleted: useCallback((event: WorkflowEvent) => {
+      if (event.workflow_id === id && event.node_id) {
+        setExecutionEvents((prev) => [...prev, event]);
+        setExecutingNodeIds((prev) => {
+          const next = new Set(prev);
+          next.delete(event.node_id!);
+          return next;
+        });
+      }
+    }, [id]),
+    onNodeFailed: useCallback((event: WorkflowEvent) => {
+      if (event.workflow_id === id && event.node_id) {
+        setExecutionEvents((prev) => [...prev, event]);
+        setExecutingNodeIds((prev) => {
+          const next = new Set(prev);
+          next.delete(event.node_id!);
+          return next;
+        });
+      }
+    }, [id]),
+  });
 
   // Test modal state
   const [showTestModal, setShowTestModal] = useState(false);
@@ -112,6 +183,39 @@ export default function WorkflowEditor() {
       }
     }
   }, [workflow]);
+
+  // Load template when navigating from template picker
+  useEffect(() => {
+    if (!templateFromState || !isNew || !canvasRef.current) return;
+    const tmpl = templateFromState as { name?: string; nodes?: Array<Record<string, unknown>>; edges?: Array<Record<string, unknown>> };
+    if (!tmpl.nodes) return;
+
+    const rfNodes: Node[] = tmpl.nodes.map((n: Record<string, unknown>) => {
+      const data = n.data as Record<string, unknown> | undefined;
+      const nodeType = (data?.nodeType as string) || (n.type as string) || 'action';
+      let rfType = 'action';
+      if (nodeType.startsWith('trigger_')) rfType = 'trigger';
+      else if (nodeType.startsWith('logic_')) rfType = 'logic';
+      else if (nodeType.startsWith('ai_')) rfType = 'ai';
+      return {
+        id: n.id as string,
+        type: rfType,
+        position: n.position as { x: number; y: number },
+        data: { ...data, nodeType },
+      };
+    });
+    const rfEdges: Edge[] = (tmpl.edges || []).map((e: Record<string, unknown>) => ({
+      id: e.id as string,
+      source: e.source as string,
+      target: e.target as string,
+      animated: true,
+    }));
+
+    canvasRef.current.setNodes(rfNodes);
+    canvasRef.current.setEdges(rfEdges);
+    if (tmpl.name) setName(tmpl.name);
+    setHasChanges(true);
+  }, [templateFromState, isNew]);
 
   // Get selected node from canvas (avoids state duplication)
   const selectedNode = selectedNodeId && canvasRef.current
@@ -435,6 +539,19 @@ export default function WorkflowEditor() {
               <span>{generatePageWorkflow.isPending ? 'Generating...' : 'Auto-Generate from Page'}</span>
             </button>
           )}
+          {!isNew && (
+            <button
+              onClick={() => {
+                setTemplateName(name);
+                setTemplateDescription('');
+                setShowSaveTemplateModal(true);
+              }}
+              className="btn btn-secondary inline-flex items-center gap-2 text-sm"
+            >
+              <LayoutTemplate className="w-4 h-4" />
+              <span className="hidden sm:inline">Save as Template</span>
+            </button>
+          )}
           <button
             onClick={() => setShowAIModal(true)}
             disabled={generateWorkflow.isPending}
@@ -559,6 +676,120 @@ export default function WorkflowEditor() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save as Template Modal */}
+      {showSaveTemplateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div className="flex items-center gap-2">
+                <LayoutTemplate className="w-5 h-5 text-indigo-600" />
+                <h3 className="font-semibold text-gray-900">Save as Template</h3>
+              </div>
+              <button
+                onClick={() => setShowSaveTemplateModal(false)}
+                className="p-1 text-gray-400 hover:text-gray-600 rounded"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Template Name</label>
+                <input
+                  type="text"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  placeholder="My Workflow Template"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description (optional)</label>
+                <textarea
+                  value={templateDescription}
+                  onChange={(e) => setTemplateDescription(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+                  rows={3}
+                  placeholder="What does this workflow template do?"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t bg-gray-50 rounded-b-xl">
+              <button
+                onClick={() => setShowSaveTemplateModal(false)}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!templateName.trim()) return;
+                  try {
+                    await createTemplate.mutateAsync({
+                      name: templateName.trim(),
+                      description: templateDescription.trim() || undefined,
+                      source_workflow_id: id,
+                    });
+                    setShowSaveTemplateModal(false);
+                    toast.success('Template saved!');
+                  } catch {
+                    toast.error('Failed to save template');
+                  }
+                }}
+                disabled={createTemplate.isPending || !templateName.trim()}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 inline-flex items-center gap-2"
+              >
+                {createTemplate.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4" />
+                )}
+                Save Template
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Execution Log Panel */}
+      {showExecutionLog && executionEvents.length > 0 && (
+        <div className="absolute bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-40 max-h-56 flex flex-col">
+          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-gray-50">
+            <button
+              onClick={() => setShowExecutionLog(!showExecutionLog)}
+              className="flex items-center gap-2 text-sm font-medium text-gray-700"
+            >
+              {showExecutionLog ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              Execution Log ({executionEvents.length} events)
+            </button>
+            <button
+              onClick={() => {
+                setShowExecutionLog(false);
+                setExecutionEvents([]);
+              }}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-auto px-4 py-2 space-y-1 font-mono text-xs">
+            {executionEvents.map((evt, i) => {
+              const time = new Date(evt.timestamp).toLocaleTimeString();
+              const isError = evt.event.includes('failed');
+              const isSuccess = evt.event === 'workflow.completed' || evt.event === 'node.completed';
+              return (
+                <div key={i} className={`flex items-start gap-2 ${isError ? 'text-red-600' : isSuccess ? 'text-green-600' : 'text-gray-600'}`}>
+                  <span className="text-gray-400 shrink-0">{time}</span>
+                  <span className="font-medium">{evt.event}</span>
+                  {evt.node_id && <span className="text-gray-400">node:{evt.node_id}</span>}
+                  {evt.error && <span className="text-red-500">{evt.error}</span>}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

@@ -21,13 +21,17 @@ import {
   Globe,
   BookOpen,
   ArrowLeft,
+  BarChart3,
+  MessageSquare,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
 // Global navigation items
 const globalNavigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   { name: 'Contacts', href: '/contacts', icon: Users },
+  { name: 'Inbox', href: '/inbox', icon: MessageSquare },
   { name: 'Deals', href: '/deals', icon: DollarSign },
   { name: 'Sites', href: '/sites', icon: Globe },
   { name: 'Settings', href: '/settings', icon: Settings },

@@ -3,7 +3,8 @@ import { usePageForms, useCreatePageForm, useUpdatePageForm, useDeletePageForm, 
 import { useSynthesizePage } from '../../lib/hooks/useAI';
 import { useToast } from '../Toast';
 import FormBuilder from '../FormBuilder';
-import { Plus, Trash2, Pencil, Sparkles, Loader2 } from 'lucide-react';
+import FormSubmissions from '../FormSubmissions';
+import { Plus, Trash2, Pencil, Sparkles, Loader2, Eye, X } from 'lucide-react';
 
 export interface FormsTabProps {
   workspaceId: string;
@@ -19,6 +20,7 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
 
   const [editingForm, setEditingForm] = useState<Form | null>(null);
   const [showFormBuilder, setShowFormBuilder] = useState(false);
+  const [viewingSubmissionsForm, setViewingSubmissionsForm] = useState<Form | null>(null);
   const [aiFormDescription, setAiFormDescription] = useState('');
   const [formBuilderData, setFormBuilderData] = useState<{
     name: string;
@@ -321,10 +323,23 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
                   <div className="flex-1">
                     <p className="font-medium text-gray-900">{form.name}</p>
                     <p className="text-sm text-gray-500">
-                      {form.fields.length} fields • {form.submission_count} submissions
+                      {form.fields.length} fields •{' '}
+                      <button
+                        onClick={() => setViewingSubmissionsForm(form)}
+                        className="text-indigo-600 hover:text-indigo-800 hover:underline"
+                      >
+                        {form.submission_count} submissions
+                      </button>
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setViewingSubmissionsForm(form)}
+                      className="p-2 text-gray-400 hover:text-indigo-600"
+                      title="View submissions"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => handleEditForm(form)}
                       className="p-2 text-gray-400 hover:text-indigo-600"
@@ -355,6 +370,35 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
             </div>
           )}
         </>
+      )}
+
+      {/* Form Submissions Modal */}
+      {viewingSubmissionsForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {viewingSubmissionsForm.name}
+                </h2>
+                <p className="text-sm text-gray-500">Form Submissions</p>
+              </div>
+              <button
+                onClick={() => setViewingSubmissionsForm(null)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <FormSubmissions
+                workspaceId={workspaceId}
+                formId={viewingSubmissionsForm.id}
+                fields={viewingSubmissionsForm.fields}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

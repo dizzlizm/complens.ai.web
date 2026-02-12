@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2, AlertTriangle, X, History } from 'lucide-react';
-import { useWorkflows, useCurrentWorkspace, useDeleteWorkflow, type Workflow } from '../lib/hooks';
+import { Plus, Search, GitBranch, MoreVertical, Play, Pause, Loader2, AlertTriangle, X, History, LayoutTemplate, Sparkles, Zap, DollarSign, Trophy, FileText } from 'lucide-react';
+import { useWorkflows, useCurrentWorkspace, useDeleteWorkflow, useWorkflowEvents, type Workflow } from '../lib/hooks';
+import { useWorkflowTemplates } from '../lib/hooks/useWorkflowTemplates';
 import api from '../lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../components/Toast';
@@ -44,15 +45,50 @@ export default function Workflows() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [viewingRunsWorkflow, setViewingRunsWorkflow] = useState<Workflow | null>(null);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+  const [runningWorkflows, setRunningWorkflows] = useState<Set<string>>(new Set());
 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { siteId } = useParams<{ siteId: string }>();
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { data: workflows, isLoading, error, refetch } = useWorkflows(workspaceId || '', siteId);
+  const { data: templates } = useWorkflowTemplates(workspaceId);
   const deleteWorkflow = useDeleteWorkflow(workspaceId || '');
   const toast = useToast();
   const basePath = siteId ? `/sites/${siteId}` : '';
+
+  // Real-time workflow events
+  const onWorkflowStarted = useCallback((event: { workflow_id: string }) => {
+    setRunningWorkflows((prev) => new Set(prev).add(event.workflow_id));
+  }, []);
+
+  const onWorkflowCompleted = useCallback((event: { workflow_id: string }) => {
+    setRunningWorkflows((prev) => {
+      const next = new Set(prev);
+      next.delete(event.workflow_id);
+      return next;
+    });
+    toast.success('Workflow completed successfully');
+  }, [toast]);
+
+  const onWorkflowFailed = useCallback((event: { workflow_id: string }) => {
+    setRunningWorkflows((prev) => {
+      const next = new Set(prev);
+      next.delete(event.workflow_id);
+      return next;
+    });
+    toast.error('Workflow execution failed');
+  }, [toast]);
+
+  useWorkflowEvents({
+    workspaceId: workspaceId || '',
+    onWorkflowStarted,
+    onWorkflowCompleted,
+    onWorkflowFailed,
+    autoInvalidate: true,
+    enabled: !!workspaceId,
+  });
 
   // Toggle workflow status (draft/paused -> active, active -> paused)
   const handleToggleStatus = async (workflow: Workflow) => {
@@ -112,10 +148,13 @@ export default function Workflows() {
           <h1 className="text-2xl font-bold text-gray-900">Workflows</h1>
           <p className="mt-1 text-gray-500">Workspace-level automation workflows</p>
         </div>
-        <Link to={`${basePath}/workflows/new`} className="btn btn-primary inline-flex items-center gap-2">
+        <button
+          onClick={() => setShowTemplatePicker(true)}
+          className="btn btn-primary inline-flex items-center gap-2"
+        >
           <Plus className="w-5 h-5" />
           Create Workflow
-        </Link>
+        </button>
       </div>
 
       {/* Info banner about page-specific workflows */}
@@ -178,10 +217,13 @@ export default function Workflows() {
           <GitBranch className="w-12 h-12 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">No workflows yet</h3>
           <p className="text-gray-500 mb-4">Create your first workflow to start automating.</p>
-          <Link to={`${basePath}/workflows/new`} className="btn btn-primary inline-flex items-center gap-2">
+          <button
+            onClick={() => setShowTemplatePicker(true)}
+            className="btn btn-primary inline-flex items-center gap-2"
+          >
             <Plus className="w-5 h-5" />
             Create Workflow
-          </Link>
+          </button>
         </div>
       )}
 
@@ -234,15 +276,23 @@ export default function Workflows() {
                     {formatTriggerType(workflow.trigger_type)}
                   </td>
                   <td className="px-6 py-4">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      workflow.status === 'active'
-                        ? 'bg-green-100 text-green-800'
-                        : workflow.status === 'paused'
-                        ? 'bg-yellow-100 text-yellow-800'
-                        : 'bg-gray-100 text-gray-800'
-                    }`}>
-                      {workflow.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        workflow.status === 'active'
+                          ? 'bg-green-100 text-green-800'
+                          : workflow.status === 'paused'
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : 'bg-gray-100 text-gray-800'
+                      }`}>
+                        {workflow.status}
+                      </span>
+                      {runningWorkflows.has(workflow.id) && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 animate-pulse">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                          Running
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-6 py-4 text-sm">
                     <button
@@ -298,6 +348,88 @@ export default function Workflows() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Template Picker Modal */}
+      {showTemplatePicker && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div className="flex items-center gap-3">
+                <LayoutTemplate className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Create Workflow</h2>
+                  <p className="text-sm text-gray-500">Start from scratch or use a template</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowTemplatePicker(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <div className="grid grid-cols-2 gap-3">
+                {/* Start from scratch */}
+                <button
+                  onClick={() => {
+                    setShowTemplatePicker(false);
+                    navigate(`${basePath}/workflows/new`);
+                  }}
+                  className="flex flex-col items-center gap-3 p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-indigo-400 hover:bg-indigo-50/50 transition-colors text-center"
+                >
+                  <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
+                    <Plus className="w-6 h-6 text-gray-500" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">Start from Scratch</p>
+                    <p className="text-sm text-gray-500">Build a custom workflow</p>
+                  </div>
+                </button>
+
+                {/* Template cards */}
+                {(templates || []).map((template) => {
+                  const iconMap: Record<string, React.ReactNode> = {
+                    'dollar-sign': <DollarSign className="w-6 h-6" />,
+                    'trophy': <Trophy className="w-6 h-6" />,
+                    'zap': <Zap className="w-6 h-6" />,
+                  };
+                  return (
+                    <button
+                      key={template.id}
+                      onClick={() => {
+                        setShowTemplatePicker(false);
+                        navigate(`${basePath}/workflows/new`, { state: { template } });
+                      }}
+                      className="flex flex-col items-center gap-3 p-6 border border-gray-200 rounded-lg hover:border-indigo-400 hover:bg-indigo-50/50 transition-colors text-center"
+                    >
+                      <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
+                        template.builtin ? 'bg-purple-100 text-purple-600' : 'bg-indigo-100 text-indigo-600'
+                      }`}>
+                        {template.icon && iconMap[template.icon]
+                          ? iconMap[template.icon]
+                          : template.builtin
+                            ? <Sparkles className="w-6 h-6" />
+                            : <FileText className="w-6 h-6" />
+                        }
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900">{template.name}</p>
+                        <p className="text-sm text-gray-500 line-clamp-2">{template.description}</p>
+                        {template.category && (
+                          <span className="inline-block mt-1.5 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">
+                            {template.category}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
