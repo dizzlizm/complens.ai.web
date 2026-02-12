@@ -56,7 +56,7 @@ export default function TestimonialsBlock({ config, isEditing, onConfigChange }:
               type="text"
               value={title}
               onChange={(e) => handleTitleChange(e.target.value)}
-              className="w-full text-3xl font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center"
+              className="w-full text-3xl font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
               placeholder="Section title..."
             />
           ) : (
@@ -88,7 +88,7 @@ export default function TestimonialsBlock({ config, isEditing, onConfigChange }:
                 <textarea
                   value={item.quote}
                   onChange={(e) => handleItemChange(index, 'quote', e.target.value)}
-                  className="w-full text-gray-700 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded resize-none mb-6"
+                  className="w-full text-gray-700 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded resize-none mb-6 hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                   placeholder="Customer quote..."
                   rows={3}
                 />
@@ -115,14 +115,14 @@ export default function TestimonialsBlock({ config, isEditing, onConfigChange }:
                         type="text"
                         value={item.author}
                         onChange={(e) => handleItemChange(index, 'author', e.target.value)}
-                        className="w-full font-medium text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-sm"
+                        className="w-full font-medium text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-sm hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                         placeholder="Author name..."
                       />
                       <input
                         type="text"
                         value={item.company}
                         onChange={(e) => handleItemChange(index, 'company', e.target.value)}
-                        className="w-full text-gray-500 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-sm"
+                        className="w-full text-gray-500 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-sm hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                         placeholder="Company name..."
                       />
                     </>

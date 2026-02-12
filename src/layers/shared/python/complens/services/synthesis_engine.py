@@ -198,7 +198,7 @@ class SynthesisEngine:
 
         # Stage 6: Block Configuration
         logger.debug("Stage 6: Configuring blocks")
-        blocks = self._configure_blocks(plan, synthesized, design)
+        blocks = self._configure_blocks(plan, synthesized, design, description)
         stages_executed.append("block_configuration")
 
         # Build form config if needed
@@ -424,7 +424,7 @@ class SynthesisEngine:
         )
 
         # Configure blocks with design system
-        blocks = self._configure_blocks(batch_plan, synthesized, design)
+        blocks = self._configure_blocks(batch_plan, synthesized, design, description)
 
         # Build form/workflow config if requested
         form_config = None
@@ -1635,7 +1635,7 @@ Return only valid JSON."""
     "style": "line"
   }
 }''',
-            "gallery": '''GALLERY block:
+            "gallery": '''GALLERY block (images are auto-generated separately — do NOT populate the images array):
 {
   "block_type": "gallery",
   "content": {
@@ -1671,6 +1671,7 @@ Return only valid JSON."""
         plan: BlockPlan,
         synthesized: SynthesizedContent,
         design: DesignSystem,
+        description: str = "",
     ) -> list[PageBlock]:
         """Stage 6: Build validated PageBlock list.
 
@@ -1707,7 +1708,7 @@ Return only valid JSON."""
 
             # Apply design system colors to relevant configs
             config = self._apply_design_to_config(
-                planned.type, content, design, planned
+                planned.type, content, design, planned, description
             )
 
             blocks.append(
@@ -1735,6 +1736,7 @@ Return only valid JSON."""
         content: dict[str, Any],
         design: DesignSystem,
         planned: PlannedBlock,
+        description: str = "",
     ) -> dict[str, Any]:
         """Apply design system to block config."""
         config = dict(content)
@@ -1794,12 +1796,30 @@ Return only valid JSON."""
                 ]
 
         elif block_type == "gallery":
-            # Gallery blocks need images - start with empty array for user to fill
-            config.setdefault("title", config.get("title", "Gallery"))
-            config.setdefault("images", [])
+            config.setdefault("title", content.get("title", "Gallery"))
             config.setdefault("columns", 3)
             config.setdefault("showCaptions", True)
             config.setdefault("enableLightbox", True)
+            # Auto-generate gallery images if none have real URLs
+            # AI often generates placeholder image objects with empty URLs
+            existing_images = config.get("images", [])
+            has_real_images = any(
+                isinstance(img, dict) and img.get("url")
+                for img in existing_images
+            )
+            if not has_real_images:
+                try:
+                    from complens.services.image_generator import ImageGeneratorService
+                    img_service = ImageGeneratorService()
+                    images = img_service.generate_gallery_images(
+                        page_context=description,
+                        gallery_title=config.get("title", "Gallery"),
+                        count=3,
+                    )
+                    config["images"] = images
+                except Exception as e:
+                    logger.warning("Gallery image generation failed", error=str(e))
+                    config["images"] = []
 
         elif block_type == "slider":
             # Slider blocks need slides - start with empty array for user to fill

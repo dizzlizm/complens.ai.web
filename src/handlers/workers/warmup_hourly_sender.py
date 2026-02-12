@@ -73,8 +73,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         )
         emails_this_hour = math.ceil(remaining_today / max(remaining_hours, 1))
 
-        # Cap at seed list size per hour (round-robin)
-        emails_this_hour = min(emails_this_hour, len(warmup.seed_list) * 2)
+        # Cap at seed list size — each recipient gets at most 1 warmup email per hour
+        emails_this_hour = min(emails_this_hour, len(warmup.seed_list))
 
         # Generate one email per domain per day — reuse for all recipients
         recent_emails = repo.get_recent_warmup_emails(warmup.domain, today, limit=20)
@@ -96,7 +96,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             continue
 
         from_name = warmup.from_name or warmup.domain
-        from_email = f"{from_name} <warmup@{warmup.domain}>"
+        local_part = warmup.from_email_local if (warmup.from_email_local and warmup.from_email_verified) else "noreply"
+        from_email = f"{from_name} <{local_part}@{warmup.domain}>"
 
         sent_for_domain = 0
         for i in range(emails_this_hour):
@@ -121,15 +122,15 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
             sent_for_domain += 1
 
-        # Record once for audit + subject dedup
-        if sent_for_domain > 0:
+            # Record per-recipient for detailed audit log
             try:
                 repo.record_warmup_email(
                     domain=warmup.domain,
                     date_str=today,
                     email_data={
                         "subject": email_content["subject"],
-                        "recipient": f"{sent_for_domain} recipients",
+                        "recipient": recipient,
+                        "from_email": from_email,
                         "content_type": email_content.get("content_type", ""),
                         "sent_at": datetime.now(timezone.utc).isoformat(),
                     },
@@ -138,6 +139,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
                 logger.warning(
                     "Failed to record warmup email",
                     domain=warmup.domain,
+                    recipient=recipient,
                 )
 
         total_sent += sent_for_domain

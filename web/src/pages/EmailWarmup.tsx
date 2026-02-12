@@ -9,7 +9,7 @@ import {
   useCurrentWorkspace, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup,
   useCancelWarmup, getWarmupStatusInfo, useUpdateSeedList, useSendWarmupTestEmail,
   useUpdateWarmupSettings, useWarmupLog, useDomainHealth, getHealthStatusInfo,
-  useListDomains, useVerifyFromEmail, useConfirmFromEmail,
+  useListDomains, useVerifyFromEmail, useConfirmFromEmail, useSite,
 } from '../lib/hooks';
 import type { WarmupDomain } from '../lib/hooks/useEmailWarmup';
 import { useContacts } from '../lib/hooks/useContacts';
@@ -262,6 +262,8 @@ function EmailWarmupSection({ workspaceId, siteId }: {
   const cancelWarmup = useCancelWarmup(workspaceId || '');
 
   const { data: savedDomainsData } = useListDomains(workspaceId);
+  const { data: site } = useSite(workspaceId, siteId);
+  const siteDomain = site?.domain_name;
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [newDomain, setNewDomain] = useState('');
@@ -274,7 +276,9 @@ function EmailWarmupSection({ workspaceId, siteId }: {
   const [showInitContactPicker, setShowInitContactPicker] = useState(false);
   const [startedSuccess, setStartedSuccess] = useState(false);
 
-  const warmups = warmupsData?.items || [];
+  const allWarmups = warmupsData?.items || [];
+  // When in site context, only show the warmup for this site's domain
+  const warmups = siteDomain ? allWarmups.filter(w => w.domain === siteDomain) : allWarmups;
 
   // Only show verified domains that aren't already warming up
   const warmupDomainSet = new Set(warmups.map(w => w.domain));
@@ -282,12 +286,15 @@ function EmailWarmupSection({ workspaceId, siteId }: {
     d => d.ready && !warmupDomainSet.has(d.domain)
   );
 
-  // Auto-select if there's only one verified domain
+  // Auto-select domain: prefer site domain, fallback to single verified domain
   useEffect(() => {
-    if (verifiedDomains.length === 1 && !newDomain) {
+    if (newDomain) return;
+    if (siteDomain && verifiedDomains.some(d => d.domain === siteDomain)) {
+      setNewDomain(siteDomain);
+    } else if (verifiedDomains.length === 1) {
       setNewDomain(verifiedDomains[0].domain);
     }
-  }, [verifiedDomains.length]);
+  }, [verifiedDomains.length, siteDomain]);
 
   const handleStartWarmup = async () => {
     if (!newDomain.trim()) return;
@@ -348,7 +355,17 @@ function EmailWarmupSection({ workspaceId, siteId }: {
       {showAddForm && (
         <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 mb-4">
           <label className="block text-sm font-medium text-gray-700 mb-1">Domain</label>
-          {verifiedDomains.length > 0 ? (
+          {siteDomain ? (
+            <div className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg">
+              <Globe className="w-4 h-4 text-gray-400" />
+              <span className="font-medium text-gray-900">{siteDomain}</span>
+              {verifiedDomains.some(d => d.domain === siteDomain) ? (
+                <span className="text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded">Verified</span>
+              ) : (
+                <span className="text-xs text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">Not verified</span>
+              )}
+            </div>
+          ) : verifiedDomains.length > 0 ? (
             <select
               className="input"
               value={newDomain}

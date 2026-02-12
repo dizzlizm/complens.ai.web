@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSites, useDeleteSite } from '../lib/hooks/useSites';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
@@ -16,6 +16,13 @@ export default function Sites() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Auto-navigate to the single site if there's exactly one
+  useEffect(() => {
+    if (!isLoading && sites && sites.length === 1) {
+      navigate(`/sites/${sites[0].id}/pages`, { replace: true });
+    }
+  }, [isLoading, sites, navigate]);
+
   const handleDeleteSite = async (siteId: string) => {
     try {
       await deleteSite.mutateAsync(siteId);
@@ -29,7 +36,7 @@ export default function Sites() {
   const filteredSites = sites?.filter(
     (s) =>
       s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.domain_name.toLowerCase().includes(searchQuery.toLowerCase())
+      (s.domain_name && s.domain_name.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   if (isLoadingWorkspace || isLoading) {
@@ -73,20 +80,20 @@ export default function Sites() {
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty state — should rarely appear since backend auto-creates a default site */}
       {(!sites || sites.length === 0) && (
         <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
           <Globe className="w-12 h-12 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">No sites yet</h3>
           <p className="text-gray-500 mb-6 max-w-md mx-auto">
-            Sites are created automatically when you verify a domain in Settings.
+            Your first site will be created automatically. Try refreshing the page.
           </p>
           <button
             onClick={() => navigate('/settings/domains')}
             className="btn btn-primary inline-flex items-center gap-2"
           >
             <Settings className="w-4 h-4" />
-            Go to Domains & Email
+            Manage Domains
           </button>
         </div>
       )}
@@ -107,7 +114,9 @@ export default function Sites() {
                   </div>
                   <div>
                     <h3 className="font-semibold text-gray-900">{site.name}</h3>
-                    <p className="text-sm text-gray-500">{site.domain_name}</p>
+                    {site.domain_name && (
+                      <p className="text-sm text-gray-500">{site.domain_name}</p>
+                    )}
                   </div>
                 </div>
                 <button

@@ -55,7 +55,7 @@ export default function StatsBlock({ config, isEditing, onConfigChange }: StatsB
                 type="text"
                 value={title}
                 onChange={(e) => handleTitleChange(e.target.value)}
-                className="w-full text-2xl font-bold text-white bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/30 rounded text-center"
+                className="w-full text-2xl font-bold text-white bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/30 rounded text-center hover:border-b hover:border-dashed hover:border-white/40 focus:border-b-2 focus:border-solid focus:border-white/60"
                 placeholder="Section title (optional)..."
               />
             ) : (
@@ -85,14 +85,14 @@ export default function StatsBlock({ config, isEditing, onConfigChange }: StatsB
                     type="text"
                     value={item.value}
                     onChange={(e) => handleItemChange(index, 'value', e.target.value)}
-                    className="w-full text-4xl md:text-5xl font-bold text-white bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/30 rounded text-center mb-2"
+                    className="w-full text-4xl md:text-5xl font-bold text-white bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/30 rounded text-center mb-2 hover:border-b hover:border-dashed hover:border-white/40 focus:border-b-2 focus:border-solid focus:border-white/60"
                     placeholder="100+"
                   />
                   <input
                     type="text"
                     value={item.label}
                     onChange={(e) => handleItemChange(index, 'label', e.target.value)}
-                    className="w-full text-indigo-200 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/30 rounded text-center"
+                    className="w-full text-indigo-200 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/30 rounded text-center hover:border-b hover:border-dashed hover:border-white/40 focus:border-b-2 focus:border-solid focus:border-white/60"
                     placeholder="Label"
                   />
                 </>

@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
-import { BookOpen, Upload, Trash2, RefreshCw, FileText, Loader2, CheckCircle, AlertCircle, Clock, Eye } from 'lucide-react';
-import { useKBDocuments, useKBStatus, useCreateKBDocument, useConfirmKBUpload, useDeleteKBDocument, useSyncKB } from '../../lib/hooks/useKnowledgeBase';
+import { useRef, useState, useCallback } from 'react';
+import { BookOpen, Upload, Trash2, RefreshCw, FileText, Loader2, CheckCircle, AlertCircle, Clock, Eye, Link2 } from 'lucide-react';
+import { useKBDocuments, useKBStatus, useCreateKBDocument, useConfirmKBUpload, useDeleteKBDocument, useSyncKB, useImportKBUrl } from '../../lib/hooks/useKnowledgeBase';
 import { useFormatDate } from '../../lib/hooks/useFormatDate';
 import DocumentContentModal from './DocumentContentModal';
 
@@ -30,24 +30,25 @@ export default function KnowledgeBaseSettings({ workspaceId, siteId }: Knowledge
   const confirmUpload = useConfirmKBUpload(workspaceId);
   const deleteDocument = useDeleteKBDocument(workspaceId);
   const syncKB = useSyncKB(workspaceId);
+  const importUrl = useImportKBUrl(workspaceId);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [importUrlValue, setImportUrlValue] = useState('');
   const [viewingDoc, setViewingDoc] = useState<{ id: string; name: string } | null>(null);
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files?.length) return;
-
+  const uploadFiles = useCallback(async (files: File[]) => {
+    if (!files.length) return;
     setUploading(true);
     try {
-      for (const file of Array.from(files)) {
+      for (const file of files) {
         const result = await createDocument.mutateAsync({
           name: file.name,
           content_type: file.type || 'application/octet-stream',
           file_size: file.size,
+          site_id: siteId,
         });
 
-        // Upload to presigned URL
         const uploadRes = await fetch(result.upload_url, {
           method: 'PUT',
           body: file,
@@ -62,7 +63,31 @@ export default function KnowledgeBaseSettings({ workspaceId, siteId }: Knowledge
       console.error('Upload failed:', err);
     } finally {
       setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [createDocument, confirmUpload]);
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files?.length) return;
+    await uploadFiles(Array.from(files));
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length) uploadFiles(files);
+  }, [uploadFiles]);
+
+  const handleImportUrl = async () => {
+    const url = importUrlValue.trim();
+    if (!url) return;
+    try {
+      await importUrl.mutateAsync({ url, site_id: siteId });
+      setImportUrlValue('');
+    } catch {
+      // Error handled by mutation state
     }
   };
 
@@ -142,6 +167,64 @@ export default function KnowledgeBaseSettings({ workspaceId, siteId }: Knowledge
               <p className="text-xs text-red-600">Failed</p>
             </div>
           </div>
+        )}
+      </div>
+
+      {/* Upload zone */}
+      <div className="card">
+        <h3 className="font-medium text-gray-900 mb-4">Add Documents</h3>
+
+        {/* Drag and drop zone */}
+        <div
+          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+            isDragging
+              ? 'border-violet-400 bg-violet-50'
+              : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+          }`}
+        >
+          {uploading ? (
+            <Loader2 className="w-8 h-8 text-violet-500 animate-spin mx-auto mb-2" />
+          ) : (
+            <Upload className={`w-8 h-8 mx-auto mb-2 ${isDragging ? 'text-violet-500' : 'text-gray-400'}`} />
+          )}
+          <p className={`text-sm font-medium ${isDragging ? 'text-violet-600' : 'text-gray-600'}`}>
+            {uploading ? 'Uploading...' : isDragging ? 'Drop files here' : 'Drag & drop files or click to upload'}
+          </p>
+          <p className="text-xs text-gray-400 mt-1">PDF, TXT, MD, DOCX, CSV, or HTML</p>
+        </div>
+
+        {/* URL import */}
+        <div className="flex items-center gap-2 mt-4">
+          <div className="relative flex-1">
+            <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="url"
+              value={importUrlValue}
+              onChange={(e) => setImportUrlValue(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleImportUrl()}
+              placeholder="Import from URL..."
+              className="input pl-9 w-full"
+            />
+          </div>
+          <button
+            onClick={handleImportUrl}
+            disabled={!importUrlValue.trim() || importUrl.isPending}
+            className="btn btn-secondary inline-flex items-center gap-2 whitespace-nowrap"
+          >
+            {importUrl.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Link2 className="w-4 h-4" />
+            )}
+            Import
+          </button>
+        </div>
+        {importUrl.isError && (
+          <p className="text-xs text-red-500 mt-1">Failed to import URL. Check the URL and try again.</p>
         )}
       </div>
 

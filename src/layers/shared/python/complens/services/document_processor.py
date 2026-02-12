@@ -3,7 +3,9 @@
 import csv
 import io
 import os
+import urllib.request
 from html.parser import HTMLParser
+from urllib.parse import urlparse
 
 import boto3
 import structlog
@@ -12,37 +14,79 @@ logger = structlog.get_logger()
 
 
 class _HTMLTextExtractor(HTMLParser):
-    """Simple HTML to text extractor."""
+    """HTML to markdown text extractor with broad tag support."""
+
+    # Tags whose content is never useful
+    _SKIP_TAGS = frozenset(("script", "style"))
+
+    # Block-level tags that get a leading newline
+    _BLOCK_TAGS = frozenset((
+        "p", "div", "br", "section", "article", "main",
+        "blockquote", "table", "ul", "ol", "figcaption", "figure",
+        "nav", "footer", "header", "aside",
+    ))
 
     def __init__(self):
         super().__init__()
         self._parts: list[str] = []
-        self._skip = False
+        self._skip_depth = 0
+        self._href: str | None = None
 
     def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style"):
-            self._skip = True
-        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+        if tag in self._SKIP_TAGS:
+            self._skip_depth += 1
+            return
+
+        if self._skip_depth:
+            return
+
+        if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
             level = int(tag[1])
             self._parts.append("\n" + "#" * level + " ")
-        elif tag in ("p", "div", "br"):
+        elif tag == "blockquote":
+            self._parts.append("\n> ")
+        elif tag in self._BLOCK_TAGS:
             self._parts.append("\n")
         elif tag == "li":
             self._parts.append("\n- ")
+        elif tag == "tr":
+            self._parts.append("\n")
+        elif tag in ("th", "td"):
+            self._parts.append(" | ")
         elif tag == "a":
-            href = dict(attrs).get("href", "")
-            self._parts.append(f"[")
-            self._href = href
+            self._href = dict(attrs).get("href", "")
+            self._parts.append("[")
+        elif tag in ("strong", "b"):
+            self._parts.append("**")
+        elif tag in ("em", "i"):
+            self._parts.append("*")
+        elif tag in ("pre", "code"):
+            self._parts.append("`")
+        elif tag == "img":
+            alt = dict(attrs).get("alt", "")
+            if alt:
+                self._parts.append(f" {alt} ")
 
     def handle_endtag(self, tag):
-        if tag in ("script", "style"):
-            self._skip = False
-        elif tag == "a" and hasattr(self, "_href"):
+        if tag in self._SKIP_TAGS:
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+
+        if self._skip_depth:
+            return
+
+        if tag == "a" and self._href is not None:
             self._parts.append(f"]({self._href})")
-            del self._href
+            self._href = None
+        elif tag in ("strong", "b"):
+            self._parts.append("**")
+        elif tag in ("em", "i"):
+            self._parts.append("*")
+        elif tag in ("pre", "code"):
+            self._parts.append("`")
 
     def handle_data(self, data):
-        if not self._skip:
+        if not self._skip_depth:
             self._parts.append(data)
 
     def get_text(self) -> str:
@@ -174,6 +218,35 @@ def _html_to_markdown(html: str) -> str:
     extractor = _HTMLTextExtractor()
     extractor.feed(html)
     return extractor.get_text()
+
+
+def extract_from_url(url: str) -> str:
+    """Fetch a web page and extract its content as markdown.
+
+    Args:
+        url: HTTP or HTTPS URL to fetch.
+
+    Returns:
+        Extracted markdown text from the page.
+    """
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        },
+    )
+    with urllib.request.urlopen(req, timeout=10) as response:
+        content_type = response.headers.get("Content-Type", "")
+        charset = "utf-8"
+        if "charset=" in content_type:
+            charset = content_type.split("charset=")[-1].split(";")[0].strip()
+        html = response.read().decode(charset, errors="replace")
+
+    return _html_to_markdown(html)
 
 
 def _csv_to_markdown(text: str) -> str:

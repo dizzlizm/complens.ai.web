@@ -87,14 +87,14 @@ export default function FeaturesBlock({ config, isEditing, onConfigChange }: Fea
                 type="text"
                 value={title}
                 onChange={(e) => handleTitleChange(e.target.value)}
-                className="w-full text-3xl font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center mb-4"
+                className="w-full text-3xl font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center mb-4 hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                 placeholder="Section title..."
               />
               <input
                 type="text"
                 value={subtitle}
                 onChange={(e) => handleSubtitleChange(e.target.value)}
-                className="w-full text-lg text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center"
+                className="w-full text-lg text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                 placeholder="Section subtitle..."
               />
             </>
@@ -154,13 +154,13 @@ export default function FeaturesBlock({ config, isEditing, onConfigChange }: Fea
                       type="text"
                       value={item.title}
                       onChange={(e) => handleItemChange(index, 'title', e.target.value)}
-                      className="w-full text-lg font-semibold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center mb-2"
+                      className="w-full text-lg font-semibold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center mb-2 hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                       placeholder="Feature title..."
                     />
                     <textarea
                       value={item.description}
                       onChange={(e) => handleItemChange(index, 'description', e.target.value)}
-                      className="w-full text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center resize-none"
+                      className="w-full text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center resize-none hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                       placeholder="Feature description..."
                       rows={2}
                     />

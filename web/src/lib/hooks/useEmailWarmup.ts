@@ -28,6 +28,8 @@ export interface WarmupDomain {
   seed_list: string[];
   auto_warmup_enabled: boolean;
   from_name: string | null;
+  from_email_local: string | null;
+  from_email_verified: boolean;
   today?: {
     send_count: number;
     bounce_count: number;
@@ -52,12 +54,14 @@ export interface StartWarmupRequest {
   seed_list?: string[];
   auto_warmup_enabled?: boolean;
   from_name?: string;
+  from_email_local?: string;
 }
 
 export interface UpdateSeedListRequest {
   seed_list: string[];
   auto_warmup_enabled: boolean;
   from_name?: string;
+  from_email_local?: string;
 }
 
 export interface UpdateWarmupSettingsRequest {
@@ -71,6 +75,7 @@ export interface UpdateWarmupSettingsRequest {
 export interface WarmupLogEntry {
   subject: string;
   recipient: string;
+  from_email: string;
   content_type: string;
   sent_at: string;
 }
@@ -261,6 +266,29 @@ export function useUpdateWarmupSettings(workspaceId: string) {
   });
 }
 
+// Send a test warmup email
+export function useSendWarmupTestEmail(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ domain, recipient }: { domain: string; recipient?: string }) => {
+      const { data } = await api.post<{
+        subject: string;
+        content_type: string;
+        recipient: string;
+        message_id: string;
+      }>(
+        `/workspaces/${workspaceId}/email-warmup/${domain}/send-test`,
+        recipient ? { recipient } : {}
+      );
+      return data;
+    },
+    onSuccess: (_, { domain }) => {
+      queryClient.invalidateQueries({ queryKey: ['warmup-log', workspaceId, domain] });
+    },
+  });
+}
+
 // Delete a saved domain (email warmup setup)
 export function useDeleteSavedDomain(workspaceId: string) {
   const queryClient = useQueryClient();
@@ -376,6 +404,42 @@ export function getHealthStatusInfo(status: 'good' | 'warning' | 'critical'): {
     default:
       return { label: 'Unknown', color: 'text-gray-700', bgColor: 'bg-gray-100' };
   }
+}
+
+// Send from-email verification code
+export function useVerifyFromEmail(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ domain, from_email_local }: { domain: string; from_email_local: string }) => {
+      const { data } = await api.post<{ sent_to: string }>(
+        `/workspaces/${workspaceId}/email-warmup/${domain}/verify-from-email`,
+        { from_email_local }
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['warmups', workspaceId] });
+    },
+  });
+}
+
+// Check SES from-email verification status
+export function useConfirmFromEmail(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ domain }: { domain: string }) => {
+      const { data } = await api.post<WarmupDomain | { verified: boolean; ses_status: string; email: string }>(
+        `/workspaces/${workspaceId}/email-warmup/${domain}/confirm-from-email`,
+        {}
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['warmups', workspaceId] });
+    },
+  });
 }
 
 // Helper to get status display info

@@ -1,4 +1,5 @@
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useCurrentWorkspace } from '@/lib/hooks/useWorkspaces';
 import { useSites } from '@/lib/hooks/useSites';
 import { Globe, ChevronsUpDown, Check } from 'lucide-react';
@@ -14,6 +15,7 @@ export default function SiteSwitcher() {
   const { data: sites } = useSites(workspaceId);
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -32,6 +34,14 @@ export default function SiteSwitcher() {
   if (!sites || sites.length === 0) return null;
 
   const handleSwitch = (newSiteId: string) => {
+    // Invalidate site-scoped caches so new site gets fresh data
+    queryClient.removeQueries({ queryKey: ['pages', workspaceId] });
+    queryClient.removeQueries({ queryKey: ['workflows', workspaceId] });
+    queryClient.removeQueries({ queryKey: ['kb-documents', workspaceId] });
+    queryClient.removeQueries({ queryKey: ['kb-status', workspaceId] });
+    queryClient.removeQueries({ queryKey: ['businessProfile', workspaceId] });
+    queryClient.removeQueries({ queryKey: ['site', workspaceId] });
+
     // Preserve the current sub-route (e.g., /pages, /workflows)
     const match = location.pathname.match(/\/sites\/[^/]+(\/.*)$/);
     const subRoute = match?.[1] || '/pages';
@@ -69,9 +79,11 @@ export default function SiteSwitcher() {
             >
               <div className="flex-1 min-w-0">
                 <span className="text-gray-700 truncate block">{site.name}</span>
-                <span className="text-xs text-gray-400 truncate block">
-                  {site.domain_name}
-                </span>
+                {site.domain_name && (
+                  <span className="text-xs text-gray-400 truncate block">
+                    {site.domain_name}
+                  </span>
+                )}
               </div>
               {site.id === siteId && (
                 <Check className="w-4 h-4 text-primary-600 flex-shrink-0" />

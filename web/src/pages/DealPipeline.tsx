@@ -514,7 +514,7 @@ function StageColumn({
       )}
 
       {/* Cards */}
-      <div className="flex-1 p-2 space-y-2 min-h-[100px] overflow-y-auto max-h-[calc(100vh-320px)]">
+      <div className="flex-1 p-2 space-y-2 min-h-[100px] overflow-y-auto">
         <SortableContext
           items={sortedDeals.map((d) => d.id)}
           strategy={verticalListSortingStrategy}
@@ -1254,6 +1254,19 @@ export default function DealPipeline() {
     return counts;
   }, [deals]);
 
+  // Filtered stage summary: counts/values from filtered deals, not raw API summary
+  const filteredStageSummary = useMemo(() => {
+    const result: Record<string, { count: number; value: number }> = {};
+    for (const stage of stages) {
+      const stageDeals = dealsByStage[stage] || [];
+      result[stage] = {
+        count: stageDeals.length,
+        value: stageDeals.reduce((sum, d) => sum + d.value, 0),
+      };
+    }
+    return result;
+  }, [stages, dealsByStage]);
+
   // Filtered + sorted deals for table view
   const filteredDeals = useMemo(() => {
     let result = deals;
@@ -1450,9 +1463,12 @@ export default function DealPipeline() {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full overflow-hidden">
       {/* Main content area */}
-      <div className={`flex-1 space-y-6 min-w-0 ${selectedDeal ? 'pr-0' : ''}`}>
+      <div className={`flex-1 flex flex-col min-w-0 overflow-hidden ${selectedDeal ? 'pr-0' : ''}`}>
+        {/* Header + Summary + Toolbar (non-shrinking) */}
+        <div className="flex-shrink-0 space-y-6 p-0">
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -1535,7 +1551,9 @@ export default function DealPipeline() {
           </div>
         </div>
 
-        {/* Main content */}
+        </div>{/* end flex-shrink-0 header/summary/toolbar */}
+
+        {/* Main content — fills remaining space */}
         {view === 'kanban' ? (
           <DndContext
             sensors={sensors}
@@ -1543,13 +1561,13 @@ export default function DealPipeline() {
             onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
           >
-            <div className="flex gap-4 overflow-x-auto pb-4">
+            <div className="flex gap-4 overflow-x-auto overflow-y-hidden flex-1 pb-4">
               {stages.map((stage) => (
                 <StageColumn
                   key={stage}
                   stage={stage}
                   deals={dealsByStage[stage] || []}
-                  summary={summary?.by_stage?.[stage] || { count: 0, value: 0 }}
+                  summary={filteredStageSummary[stage] || { count: 0, value: 0 }}
                   onCardClick={setSelectedDeal}
                   onInlineUpdate={handleInlineUpdate}
                   onAddDeal={handleInlineAddDeal}
@@ -1574,21 +1592,23 @@ export default function DealPipeline() {
           />
         )}
 
-        {/* Empty state */}
-        {!isLoading && deals.length === 0 && (
-          <div className="text-center py-16">
-            <DollarSign className="w-12 h-12 text-gray-300 mx-auto" />
-            <h3 className="mt-4 text-lg font-medium text-gray-900">No deals yet</h3>
-            <p className="mt-2 text-sm text-gray-500">
-              Create your first deal to start tracking your sales pipeline.
-            </p>
-            <button
-              onClick={() => setIsAddModalOpen(true)}
-              className="btn btn-primary mt-4"
-            >
-              <Plus className="w-4 h-4 mr-1" />
-              Add Deal
-            </button>
+        {/* Empty state — only when genuinely empty */}
+        {!isLoading && deals.length === 0 && view === 'kanban' && (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center py-16">
+              <DollarSign className="w-12 h-12 text-gray-300 mx-auto" />
+              <h3 className="mt-4 text-lg font-medium text-gray-900">No deals yet</h3>
+              <p className="mt-2 text-sm text-gray-500">
+                Create your first deal to start tracking your sales pipeline.
+              </p>
+              <button
+                onClick={() => setIsAddModalOpen(true)}
+                className="btn btn-primary mt-4"
+              >
+                <Plus className="w-4 h-4 mr-1" />
+                Add Deal
+              </button>
+            </div>
           </div>
         )}
       </div>

@@ -89,14 +89,14 @@ export default function PricingBlock({ config, isEditing, onConfigChange }: Pric
                 type="text"
                 value={title}
                 onChange={(e) => handleTitleChange(e.target.value)}
-                className="w-full text-3xl font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center mb-4"
+                className="w-full text-3xl font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center mb-4 hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                 placeholder="Section title..."
               />
               <input
                 type="text"
                 value={subtitle}
                 onChange={(e) => handleSubtitleChange(e.target.value)}
-                className="w-full text-lg text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center"
+                className="w-full text-lg text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                 placeholder="Section subtitle..."
               />
             </>
@@ -156,7 +156,7 @@ export default function PricingBlock({ config, isEditing, onConfigChange }: Pric
                   type="text"
                   value={tier.name}
                   onChange={(e) => handleItemChange(index, 'name', e.target.value)}
-                  className="w-full text-xl font-semibold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center mb-4 mt-6"
+                  className="w-full text-xl font-semibold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center mb-4 mt-6 hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                   placeholder="Plan name..."
                 />
               ) : (
@@ -173,14 +173,14 @@ export default function PricingBlock({ config, isEditing, onConfigChange }: Pric
                       type="text"
                       value={tier.price}
                       onChange={(e) => handleItemChange(index, 'price', e.target.value)}
-                      className="w-24 text-4xl font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center"
+                      className="w-24 text-4xl font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                       placeholder="$29"
                     />
                     <input
                       type="text"
                       value={tier.period}
                       onChange={(e) => handleItemChange(index, 'period', e.target.value)}
-                      className="w-20 text-gray-500 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded"
+                      className="w-20 text-gray-500 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                       placeholder="/month"
                     />
                   </div>
@@ -207,7 +207,7 @@ export default function PricingBlock({ config, isEditing, onConfigChange }: Pric
                             newFeatures[fIndex] = e.target.value;
                             handleItemChange(index, 'features', newFeatures);
                           }}
-                          className="flex-1 text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded"
+                          className="flex-1 text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                           placeholder="Feature..."
                         />
                         <button
@@ -250,7 +250,7 @@ export default function PricingBlock({ config, isEditing, onConfigChange }: Pric
                     type="text"
                     value={tier.buttonText}
                     onChange={(e) => handleItemChange(index, 'buttonText', e.target.value)}
-                    className="w-full bg-transparent border-none focus:outline-none text-center"
+                    className="w-full bg-transparent border-none focus:outline-none text-center hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                     placeholder="Button text..."
                     onClick={(e) => e.stopPropagation()}
                   />

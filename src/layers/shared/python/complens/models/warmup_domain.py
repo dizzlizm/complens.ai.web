@@ -80,6 +80,13 @@ class WarmupDomain(BaseModel):
     seed_list: list[str] = Field(default_factory=list, description="Email addresses for warmup sending")
     auto_warmup_enabled: bool = Field(default=False, description="Toggle for automatic warmup sending")
     from_name: str | None = Field(None, max_length=100, description="Display name for warmup from-address")
+    from_email_local: str | None = Field(
+        None, max_length=64,
+        pattern=r"^[a-zA-Z0-9._%+\-]+$",
+        description="Local part of from-address (e.g. 'hello' for hello@domain.com)",
+    )
+    from_email_verified: bool = Field(default=False, description="Whether from_email_local has been verified")
+    from_email_verify_code: str | None = Field(None, description="Pending verification code")
 
     # Send window (UTC hours)
     send_window_start: int = Field(default=9, ge=0, le=23, description="Send window start hour (UTC)")
@@ -164,6 +171,10 @@ class StartWarmupRequest(PydanticBaseModel):
     seed_list: list[str] = Field(default_factory=list, max_length=50, description="Seed email addresses")
     auto_warmup_enabled: bool = Field(default=False, description="Enable automatic warmup sending")
     from_name: str | None = Field(None, max_length=100, description="Display name for warmup from-address")
+    from_email_local: str | None = Field(
+        None, max_length=64, pattern=r"^[a-zA-Z0-9._%+\-]+$",
+        description="Local part of from-address (e.g. 'marketing')",
+    )
 
     @model_validator(mode="after")
     def validate_send_window(self) -> "StartWarmupRequest":
@@ -179,6 +190,10 @@ class UpdateSeedListRequest(PydanticBaseModel):
     seed_list: list[str] = Field(..., max_length=50, description="Seed email addresses (1-50)")
     auto_warmup_enabled: bool = Field(default=True, description="Enable automatic warmup sending")
     from_name: str | None = Field(None, max_length=100, description="Display name for warmup from-address")
+    from_email_local: str | None = Field(
+        None, max_length=64, pattern=r"^[a-zA-Z0-9._%+\-]+$",
+        description="Local part of from-address (e.g. 'marketing')",
+    )
 
     @field_validator("seed_list")
     @classmethod
@@ -234,6 +249,8 @@ class WarmupStatusResponse(PydanticBaseModel):
     seed_list: list[str] = []
     auto_warmup_enabled: bool = False
     from_name: str | None = None
+    from_email_local: str | None = None
+    from_email_verified: bool = False
 
     @classmethod
     def from_warmup_domain(cls, wd: "WarmupDomain") -> "WarmupStatusResponse":
@@ -270,6 +287,8 @@ class WarmupStatusResponse(PydanticBaseModel):
             seed_list=wd.seed_list,
             auto_warmup_enabled=wd.auto_warmup_enabled,
             from_name=wd.from_name,
+            from_email_local=wd.from_email_local,
+            from_email_verified=wd.from_email_verified,
         )
 
 

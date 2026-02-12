@@ -11,6 +11,7 @@ import {
   useRefinePageContent,
   useCreateCompletePage,
   useSynthesizePage,
+  useAnalyzeDomain,
   GeneratedPageContent,
   AutomationConfig,
   CompletePageResult,
@@ -18,6 +19,7 @@ import {
   SynthesisPageBlock,
 } from '../../lib/hooks/useAI';
 import { useCurrentWorkspace } from '../../lib/hooks/useWorkspaces';
+import { useSite } from '../../lib/hooks/useSites';
 
 // Derive subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -116,6 +118,8 @@ export default function AgenticPageBuilder({
 }: AgenticPageBuilderProps) {
   const { workspaceId } = useCurrentWorkspace();
   const { data: profile, isLoading: profileLoading } = useBusinessProfile(workspaceId, pageId, siteId);
+  const { data: site } = useSite(workspaceId, siteId);
+  const analyzeDomain = useAnalyzeDomain(workspaceId || '');
   const generateImage = useGenerateImage(workspaceId || '');
   const generatePageContent = useGeneratePageContent(workspaceId || '');
   const refinePageContent = useRefinePageContent(workspaceId || '');
@@ -233,7 +237,44 @@ export default function AgenticPageBuilder({
     const startConversation = async () => {
       const hasProfile = !!profile?.business_name;
 
-      if (hasProfile) {
+      // Auto-analyze domain if site has a custom domain and no profile yet
+      if (!hasProfile && site?.domain_name && !analyzeDomain.isPending) {
+        await addAssistantMessage(
+          `Analyzing **${site.domain_name}** to learn about your business...`,
+          undefined,
+          undefined,
+          200
+        );
+        try {
+          const analysis = await analyzeDomain.mutateAsync({
+            domain: site.domain_name,
+            site_id: siteId,
+            auto_update: true,
+          });
+          if (analysis?.business_name) {
+            await addAssistantMessage(
+              `I found some info about **${analysis.business_name}**! I'll use this to personalize your page. Tell me what this page should focus on, or describe any changes!`,
+              undefined,
+              undefined,
+              300
+            );
+          } else {
+            await addAssistantMessage(
+              `I checked your domain but couldn't extract enough info. Tell me about your business - what you do, who you help, and what makes you special!`,
+              undefined,
+              undefined,
+              300
+            );
+          }
+        } catch {
+          await addAssistantMessage(
+            `Hey there! I'm your AI page builder. Tell me about your business in your own words - what you do, who you help, and what makes you special. I'll create a complete landing page with lead capture and automation!`,
+            undefined,
+            undefined,
+            300
+          );
+        }
+      } else if (hasProfile) {
         await addAssistantMessage(
           `Hey! I see you're building a page for **${profile.business_name}**. I'll use your AI profile to personalize everything. Tell me more about what this specific page should focus on, or just describe your business!`,
           undefined,
@@ -242,7 +283,7 @@ export default function AgenticPageBuilder({
         );
       } else {
         await addAssistantMessage(
-          `Hey there! 👋 I'm your AI page builder. Tell me about your business in your own words - what you do, who you help, and what makes you special. I'll create a complete landing page with lead capture and automation!`,
+          `Hey there! I'm your AI page builder. Tell me about your business in your own words - what you do, who you help, and what makes you special. I'll create a complete landing page with lead capture and automation!`,
           undefined,
           undefined,
           300
@@ -253,10 +294,10 @@ export default function AgenticPageBuilder({
       await addAssistantMessage(
         `Or pick a quick start:`,
         [
-          { value: 'freelancer', label: '👨‍💻 Freelancer/Consultant', description: 'I offer professional services' },
-          { value: 'saas', label: '🚀 SaaS/Product', description: 'I sell software or a product' },
-          { value: 'agency', label: '🏢 Agency/Company', description: 'We provide business services' },
-          { value: 'creator', label: '🎨 Creator/Coach', description: 'I teach or create content' },
+          { value: 'freelancer', label: 'Freelancer/Consultant', description: 'I offer professional services' },
+          { value: 'saas', label: 'SaaS/Product', description: 'I sell software or a product' },
+          { value: 'agency', label: 'Agency/Company', description: 'We provide business services' },
+          { value: 'creator', label: 'Creator/Coach', description: 'I teach or create content' },
         ],
         undefined,
         600
@@ -264,7 +305,8 @@ export default function AgenticPageBuilder({
     };
 
     startConversation();
-  }, [profileLoading, profile, messages.length, addAssistantMessage]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileLoading, profile, messages.length, addAssistantMessage, site?.domain_name]);
 
   // Handle option selection
   const handleOptionSelect = async (option: ChatOption) => {

@@ -65,7 +65,7 @@ export default function FaqBlock({ config, isEditing, onConfigChange }: FaqBlock
               type="text"
               value={title}
               onChange={(e) => handleTitleChange(e.target.value)}
-              className="w-full text-3xl font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center"
+              className="w-full text-3xl font-bold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded text-center hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
               placeholder="Section title..."
             />
           ) : (
@@ -103,7 +103,7 @@ export default function FaqBlock({ config, isEditing, onConfigChange }: FaqBlock
                     type="text"
                     value={item.question}
                     onChange={(e) => handleItemChange(index, 'question', e.target.value)}
-                    className="flex-1 font-medium text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded"
+                    className="flex-1 font-medium text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                     placeholder="Question..."
                     onClick={(e) => e.stopPropagation()}
                   />
@@ -123,7 +123,7 @@ export default function FaqBlock({ config, isEditing, onConfigChange }: FaqBlock
                     <textarea
                       value={item.answer}
                       onChange={(e) => handleItemChange(index, 'answer', e.target.value)}
-                      className="w-full text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded resize-none"
+                      className="w-full text-gray-600 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded resize-none hover:border-b hover:border-dashed hover:border-gray-300 focus:border-b-2 focus:border-solid focus:border-indigo-400"
                       placeholder="Answer..."
                       rows={3}
                     />

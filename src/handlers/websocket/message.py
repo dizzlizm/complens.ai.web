@@ -11,6 +11,7 @@ import structlog
 from complens.repositories.business_profile import BusinessProfileRepository
 from complens.repositories.document import DocumentRepository
 from complens.repositories.page import PageRepository
+from complens.repositories.visitor import VisitorRepository
 from complens.utils.rate_limiter import check_rate_limit
 
 logger = structlog.get_logger()
@@ -108,6 +109,24 @@ def handle_public_chat(
             },
         )
         return {"statusCode": 400, "body": "workspace_id is required"}
+
+    # Gate chat behind paid plan
+    from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
+    try:
+        plan = get_workspace_plan(workspace_id)
+        require_feature(plan, "chat")
+    except FeatureGateError:
+        send_to_connection(
+            connection_id,
+            domain,
+            stage,
+            {
+                "action": "ai_response",
+                "error": "PLAN_LIMIT",
+                "message": "Chat requires a paid plan.",
+            },
+        )
+        return {"statusCode": 403, "body": "Chat requires a paid plan"}
 
     # Rate limit: 5 messages/minute, 30/hour per visitor
     source_ip = (
@@ -215,6 +234,23 @@ You may use markdown formatting (bold, lists, links) when it improves readabilit
             visitor_id=visitor_id,
             message=message,
         )
+
+        # Increment visitor chat message counter
+        if visitor_id and visitor_id.startswith("v_"):
+            try:
+                visitor_repo = VisitorRepository()
+                visitor = visitor_repo.get_by_visitor_id(page.workspace_id, visitor_id)
+                # Fire trigger_chat_started if this is the visitor's first chat message
+                if visitor and visitor.total_chat_messages == 0:
+                    _fire_chat_started_event(
+                        workspace_id=page.workspace_id,
+                        page_id=page_id,
+                        page_name=page.name,
+                        visitor_id=visitor_id,
+                    )
+                visitor_repo.increment_chat_messages(page.workspace_id, visitor_id)
+            except Exception as e:
+                logger.warning("Visitor chat tracking failed", error=str(e))
 
         # Call Bedrock for AI response
         ai_response = _generate_chat_response(system_prompt, message)
@@ -358,6 +394,52 @@ def _fire_chat_event(
     except Exception as e:
         # Don't fail the chat if events fail
         logger.warning("Failed to fire chat event", error=str(e))
+
+
+def _fire_chat_started_event(
+    workspace_id: str,
+    page_id: str,
+    page_name: str,
+    visitor_id: str,
+) -> None:
+    """Fire trigger_chat_started event for first message from a visitor.
+
+    Args:
+        workspace_id: Workspace ID.
+        page_id: Page ID.
+        page_name: Page name.
+        visitor_id: Visitor ID.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        events = boto3.client("events")
+        event_bus_name = os.environ.get("EVENT_BUS_NAME", "default")
+
+        events.put_events(
+            Entries=[
+                {
+                    "Source": "complens.chat",
+                    "DetailType": "chat_started",
+                    "EventBusName": event_bus_name,
+                    "Detail": json.dumps({
+                        "workspace_id": workspace_id,
+                        "trigger_type": "trigger_chat_started",
+                        "page_id": page_id,
+                        "page_name": page_name,
+                        "visitor_id": visitor_id,
+                        "sent_at": datetime.now(timezone.utc).isoformat(),
+                    }),
+                }
+            ]
+        )
+        logger.info(
+            "Chat started event fired",
+            workspace_id=workspace_id,
+            visitor_id=visitor_id,
+        )
+    except Exception as e:
+        logger.warning("Failed to fire chat_started event", error=str(e))
 
 
 def _generate_chat_response(system_prompt: str, user_message: str) -> str:

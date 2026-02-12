@@ -65,7 +65,7 @@ export default function HeroBlock({ config, isEditing, onConfigChange }: HeroBlo
             type="text"
             value={headline}
             onChange={(e) => handleInlineEdit('headline', e.target.value)}
-            className="w-full text-4xl md:text-5xl font-bold text-white bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/50 rounded px-2 py-1 placeholder-white/50"
+            className="w-full text-4xl md:text-5xl font-bold text-white bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/50 rounded px-2 py-1 placeholder-white/50 hover:border-b hover:border-dashed hover:border-white/40 focus:border-b-2 focus:border-solid focus:border-white/60"
             placeholder="Your headline here..."
           />
         ) : (
@@ -78,7 +78,7 @@ export default function HeroBlock({ config, isEditing, onConfigChange }: HeroBlo
           <textarea
             value={subheadline}
             onChange={(e) => handleInlineEdit('subheadline', e.target.value)}
-            className="w-full text-xl text-white/90 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/50 rounded px-2 py-1 resize-none placeholder-white/50 mt-4"
+            className="w-full text-xl text-white/90 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/50 rounded px-2 py-1 resize-none placeholder-white/50 mt-4 hover:border-b hover:border-dashed hover:border-white/40 focus:border-b-2 focus:border-solid focus:border-white/60"
             placeholder="Your subheadline here..."
             rows={2}
           />
@@ -102,7 +102,7 @@ export default function HeroBlock({ config, isEditing, onConfigChange }: HeroBlo
                 type="text"
                 value={buttonText}
                 onChange={(e) => handleInlineEdit('buttonText', e.target.value)}
-                className="bg-transparent border-none focus:outline-none text-center"
+                className="bg-transparent border-none focus:outline-none text-center hover:border-b hover:border-dashed hover:border-white/40 focus:border-b-2 focus:border-solid focus:border-white/60"
                 placeholder="Button text..."
                 onClick={(e) => e.stopPropagation()}
               />

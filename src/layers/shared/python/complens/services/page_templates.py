@@ -278,10 +278,67 @@ def render_block_html(
         return _render_divider_block(config)
     elif block_type == "pricing":
         return _render_pricing_block(config, primary_color)
+    elif block_type == "gallery":
+        return _render_gallery_block(config, primary_color)
     elif block_type == "form":
         return _render_form_block(config, primary_color, forms, workspace_id)
     else:
         return f'<!-- Unknown block type: {block_type} -->'
+
+
+def _render_gallery_block(config: dict, primary_color: str) -> str:
+    """Render gallery block with responsive grid and optional lightbox.
+
+    Args:
+        config: Block config with title, images, columns, showCaptions, enableLightbox.
+        primary_color: Primary color for styling.
+
+    Returns:
+        HTML string for the gallery block.
+    """
+    title = _escape_html(config.get("title", "Gallery"))
+    images = config.get("images", [])
+    cols = config.get("columns", 3)
+    show_captions = config.get("showCaptions", True)
+    enable_lightbox = config.get("enableLightbox", True)
+
+    if not images:
+        return '<!-- Gallery block: no images -->'
+
+    grid_class = {2: "md:grid-cols-2", 3: "md:grid-cols-3", 4: "md:grid-cols-2 lg:grid-cols-4"}.get(cols, "md:grid-cols-3")
+
+    items_html = ""
+    for i, img in enumerate(images):
+        img_url = _sanitize_url(img.get("url", ""))
+        alt = _escape_html(img.get("alt", f"Gallery image {i + 1}"))
+        caption = _escape_html(img.get("caption", ""))
+
+        if not img_url or img_url == "#":
+            continue
+
+        caption_html = ""
+        if show_captions and caption:
+            caption_html = f'<figcaption class="mt-2 text-sm text-gray-500 text-center">{caption}</figcaption>'
+
+        lightbox_attrs = ""
+        if enable_lightbox:
+            lightbox_attrs = f' onclick="this.querySelector(\'img\').requestFullscreen ? this.querySelector(\'img\').requestFullscreen() : null" style="cursor:zoom-in;"'
+
+        items_html += f'''
+        <figure class="group overflow-hidden rounded-xl"{lightbox_attrs}>
+            <img src="{img_url}" alt="{alt}" class="w-full h-64 object-cover rounded-xl group-hover:scale-105 transition-transform duration-300" loading="lazy">
+            {caption_html}
+        </figure>'''
+
+    return f'''
+    <section class="py-16 px-6 bg-white">
+        <div class="max-w-6xl mx-auto">
+            <h2 class="text-3xl font-bold text-gray-900 text-center mb-12">{title}</h2>
+            <div class="grid grid-cols-1 {grid_class} gap-6">
+                {items_html}
+            </div>
+        </div>
+    </section>'''
 
 
 def _render_form_block(
@@ -1454,6 +1511,7 @@ def render_full_page(
 
       const data = {{}};
       new FormData(form).forEach((v, k) => data[k] = v);
+      data['_visitor_id'] = localStorage.getItem('complens_vid') || '';
 
       try {{
         const res = await fetch(API_URL + '/public/submit/page/' + PAGE_ID, {{
@@ -1477,6 +1535,49 @@ def render_full_page(
       }}
     }});
   }});
+}})();
+</script>"""
+
+    # Build visitor tracking script (runs before chat/form scripts)
+    tracking_script = f"""
+<script>
+(function() {{
+  function gC(n) {{
+    var m = document.cookie.match('(?:^|; )' + n + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }}
+  function sC(n, v) {{
+    document.cookie = n + '=' + encodeURIComponent(v)
+      + '; path=/; max-age=31536000; SameSite=Lax; Secure';
+  }}
+  var vid = gC('complens_vid') || localStorage.getItem('complens_vid');
+  if (!vid) {{
+    vid = 'v_' + Math.random().toString(36).substr(2, 9)
+        + Math.random().toString(36).substr(2, 4);
+  }}
+  sC('complens_vid', vid);
+  localStorage.setItem('complens_vid', vid);
+
+  var params = new URLSearchParams(window.location.search);
+  var data = {{
+    visitor_id: vid,
+    page_id: '{page_id}',
+    workspace_id: '{_escape_js_string(workspace_id)}',
+    referrer: document.referrer || null,
+    utm_source: params.get('utm_source'),
+    utm_medium: params.get('utm_medium'),
+    utm_campaign: params.get('utm_campaign'),
+    utm_content: params.get('utm_content'),
+    utm_term: params.get('utm_term'),
+    screen_width: screen.width,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+  }};
+  fetch('{api_url_safe}' + '/public/track', {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify(data),
+    keepalive: true
+  }}).catch(function() {{}});
 }})();
 </script>"""
 
@@ -1538,6 +1639,7 @@ def render_full_page(
 <body class="min-h-screen">
 {body_content}
 {forms_html}
+{tracking_script}
 {chat_script}
 {form_script}
 </body>

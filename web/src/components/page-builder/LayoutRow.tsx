@@ -45,6 +45,9 @@ interface LayoutRowProps {
   forms?: FormInfo[];
   workspaceId?: string;
   pageId?: string;
+  onDuplicateSlot?: (slotId: string) => void;
+  onOpenSettings?: (slotId: string) => void;
+  previewMode?: boolean;
 }
 
 // Wrapper component for draggable slots - uses useDraggable (NOT sortable)
@@ -117,6 +120,9 @@ export default function LayoutRow({
   forms = [],
   workspaceId,
   pageId,
+  onDuplicateSlot: _onDuplicateSlot,
+  onOpenSettings: _onOpenSettings,
+  previewMode: _previewMode = false,
 }: LayoutRowProps) {
   const { rowIndex, slots, totalSpan } = row;
   const remainingSpace = 12 - totalSpan;
@@ -269,12 +275,14 @@ export default function LayoutRow({
                 onDelete={() => onDeleteSlot(slot.id)}
                 onWidthChange={(width) => handleSlotWidthChange(slot.id, width)}
                 onConfigChange={(config) => handleSlotConfigChange(slot.id, config)}
+                onDuplicate={_onDuplicateSlot ? () => _onDuplicateSlot(slot.id) : undefined}
                 showDeleteButton={slots.length > 1 || !isOnlyRow}
                 isFirst={slotIndex === 0}
                 isLast={slotIndex === slots.length - 1}
                 forms={forms}
                 workspaceId={workspaceId}
                 pageId={pageId}
+                previewMode={_previewMode}
               />
             </DraggableSlot>
 

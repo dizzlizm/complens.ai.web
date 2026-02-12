@@ -425,6 +425,7 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
                 "SK": f"EMAIL#{date_str}#{email_id}",
                 "subject": email_data.get("subject", ""),
                 "recipient": email_data.get("recipient", ""),
+                "from_email": email_data.get("from_email", ""),
                 "content_type": email_data.get("content_type", ""),
                 "sent_at": email_data.get("sent_at", ""),
                 "ttl": ttl,
@@ -465,6 +466,7 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
                 {
                     "subject": item.get("subject", ""),
                     "recipient": item.get("recipient", ""),
+                    "from_email": item.get("from_email", ""),
                     "content_type": item.get("content_type", ""),
                     "sent_at": item.get("sent_at", ""),
                 }

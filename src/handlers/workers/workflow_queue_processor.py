@@ -104,9 +104,12 @@ def process_queue_record(record: dict) -> None:
         )
         return
 
-    # contact_id is optional for form submission triggers (form may not create contacts)
-    # but required for other trigger types like chat, tag_added, etc.
-    if not contact_id and trigger_type not in ("trigger_form_submitted", "trigger_webhook"):
+    # contact_id is optional for form submission, webhook, schedule, and visitor triggers
+    # but required for other trigger types like tag_added, etc.
+    if not contact_id and trigger_type not in (
+        "trigger_form_submitted", "trigger_webhook", "trigger_schedule",
+        "trigger_page_visit", "trigger_chat_started", "trigger_chat_message",
+    ):
         logger.warning(
             "Missing contact_id for trigger that requires it",
             message_id=message_id,
@@ -286,6 +289,41 @@ def _matches_trigger_config(
         configured_form_id = config.get("form_id")
         if configured_form_id and configured_form_id != trigger_data.get("form_id"):
             return False
+
+    elif trigger_type == "trigger_webhook":
+        # Check if webhook path matches
+        configured_path = config.get("webhook_path", "")
+        incoming_path = trigger_data.get("webhook_path", "")
+        if configured_path and configured_path.strip("/") != incoming_path.strip("/"):
+            return False
+
+    elif trigger_type == "trigger_schedule":
+        # Schedule triggers match by workflow_id if present
+        configured_workflow_id = trigger_data.get("workflow_id")
+        if configured_workflow_id:
+            # Only match the specific workflow this schedule was created for
+            return True
+        # Otherwise allow all schedule-triggered workflows to match
+        return True
+
+    elif trigger_type == "trigger_page_visit":
+        # Optionally filter by specific page
+        configured_page_id = config.get("page_id")
+        if configured_page_id and configured_page_id != trigger_data.get("page_id"):
+            return False
+
+    elif trigger_type in ("trigger_chat_started", "trigger_chat_message"):
+        # Optionally filter by specific page
+        configured_page_id = config.get("page_id")
+        if configured_page_id and configured_page_id != trigger_data.get("page_id"):
+            return False
+        # Chat message can also filter by keyword
+        if trigger_type == "trigger_chat_message":
+            configured_keywords = config.get("keywords", [])
+            if configured_keywords:
+                message_text = trigger_data.get("message", "").lower()
+                if not any(kw.lower() in message_text for kw in configured_keywords):
+                    return False
 
     elif trigger_type in ("trigger_sms_inbound", "trigger_email_inbound"):
         # Check channel-specific config if any

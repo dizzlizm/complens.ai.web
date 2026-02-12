@@ -3,12 +3,13 @@ import {
   useBusinessProfile,
   useUpdateBusinessProfile,
   useAnalyzeContent,
+  useAnalyzeDomain,
   INDUSTRY_OPTIONS,
   BUSINESS_TYPE_OPTIONS,
   BRAND_VOICE_OPTIONS,
 } from '../../lib/hooks/useAI';
 import { useToast } from '../Toast';
-import { Sparkles, Loader2 } from 'lucide-react';
+import { Sparkles, Loader2, Globe } from 'lucide-react';
 
 export interface BusinessProfileFormProps {
   workspaceId: string;
@@ -26,7 +27,9 @@ export default function BusinessProfileForm({
   const { data: profile, isLoading: profileLoading } = useBusinessProfile(workspaceId, pageId, siteId);
   const updateProfile = useUpdateBusinessProfile(workspaceId, pageId, siteId);
   const analyzeContent = useAnalyzeContent(workspaceId);
+  const analyzeDomain = useAnalyzeDomain(workspaceId);
 
+  const [websiteUrl, setWebsiteUrl] = useState('');
   const [showContentInput, setShowContentInput] = useState(false);
   const [pastedContent, setPastedContent] = useState('');
 
@@ -69,6 +72,35 @@ export default function BusinessProfileForm({
     updateProfile.mutate({ [field]: value });
   };
 
+  const handleAnalyzeUrl = async () => {
+    const url = websiteUrl.trim();
+    if (!url) return;
+    try {
+      const result = await analyzeDomain.mutateAsync({
+        domain: url,
+        site_id: siteId,
+        auto_update: true,
+      });
+      setWebsiteUrl('');
+      if (result) {
+        setProfileForm({
+          business_name: result.business_name || profileForm.business_name,
+          tagline: result.tagline || profileForm.tagline,
+          description: result.description || profileForm.description,
+          industry: result.industry || profileForm.industry,
+          business_type: result.business_type || profileForm.business_type,
+          brand_voice: result.brand_voice || profileForm.brand_voice,
+          target_audience: result.target_audience || profileForm.target_audience,
+          unique_value_proposition: result.unique_value_proposition || profileForm.unique_value_proposition,
+          achievements: result.achievements?.length ? result.achievements : profileForm.achievements,
+        });
+      }
+      toast.success('Website analyzed! Profile fields updated.');
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -86,7 +118,57 @@ export default function BusinessProfileForm({
         )}
       </div>
 
-      {/* Quick Import */}
+      {/* Import from Website URL */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-100">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="p-2 bg-blue-100 rounded-lg">
+            <Globe className="w-5 h-5 text-blue-600" />
+          </div>
+          <div className="flex-1">
+            <p className="font-medium text-gray-900">Import from Website</p>
+            <p className="text-sm text-gray-600">
+              Enter your website URL to auto-fill your business profile
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="url"
+            value={websiteUrl}
+            onChange={(e) => setWebsiteUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && websiteUrl.trim()) {
+                e.preventDefault();
+                handleAnalyzeUrl();
+              }
+            }}
+            placeholder="https://yourwebsite.com"
+            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            onClick={handleAnalyzeUrl}
+            disabled={!websiteUrl.trim() || analyzeDomain.isPending}
+            className="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"
+          >
+            {analyzeDomain.isPending ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Analyzing...
+              </>
+            ) : (
+              <>
+                <Globe className="w-4 h-4" />
+                Analyze
+              </>
+            )}
+          </button>
+        </div>
+        {analyzeDomain.isError && (
+          <p className="text-xs text-red-500 mt-2">Failed to analyze website. Check the URL and try again.</p>
+        )}
+      </div>
+
+      {/* Quick Import from Content */}
       <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl p-4 border border-purple-100">
         <button
           onClick={() => setShowContentInput(!showContentInput)}

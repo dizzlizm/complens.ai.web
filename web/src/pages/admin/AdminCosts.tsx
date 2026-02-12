@@ -11,6 +11,11 @@ import {
   AlertCircle,
   Loader2,
   Info,
+  HardDrive,
+  Eye,
+  ShieldCheck,
+  Mail,
+  MessageSquare,
 } from 'lucide-react';
 
 type Period = '1h' | '24h' | '7d' | '30d';
@@ -49,14 +54,40 @@ export default function AdminCosts() {
   const hasCosts = costs && !costs.error && Object.keys(costs.services).length > 0;
   const totalCost = costs?.total_cost ?? 0;
 
+  const knownServices = ['bedrock', 'lambda', 'dynamodb', 'api_gateway', 'step_functions', 's3', 'cloudwatch', 'cognito', 'ses', 'sqs'];
+  const serviceColors: Record<string, { bar: string; text: string }> = {
+    bedrock: { bar: 'bg-purple-500', text: 'text-purple-400' },
+    lambda: { bar: 'bg-blue-500', text: 'text-blue-400' },
+    dynamodb: { bar: 'bg-green-500', text: 'text-green-400' },
+    api_gateway: { bar: 'bg-orange-500', text: 'text-orange-400' },
+    step_functions: { bar: 'bg-pink-500', text: 'text-pink-400' },
+    s3: { bar: 'bg-yellow-500', text: 'text-yellow-400' },
+    cloudwatch: { bar: 'bg-cyan-500', text: 'text-cyan-400' },
+    cognito: { bar: 'bg-indigo-500', text: 'text-indigo-400' },
+    ses: { bar: 'bg-teal-500', text: 'text-teal-400' },
+    sqs: { bar: 'bg-rose-500', text: 'text-rose-400' },
+  };
+  const serviceLabels: Record<string, string> = {
+    bedrock: 'Bedrock',
+    lambda: 'Lambda',
+    dynamodb: 'DynamoDB',
+    api_gateway: 'API Gateway',
+    step_functions: 'Step Functions',
+    s3: 'S3',
+    cloudwatch: 'CloudWatch',
+    cognito: 'Cognito',
+    ses: 'SES',
+    sqs: 'SQS',
+  };
+
   const costBreakdown = hasCosts ? [
-    { name: 'Bedrock', cost: costs.services.bedrock?.cost ?? 0, color: 'bg-purple-500' },
-    { name: 'Lambda', cost: costs.services.lambda?.cost ?? 0, color: 'bg-blue-500' },
-    { name: 'DynamoDB', cost: costs.services.dynamodb?.cost ?? 0, color: 'bg-green-500' },
-    { name: 'API Gateway', cost: costs.services.api_gateway?.cost ?? 0, color: 'bg-orange-500' },
-    { name: 'Step Functions', cost: costs.services.step_functions?.cost ?? 0, color: 'bg-pink-500' },
+    ...knownServices.map(key => ({
+      name: serviceLabels[key],
+      cost: costs.services[key]?.cost ?? 0,
+      color: serviceColors[key]?.bar ?? 'bg-gray-500',
+    })),
     { name: 'Other', cost: Object.entries(costs.services)
-      .filter(([k]) => !['bedrock', 'lambda', 'dynamodb', 'api_gateway', 'step_functions'].includes(k))
+      .filter(([k]) => !knownServices.includes(k))
       .reduce((sum, [, v]) => sum + v.cost, 0), color: 'bg-gray-500' },
   ].filter(item => item.cost > 0) : [];
 
@@ -380,6 +411,47 @@ export default function AdminCosts() {
             </div>
           </div>
         </div>
+
+        {/* Additional Service Costs (cost-only, no CloudWatch metrics) */}
+        {hasCosts && (costs.services.s3 || costs.services.cloudwatch || costs.services.cognito || costs.services.ses || costs.services.sqs) && (
+          <>
+            <CostOnlyCard
+              name="S3"
+              icon={HardDrive}
+              color="text-yellow-400"
+              cost={costs.services.s3?.cost}
+              services={costs.services.s3?.aws_services}
+            />
+            <CostOnlyCard
+              name="CloudWatch"
+              icon={Eye}
+              color="text-cyan-400"
+              cost={costs.services.cloudwatch?.cost}
+              services={costs.services.cloudwatch?.aws_services}
+            />
+            <CostOnlyCard
+              name="Cognito"
+              icon={ShieldCheck}
+              color="text-indigo-400"
+              cost={costs.services.cognito?.cost}
+              services={costs.services.cognito?.aws_services}
+            />
+            <CostOnlyCard
+              name="SES"
+              icon={Mail}
+              color="text-teal-400"
+              cost={costs.services.ses?.cost}
+              services={costs.services.ses?.aws_services}
+            />
+            <CostOnlyCard
+              name="SQS"
+              icon={MessageSquare}
+              color="text-rose-400"
+              cost={costs.services.sqs?.cost}
+              services={costs.services.sqs?.aws_services}
+            />
+          </>
+        )}
       </div>
 
       {/* Pricing Reference */}
@@ -407,6 +479,41 @@ export default function AdminCosts() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function CostOnlyCard({
+  name,
+  icon: Icon,
+  color,
+  cost,
+  services,
+}: {
+  name: string;
+  icon: React.ComponentType<{ className?: string }>;
+  color: string;
+  cost: number | undefined;
+  services: string[] | undefined;
+}) {
+  if (!cost || cost === 0) return null;
+
+  return (
+    <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+          <Icon className={`w-5 h-5 ${color}`} />
+          {name}
+        </h2>
+        <span className={`text-lg font-bold ${color}`}>
+          ${cost.toFixed(2)}
+        </span>
+      </div>
+      {services && services.length > 0 && (
+        <p className="text-xs text-gray-500 truncate" title={services.join(', ')}>
+          {services.join(', ')}
+        </p>
+      )}
     </div>
   );
 }

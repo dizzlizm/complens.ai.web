@@ -1,6 +1,7 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { PageBlock, BlockType } from './types';
+import { Eye, Pencil, Undo2, Redo2, List } from 'lucide-react';
+import { PageBlock, BlockType, BLOCK_TYPES } from './types';
 import type { PageLayout } from '../../lib/hooks/usePages';
 import LayoutCanvas from './LayoutCanvas';
 import SynthesisPopup, { type ApplyOptions } from './SynthesisPopup';
@@ -10,6 +11,9 @@ import ScriptsSection from './ScriptsSection';
 import { SynthesisResult, useCreateCompletePage, useGenerateImage, useBusinessProfile } from '../../lib/hooks/useAI';
 import { useToast } from '../Toast';
 import PillTabs from '../ui/PillTabs';
+import { useUndoRedo } from './useUndoRedo';
+import BlockOutlinePanel from './BlockOutlinePanel';
+import CommandPalette from './CommandPalette';
 
 // Form data for the form block selector
 interface FormInfo {
@@ -120,6 +124,58 @@ export default function ContentTabV2({
 
   // Content subtab state
   const [contentSubTab, setContentSubTab] = useState<'blocks' | 'seo' | 'scripts'>('blocks');
+
+  // Editor mode: edit or preview
+  const [editorMode, setEditorMode] = useState<'edit' | 'preview'>('edit');
+
+  // Outline panel
+  const [showOutlinePanel, setShowOutlinePanel] = useState(false);
+
+  // Command palette
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+
+  // Undo/Redo — wraps blocks state
+  const { state: undoBlocks, set: setUndoBlocks, undo, redo, canUndo, canRedo } = useUndoRedo(blocks);
+
+  // Sync undo state changes back to parent
+  const handleBlocksChange = useCallback((newBlocks: PageBlock[]) => {
+    setUndoBlocks(newBlocks);
+    onChange(newBlocks);
+  }, [setUndoBlocks, onChange]);
+
+  // When undo/redo changes undoBlocks, sync to parent
+  useEffect(() => {
+    // Only sync if undoBlocks differs from blocks (undo/redo happened)
+    if (undoBlocks !== blocks && undoBlocks.length >= 0) {
+      onChange(undoBlocks);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undoBlocks]);
+
+  // Keyboard shortcuts: Cmd+Z, Cmd+Shift+Z, Cmd+K
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMod = e.metaKey || e.ctrlKey;
+      if (isMod && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      }
+      if (isMod && e.key === 'z' && e.shiftKey) {
+        e.preventDefault();
+        redo();
+      }
+      if (isMod && e.key === 'k') {
+        e.preventDefault();
+        setShowCommandPalette(prev => !prev);
+      }
+      if (isMod && e.shiftKey && e.key === 'O') {
+        e.preventDefault();
+        setShowOutlinePanel(prev => !prev);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo]);
 
   // Synthesis popup state
   const [showSynthesisPopup, setShowSynthesisPopup] = useState(false);
@@ -606,42 +662,107 @@ export default function ContentTabV2({
       {/* Blocks Subtab */}
       {contentSubTab === 'blocks' && (
         <>
-          {/* Layout Mode Toggle */}
+          {/* Toolbar: Layout toggle + Edit/Preview + Undo/Redo + Outline + Cmd+K */}
           <div className="flex items-center justify-between bg-white rounded-lg shadow px-4 py-2.5">
-            <span className="text-sm font-medium text-gray-700">Page Layout</span>
-            <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-gray-700">Page Layout</span>
+              <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+                <button
+                  onClick={() => onLayoutChange?.('full-bleed')}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    layout === 'full-bleed'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Full-bleed
+                </button>
+                <button
+                  onClick={() => onLayoutChange?.('contained')}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    layout === 'contained'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Contained
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1">
+              {/* Undo */}
               <button
-                onClick={() => onLayoutChange?.('full-bleed')}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  layout === 'full-bleed'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
+                onClick={undo}
+                disabled={!canUndo}
+                className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Undo (Cmd+Z)"
               >
-                Full-bleed
+                <Undo2 className="w-4 h-4" />
               </button>
+              {/* Redo */}
               <button
-                onClick={() => onLayoutChange?.('contained')}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  layout === 'contained'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
+                onClick={redo}
+                disabled={!canRedo}
+                className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Redo (Cmd+Shift+Z)"
               >
-                Contained
+                <Redo2 className="w-4 h-4" />
+              </button>
+
+              <div className="w-px h-5 bg-gray-200 mx-1" />
+
+              {/* Outline panel toggle */}
+              <button
+                onClick={() => setShowOutlinePanel(!showOutlinePanel)}
+                className={`p-1.5 rounded-lg transition-colors ${
+                  showOutlinePanel
+                    ? 'bg-indigo-100 text-indigo-700'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                }`}
+                title="Block outline (Cmd+Shift+O)"
+              >
+                <List className="w-4 h-4" />
+              </button>
+
+              {/* Edit/Preview toggle */}
+              <button
+                onClick={() => setEditorMode(editorMode === 'edit' ? 'preview' : 'edit')}
+                className={`p-1.5 rounded-lg transition-colors ${
+                  editorMode === 'preview'
+                    ? 'bg-indigo-100 text-indigo-700'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                }`}
+                title={editorMode === 'edit' ? 'Preview mode' : 'Edit mode'}
+              >
+                {editorMode === 'edit' ? <Eye className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
               </button>
             </div>
           </div>
 
-          {/* Visual Layout Canvas */}
-          <LayoutCanvas
-            blocks={blocks}
-            onChange={onChange}
-            onSynthesizeBlocks={handleSynthesizeBlocks}
-            forms={forms}
-            workspaceId={workspaceId}
-            pageId={pageId}
-          />
+          {/* Outline panel + Canvas layout */}
+          <div className="relative flex">
+            {/* Block Outline Panel */}
+            {showOutlinePanel && (
+              <BlockOutlinePanel
+                blocks={blocks}
+                onClose={() => setShowOutlinePanel(false)}
+              />
+            )}
+
+            {/* Visual Layout Canvas */}
+            <div className="flex-1 min-w-0">
+              <LayoutCanvas
+                blocks={blocks}
+                onChange={handleBlocksChange}
+                onSynthesizeBlocks={handleSynthesizeBlocks}
+                forms={forms}
+                workspaceId={workspaceId}
+                pageId={pageId}
+                previewMode={editorMode === 'preview'}
+              />
+            </div>
+          </div>
         </>
       )}
 
@@ -675,6 +796,33 @@ export default function ContentTabV2({
           onScriptsHeadChange={(value) => onScriptsHeadChange?.(value)}
           onScriptsBodyChange={(value) => onScriptsBodyChange?.(value)}
           defaultOpen
+        />
+      )}
+
+      {/* Command Palette */}
+      {showCommandPalette && (
+        <CommandPalette
+          blocks={blocks}
+          onClose={() => setShowCommandPalette(false)}
+          onAddBlock={(type) => {
+            const typeInfo = BLOCK_TYPES.find(b => b.type === type);
+            const newBlock: PageBlock = {
+              id: Math.random().toString(36).substring(2, 10),
+              type,
+              config: typeInfo?.defaultConfig || {},
+              order: blocks.length,
+              width: 4,
+              row: blocks.length > 0 ? Math.max(...blocks.map(b => b.row ?? 0)) + 1 : 0,
+              colSpan: 12,
+              colStart: 0,
+            };
+            handleBlocksChange([...blocks, newBlock]);
+          }}
+          onUndo={undo}
+          onRedo={redo}
+          onTogglePreview={() => setEditorMode(editorMode === 'edit' ? 'preview' : 'edit')}
+          canUndo={canUndo}
+          canRedo={canRedo}
         />
       )}
 

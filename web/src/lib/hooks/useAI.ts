@@ -746,6 +746,46 @@ export function useSynthesizeGenerate(workspaceId: string) {
   });
 }
 
+// Autofill node config
+export interface AutofillNodeInput {
+  node_id?: string;
+  node_type: string;
+  current_config: Record<string, unknown>;
+  nodes: Array<{ id: string; type?: string; data?: { nodeType?: string; label?: string; config?: Record<string, unknown> } }>;
+  edges: Array<{ source: string; target: string }>;
+}
+
+export function useAutofillNode(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: AutofillNodeInput) => {
+      const { data } = await api.post<{ suggested_config: Record<string, unknown> }>(
+        `/workspaces/${workspaceId}/ai/autofill-node`,
+        input
+      );
+      return data.suggested_config;
+    },
+  });
+}
+
+// Analyze domain website for brand info
+export interface AnalyzeDomainInput {
+  domain: string;
+  site_id?: string;
+  auto_update?: boolean;
+}
+
+export function useAnalyzeDomain(workspaceId: string) {
+  return useMutation({
+    mutationFn: async (input: AnalyzeDomainInput) => {
+      const { data } = await api.post<{ analysis: Partial<BusinessProfile> }>(
+        `/workspaces/${workspaceId}/ai/analyze-domain`,
+        input
+      );
+      return data.analysis;
+    },
+  });
+}
+
 // Industry options for dropdowns
 export const INDUSTRY_OPTIONS = [
   { value: 'technology', label: 'Technology' },

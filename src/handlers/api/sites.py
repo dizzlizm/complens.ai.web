@@ -8,6 +8,7 @@ import structlog
 from pydantic import ValidationError as PydanticValidationError
 
 from complens.models.site import CreateSiteRequest, Site, UpdateSiteRequest
+from complens.repositories.page import PageRepository
 from complens.repositories.site import SiteRepository
 from complens.services.feature_gate import FeatureGateError, count_resources, enforce_limit, get_workspace_plan
 from complens.utils.auth import get_auth_context, require_workspace_access
@@ -73,7 +74,12 @@ def list_sites(
     workspace_id: str,
     event: dict,
 ) -> dict:
-    """List sites in a workspace."""
+    """List sites in a workspace.
+
+    Auto-creates a default "My Site" if the workspace has no sites yet.
+    This ensures free-tier users can immediately access pages without
+    needing to verify a domain first.
+    """
     query_params = event.get("queryStringParameters", {}) or {}
     limit = min(int(query_params.get("limit", 50)), 100)
     cursor = query_params.get("cursor")
@@ -83,6 +89,12 @@ def list_sites(
         last_key = json.loads(base64.b64decode(cursor).decode())
 
     sites, next_key = repo.list_by_workspace(workspace_id, limit, last_key)
+
+    # Auto-create a default site for new workspaces (first page load)
+    if not sites and not last_key:
+        default_site = _ensure_default_site(repo, workspace_id)
+        if default_site:
+            sites = [default_site]
 
     next_cursor = None
     if next_key:
@@ -95,6 +107,48 @@ def list_sites(
             "next_cursor": next_cursor,
         },
     })
+
+
+def _ensure_default_site(repo: SiteRepository, workspace_id: str) -> Site | None:
+    """Create a default site for a workspace and adopt any unassigned pages.
+
+    Free-tier users get one site automatically so they can start building
+    pages immediately without needing to verify a custom domain.
+    """
+    try:
+        site = Site(
+            workspace_id=workspace_id,
+            domain_name="",
+            name="My Site",
+        )
+        site = repo.create_site(site)
+        logger.info("Default site auto-created", site_id=site.id, workspace_id=workspace_id)
+
+        # Adopt any unassigned pages (e.g., demo page from onboarding)
+        _assign_orphan_pages(workspace_id, site.id)
+
+        return site
+    except Exception as e:
+        logger.error("Failed to auto-create default site", error=str(e), workspace_id=workspace_id)
+        return None
+
+
+def _assign_orphan_pages(workspace_id: str, site_id: str) -> None:
+    """Assign pages with no site_id to the given site."""
+    try:
+        page_repo = PageRepository()
+        pages, _ = page_repo.list_by_workspace(workspace_id, limit=100)
+        adopted = 0
+        for page in pages:
+            if not page.site_id:
+                page.site_id = site_id
+                page.update_timestamp()
+                page_repo.update_page(page)
+                adopted += 1
+        if adopted:
+            logger.info("Orphan pages adopted", count=adopted, site_id=site_id, workspace_id=workspace_id)
+    except Exception as e:
+        logger.warning("Failed to adopt orphan pages", error=str(e))
 
 
 def get_site(
@@ -132,8 +186,8 @@ def create_site(
     site_count = count_resources(repo.table, workspace_id, "SITE#")
     enforce_limit(plan, "sites", site_count)
 
-    # Check for duplicate domain in this workspace
-    existing = repo.get_by_domain(workspace_id, request.domain_name)
+    # Check for duplicate domain in this workspace (skip for sites with no domain)
+    existing = repo.get_by_domain(workspace_id, request.domain_name) if request.domain_name else None
     if existing:
         return error(
             f"Site with domain '{request.domain_name}' already exists",
@@ -185,20 +239,9 @@ def update_site(
                 error_code="DUPLICATE_DOMAIN",
             )
 
-    # Validate default_page_id if being set
-    if request.default_page_id is not None and "default_page_id" in request.model_fields_set:
-        from complens.repositories.page import PageRepository
-        page_repo = PageRepository()
-        page = page_repo.get_by_id(workspace_id, request.default_page_id)
-        if not page:
-            return error("Page not found", 404)
-        if page.site_id and page.site_id != site_id:
-            return error("Page does not belong to this site", 400)
-
     update_data = request.model_dump(exclude_unset=True)
     for field, value in update_data.items():
-        # Allow None for default_page_id (to clear it)
-        if value is not None or field == "default_page_id":
+        if value is not None:
             setattr(site, field, value)
 
     site = repo.update_site(site)

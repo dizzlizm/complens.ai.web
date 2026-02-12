@@ -31,6 +31,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         GET    /workspaces/{ws}/email-warmup/{domain}           Get status
         POST   /workspaces/{ws}/email-warmup/{domain}/pause     Pause
         POST   /workspaces/{ws}/email-warmup/{domain}/resume    Resume
+        POST   /workspaces/{ws}/email-warmup/{domain}/send-test Send test email
         DELETE /workspaces/{ws}/email-warmup/{domain}           Cancel
     """
     try:
@@ -47,7 +48,13 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         repo = WarmupDomainRepository()
         service = WarmupService(repo=repo)
 
-        if path.endswith("/setup-domain") and http_method == "POST":
+        if path.endswith("/verify-from-email") and http_method == "POST" and domain:
+            return verify_from_email(service, workspace_id, domain, event)
+        elif path.endswith("/confirm-from-email") and http_method == "POST" and domain:
+            return confirm_from_email(service, workspace_id, domain, event)
+        elif path.endswith("/send-test") and http_method == "POST" and domain:
+            return send_test_email(service, workspace_id, domain, event)
+        elif path.endswith("/setup-domain") and http_method == "POST":
             return setup_domain_handler(event, workspace_id)
         elif "/domains/" in path and http_method == "DELETE":
             # DELETE /email-warmup/domains/{domain}
@@ -372,6 +379,199 @@ def get_warmup_log(
     emails = repo.get_recent_warmup_emails(domain, today, limit=50)
 
     return success({"items": emails})
+
+
+def send_test_email(
+    service: WarmupService, workspace_id: str, domain: str, event: dict,
+) -> dict:
+    """Generate and send a single test warmup email on demand.
+
+    Bypasses warmup rate limits so the user can verify their setup works.
+
+    Args:
+        service: WarmupService.
+        workspace_id: Workspace ID.
+        domain: Email sending domain.
+        event: API Gateway event.
+
+    Returns:
+        API response with sent email details.
+    """
+    warmup = service.get_status(domain)
+    if not warmup or warmup.workspace_id != workspace_id:
+        return not_found("warmup_domain", domain)
+
+    body = json.loads(event.get("body") or "{}")
+    recipient = body.get("recipient")
+
+    # Fall back to first seed list email if no recipient specified
+    if not recipient:
+        if warmup.seed_list:
+            recipient = warmup.seed_list[0]
+        else:
+            return error("No recipient specified and seed list is empty", 400)
+
+    from complens.services.warmup_email_generator import WarmupEmailGenerator
+
+    generator = WarmupEmailGenerator()
+    email_data = generator.generate_email(
+        workspace_id=workspace_id,
+        domain=domain,
+        recipient_email=recipient,
+    )
+
+    from_name = warmup.from_name or domain
+    local_part = warmup.from_email_local if (warmup.from_email_local and warmup.from_email_verified) else "noreply"
+    from_email = f"{from_name} <{local_part}@{domain}>"
+
+    email_service = EmailService()
+    result = email_service.send_email(
+        to=recipient,
+        subject=email_data["subject"],
+        body_text=email_data.get("body_text"),
+        body_html=email_data.get("body_html"),
+        from_email=from_email,
+        _skip_warmup_check=True,
+    )
+
+    logger.info(
+        "Test warmup email sent",
+        domain=domain,
+        recipient=recipient,
+        subject=email_data["subject"][:50],
+        message_id=result.get("message_id"),
+    )
+
+    return success({
+        "subject": email_data["subject"],
+        "content_type": email_data.get("content_type"),
+        "recipient": recipient,
+        "message_id": result.get("message_id"),
+    })
+
+
+def verify_from_email(
+    service: WarmupService,
+    workspace_id: str,
+    domain: str,
+    event: dict,
+) -> dict:
+    """Request SES email identity verification for a from-address.
+
+    Uses SES per-address verification instead of domain-level DKIM so users
+    with complex DNS don't have to blanket-approve *.domain.com.  SES sends
+    its own verification email with a click-to-verify link.
+
+    Args:
+        service: WarmupService.
+        workspace_id: Workspace ID.
+        domain: Email sending domain.
+        event: API Gateway event.
+
+    Returns:
+        API response confirming SES verification was requested.
+    """
+    warmup = service.get_status(domain)
+    if not warmup or warmup.workspace_id != workspace_id:
+        return not_found("warmup_domain", domain)
+
+    body = json.loads(event.get("body", "{}"))
+    local_part = body.get("from_email_local", "").strip().lower()
+
+    if not local_part:
+        return error("from_email_local is required", 400)
+
+    target_email = f"{local_part}@{domain}"
+
+    # Request SES to verify this specific email address
+    ses = boto3.client("ses")
+    try:
+        ses.verify_email_identity(EmailAddress=target_email)
+    except Exception as e:
+        logger.error("SES verify_email_identity failed", email=target_email, error=str(e))
+        return error("Failed to request email verification", 500)
+
+    # Store the pending verification
+    repo = WarmupDomainRepository()
+    warmup.from_email_local = local_part
+    warmup.from_email_verified = False
+    warmup.from_email_verify_code = None
+    warmup.update_timestamp()
+    repo.update(warmup)
+
+    logger.info(
+        "SES from-email verification requested",
+        domain=domain,
+        target_email=target_email,
+    )
+
+    return success({"sent_to": target_email})
+
+
+def confirm_from_email(
+    service: WarmupService,
+    workspace_id: str,
+    domain: str,
+    event: dict,
+) -> dict:
+    """Check SES verification status for a from-email address.
+
+    After the user clicks the SES verification link, this endpoint checks
+    whether SES has marked the address as verified.
+
+    Args:
+        service: WarmupService.
+        workspace_id: Workspace ID.
+        domain: Email sending domain.
+        event: API Gateway event.
+
+    Returns:
+        API response with current verification status.
+    """
+    warmup = service.get_status(domain)
+    if not warmup or warmup.workspace_id != workspace_id:
+        return not_found("warmup_domain", domain)
+
+    if not warmup.from_email_local:
+        return error("No from-email address pending verification", 400)
+
+    target_email = f"{warmup.from_email_local}@{domain}"
+
+    # Check SES verification status
+    ses = boto3.client("ses")
+    try:
+        response = ses.get_identity_verification_attributes(
+            Identities=[target_email],
+        )
+        attrs = response.get("VerificationAttributes", {}).get(target_email, {})
+        ses_status = attrs.get("VerificationStatus", "NotStarted")
+    except Exception as e:
+        logger.error("SES get_identity_verification_attributes failed", email=target_email, error=str(e))
+        return error("Failed to check verification status", 500)
+
+    if ses_status == "Success":
+        # Mark as verified in our model
+        repo = WarmupDomainRepository()
+        warmup.from_email_verified = True
+        warmup.from_email_verify_code = None
+        warmup.update_timestamp()
+        repo.update(warmup)
+
+        logger.info(
+            "From-email verified via SES",
+            domain=domain,
+            from_email=target_email,
+        )
+
+        return success(
+            WarmupStatusResponse.from_warmup_domain(warmup).model_dump(mode="json")
+        )
+
+    return success({
+        "verified": False,
+        "ses_status": ses_status,
+        "email": target_email,
+    })
 
 
 def _auto_set_from_email(workspace_id: str, domain: str) -> None:

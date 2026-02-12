@@ -120,7 +120,8 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         """List all workspaces across all agencies.
 
         Used by super admin panel for platform-wide workspace view.
-        Uses GSI4 (ALL_WORKSPACES partition) with scan fallback for pre-GSI4 items.
+        Uses GSI4 (ALL_WORKSPACES partition) for workspaces that have been
+        indexed, with a scan fallback to catch any pre-GSI4 items.
 
         Args:
             limit: Maximum workspaces to return.
@@ -129,7 +130,7 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         Returns:
             Tuple of (workspaces, last_evaluated_key).
         """
-        # Try GSI4 first (efficient)
+        # Try GSI4 first (efficient - all workspaces stored under ALL_WORKSPACES partition)
         try:
             workspaces, next_key = self.query(
                 pk="ALL_WORKSPACES",
@@ -138,15 +139,22 @@ class WorkspaceRepository(BaseRepository[Workspace]):
                 limit=limit,
                 last_key=last_key,
             )
-            if workspaces:
+            # Only trust GSI4 if it returned a full page (meaning it has complete data)
+            # or if there's a next_key (meaning there's more data)
+            if len(workspaces) >= limit or (workspaces and next_key):
                 return workspaces, next_key
+            # If GSI4 returned some but fewer than limit with no next_key,
+            # it might be incomplete. Fall through to scan to get all items.
+            if workspaces:
+                gsi4_ids = {ws.id for ws in workspaces}
+            else:
+                gsi4_ids = set()
         except Exception:
-            pass
+            gsi4_ids = set()
 
-        # Fallback to scan for pre-GSI4 data
-        # Note: DynamoDB Limit applies BEFORE FilterExpression, so a scan
-        # with Limit=50 may return only 1-2 matching items if most items
-        # in the table don't match. We must loop until we have enough.
+        # Scan fallback to catch pre-GSI4 items (or as primary if GSI4 is empty).
+        # DynamoDB Limit applies BEFORE FilterExpression, so we must loop
+        # until we have enough matching items.
         from botocore.exceptions import ClientError
 
         try:
@@ -157,24 +165,48 @@ class WorkspaceRepository(BaseRepository[Workspace]):
                 "Limit": 500,
             }
 
-            if last_key:
+            if last_key and not gsi4_ids:
                 scan_kwargs["ExclusiveStartKey"] = last_key
 
+            last_evaluated_key = None
             while len(workspaces) < limit:
                 response = self.table.scan(**scan_kwargs)
-                workspaces.extend(
-                    self.model_class.from_dynamodb(item)
-                    for item in response.get("Items", [])
-                )
+                for item in response.get("Items", []):
+                    ws = self.model_class.from_dynamodb(item)
+                    # Deduplicate against GSI4 results
+                    if ws.id not in gsi4_ids:
+                        workspaces.append(ws)
+                    if len(workspaces) >= limit:
+                        break
                 last_evaluated_key = response.get("LastEvaluatedKey")
                 if not last_evaluated_key:
                     break
                 scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
 
-            # If we got more than requested, there's still data to page through
-            if len(workspaces) >= limit and last_evaluated_key:
+            # Prepend any GSI4 results we found earlier
+            if gsi4_ids:
+                gsi4_workspaces, _ = self.query(
+                    pk="ALL_WORKSPACES",
+                    sk_begins_with="WS#",
+                    index_name="GSI4",
+                    limit=1000,
+                )
+                # Merge: GSI4 items first, then scan-only items
+                seen = set()
+                merged: list[Workspace] = []
+                for ws in gsi4_workspaces:
+                    if ws.id not in seen:
+                        seen.add(ws.id)
+                        merged.append(ws)
+                for ws in workspaces:
+                    if ws.id not in seen:
+                        seen.add(ws.id)
+                        merged.append(ws)
+                workspaces = merged
+
+            if len(workspaces) > limit:
                 return workspaces[:limit], last_evaluated_key
-            return workspaces, None
+            return workspaces, last_evaluated_key if len(workspaces) >= limit else None
 
         except ClientError as e:
             import structlog

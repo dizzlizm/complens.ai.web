@@ -32,7 +32,7 @@ export default function TextBlock({ config, isEditing, onConfigChange }: TextBlo
           <textarea
             value={content}
             onChange={(e) => handleChange('content', e.target.value)}
-            className={`w-full text-gray-700 leading-relaxed bg-transparent border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded-lg p-4 resize-none min-h-[150px] ${alignmentClass}`}
+            className={`w-full text-gray-700 leading-relaxed bg-transparent border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-200 rounded-lg p-4 resize-none min-h-[150px] hover:border-dashed hover:border-indigo-300 focus:border-solid focus:border-indigo-400 ${alignmentClass}`}
             placeholder="Enter your text content here..."
           />
         ) : (

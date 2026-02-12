@@ -340,6 +340,11 @@ class AdminService:
             "pages": 0,
             "workflows": 0,
             "forms": 0,
+            "documents": 0,
+            "sites": 0,
+            "team_members": 0,
+            "deals": 0,
+            "conversations": 0,
             "workflow_runs": {"total": 0, "succeeded": 0, "failed": 0},
         }
 
@@ -349,6 +354,11 @@ class AdminService:
             "pages": "PAGE#",
             "workflows": "WF#",
             "forms": "FORM#",
+            "documents": "DOC#",
+            "sites": "SITE#",
+            "team_members": "MEMBER#",
+            "deals": "DEAL#",
+            "conversations": "CONV#",
         }
 
         for key, prefix in entity_prefixes.items():
@@ -896,6 +906,483 @@ class AdminService:
             logger.warning("Failed to get Step Functions metrics", error=str(e))
 
         return metrics
+
+    def delete_workspace_data(self, workspace_id: str, agency_id: str) -> dict:
+        """Delete a workspace and all associated data (cascade delete).
+
+        Args:
+            workspace_id: The workspace ID.
+            agency_id: The agency/owner ID for the workspace record.
+
+        Returns:
+            Dict with deletion counts.
+        """
+        import boto3 as _boto3
+
+        table = _boto3.resource("dynamodb").Table(self._table_name)
+        deleted_count = 0
+
+        # 1. Query all items under WS#{workspace_id}
+        ws_pk = f"WS#{workspace_id}"
+        ws_items = self._query_all_items(ws_pk)
+
+        # Collect child entity IDs for deeper cleanup
+        workflow_ids = []
+        conversation_ids = []
+        form_ids = []
+
+        for item in ws_items:
+            sk = item.get("SK", "")
+            if sk.startswith("WF#"):
+                workflow_ids.append(sk.replace("WF#", ""))
+            elif sk.startswith("CONV#"):
+                conversation_ids.append(sk.replace("CONV#", ""))
+            elif sk.startswith("FORM#"):
+                form_ids.append(sk.replace("FORM#", ""))
+
+        # 2. For each workflow, get runs and run steps
+        child_items = []
+        for wf_id in workflow_ids:
+            wf_items = self._query_all_items(f"WF#{wf_id}")
+            child_items.extend(wf_items)
+            # Get run steps
+            for wf_item in wf_items:
+                wf_sk = wf_item.get("SK", "")
+                if wf_sk.startswith("RUN#"):
+                    run_id = wf_sk.replace("RUN#", "")
+                    run_items = self._query_all_items(f"RUN#{run_id}")
+                    child_items.extend(run_items)
+
+        # 3. For each conversation, get messages
+        for conv_id in conversation_ids:
+            conv_items = self._query_all_items(f"CONV#{conv_id}")
+            child_items.extend(conv_items)
+
+        # 4. For each form, get submissions
+        for form_id in form_ids:
+            form_items = self._query_all_items(f"FORM#{form_id}")
+            child_items.extend(form_items)
+
+        # 5. Query warmup domains via GSI1
+        warmup_items = []
+        try:
+            response = table.query(
+                IndexName="GSI1",
+                KeyConditionExpression="GSI1PK = :pk",
+                ExpressionAttributeValues={":pk": f"WS#{workspace_id}#WARMUPS"},
+            )
+            warmup_items = response.get("Items", [])
+            while "LastEvaluatedKey" in response:
+                response = table.query(
+                    IndexName="GSI1",
+                    KeyConditionExpression="GSI1PK = :pk",
+                    ExpressionAttributeValues={":pk": f"WS#{workspace_id}#WARMUPS"},
+                    ExclusiveStartKey=response["LastEvaluatedKey"],
+                )
+                warmup_items.extend(response.get("Items", []))
+        except ClientError as e:
+            logger.warning("Failed to query warmup domains", workspace_id=workspace_id, error=str(e))
+
+        # 6. Batch delete everything
+        all_items = ws_items + child_items + warmup_items
+        with table.batch_writer() as batch:
+            seen_keys = set()
+            for item in all_items:
+                pk = item.get("PK", "")
+                sk = item.get("SK", "")
+                key = (pk, sk)
+                if key not in seen_keys and pk and sk:
+                    seen_keys.add(key)
+                    batch.delete_item(Key={"PK": pk, "SK": sk})
+                    deleted_count += 1
+
+        # 7. Delete the workspace record itself
+        try:
+            table.delete_item(Key={"PK": f"AGENCY#{agency_id}", "SK": f"WS#{workspace_id}"})
+            deleted_count += 1
+        except ClientError as e:
+            logger.warning("Failed to delete workspace record", workspace_id=workspace_id, error=str(e))
+
+        # 8. Clean up Cognito workspace_ids for all team members
+        for item in ws_items:
+            sk = item.get("SK", "")
+            if sk.startswith("MEMBER#"):
+                member_user_id = sk.replace("MEMBER#", "")
+                try:
+                    self._remove_workspace_from_cognito(member_user_id, workspace_id)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to update Cognito for team member",
+                        user_id=member_user_id,
+                        error=str(e),
+                    )
+
+        logger.info(
+            "Workspace deleted",
+            workspace_id=workspace_id,
+            deleted_items=deleted_count,
+        )
+
+        return {"deleted_items": deleted_count}
+
+    def delete_user(self, user_id: str) -> dict:
+        """Delete a Cognito user and clean up workspace data.
+
+        Args:
+            user_id: The Cognito username/sub.
+
+        Returns:
+            Dict with deletion summary.
+        """
+        user = self.get_cognito_user(user_id)
+        if not user:
+            raise ClientError(
+                {"Error": {"Code": "UserNotFoundException", "Message": "User not found"}},
+                "AdminGetUser",
+            )
+
+        agency_id = user.get("agency_id") or user.get("sub") or user_id
+        workspace_ids = user.get("workspace_ids", [])
+        deleted_workspaces = []
+        removed_from_workspaces = []
+
+        from complens.repositories.workspace import WorkspaceRepository
+
+        ws_repo = WorkspaceRepository()
+
+        # For workspaces where user is OWNER (agency_id matches), delete entire workspace
+        owned_workspaces = ws_repo.list_by_agency(agency_id)
+        owned_ws_ids = {ws.id for ws in owned_workspaces}
+
+        for ws in owned_workspaces:
+            self.delete_workspace_data(ws.id, agency_id)
+            deleted_workspaces.append(ws.id)
+
+        # For workspaces where user is a member (not owner), remove membership
+        from complens.repositories.team import TeamRepository
+
+        team_repo = TeamRepository()
+        for ws_id in workspace_ids:
+            if ws_id not in owned_ws_ids:
+                team_repo.remove_member(ws_id, user_id)
+                removed_from_workspaces.append(ws_id)
+
+        # Delete the Cognito user
+        try:
+            self.cognito.admin_delete_user(
+                UserPoolId=self._user_pool_id,
+                Username=user_id,
+            )
+        except ClientError as e:
+            logger.error("Failed to delete Cognito user", user_id=user_id, error=str(e))
+            raise
+
+        logger.info(
+            "User deleted",
+            user_id=user_id,
+            deleted_workspaces=deleted_workspaces,
+            removed_from_workspaces=removed_from_workspaces,
+        )
+
+        return {
+            "user_id": user_id,
+            "deleted_workspaces": deleted_workspaces,
+            "removed_from_workspaces": removed_from_workspaces,
+        }
+
+    def add_member_to_workspace(
+        self, workspace_id: str, user_id: str, role: str
+    ) -> dict:
+        """Add a Cognito user directly to a workspace (bypassing invitation flow).
+
+        Args:
+            workspace_id: The workspace ID.
+            user_id: The Cognito user ID.
+            role: The role to assign (admin, member).
+
+        Returns:
+            Dict with the new member info.
+        """
+        from complens.models.team_member import MemberStatus, TeamMember, TeamRole
+        from complens.repositories.team import TeamRepository
+
+        # Look up user in Cognito
+        user = self.get_cognito_user(user_id)
+        if not user:
+            raise ClientError(
+                {"Error": {"Code": "UserNotFoundException", "Message": "User not found"}},
+                "AdminGetUser",
+            )
+
+        team_repo = TeamRepository()
+
+        # Check if already a member
+        existing = team_repo.get_member(workspace_id, user_id)
+        if existing and existing.status == MemberStatus.ACTIVE:
+            return {
+                "member": {
+                    "user_id": existing.user_id,
+                    "email": existing.email,
+                    "name": existing.name,
+                    "role": existing.role,
+                    "status": existing.status,
+                }
+            }
+
+        member = TeamMember(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            email=user.get("email", ""),
+            name=user.get("name", ""),
+            role=TeamRole(role),
+            status=MemberStatus.ACTIVE,
+        )
+        team_repo.add_member(member)
+
+        # Update Cognito workspace_ids
+        self._add_workspace_to_cognito(user_id, workspace_id)
+
+        logger.info(
+            "Member added to workspace by admin",
+            workspace_id=workspace_id,
+            user_id=user_id,
+            role=role,
+        )
+
+        return {
+            "member": {
+                "user_id": member.user_id,
+                "email": member.email,
+                "name": member.name,
+                "role": member.role,
+                "status": member.status,
+            }
+        }
+
+    def update_member_role(
+        self, workspace_id: str, user_id: str, role: str
+    ) -> dict:
+        """Update a workspace member's role.
+
+        Args:
+            workspace_id: The workspace ID.
+            user_id: The Cognito user ID.
+            role: The new role.
+
+        Returns:
+            Dict with updated member info.
+        """
+        from complens.models.team_member import TeamRole
+        from complens.repositories.team import TeamRepository
+
+        team_repo = TeamRepository()
+        member = team_repo.get_member(workspace_id, user_id)
+        if not member:
+            return None
+
+        member.role = TeamRole(role)
+        team_repo.update_member(member)
+
+        logger.info(
+            "Member role updated by admin",
+            workspace_id=workspace_id,
+            user_id=user_id,
+            role=role,
+        )
+
+        return {
+            "member": {
+                "user_id": member.user_id,
+                "email": member.email,
+                "name": member.name,
+                "role": member.role,
+                "status": member.status,
+            }
+        }
+
+    def remove_member_from_workspace(self, workspace_id: str, user_id: str) -> bool:
+        """Remove a member from a workspace.
+
+        Args:
+            workspace_id: The workspace ID.
+            user_id: The Cognito user ID.
+
+        Returns:
+            True if removed.
+        """
+        from complens.repositories.team import TeamRepository
+
+        team_repo = TeamRepository()
+        team_repo.remove_member(workspace_id, user_id)
+
+        # Update Cognito workspace_ids
+        try:
+            self._remove_workspace_from_cognito(user_id, workspace_id)
+        except Exception as e:
+            logger.warning(
+                "Failed to update Cognito workspace_ids",
+                user_id=user_id,
+                error=str(e),
+            )
+
+        logger.info(
+            "Member removed from workspace by admin",
+            workspace_id=workspace_id,
+            user_id=user_id,
+        )
+
+        return True
+
+    def toggle_super_admin(self, user_id: str) -> dict:
+        """Toggle super admin status for a user.
+
+        Args:
+            user_id: The Cognito user ID.
+
+        Returns:
+            Dict with the new super admin status.
+        """
+        user = self.get_cognito_user(user_id)
+        if not user:
+            raise ClientError(
+                {"Error": {"Code": "UserNotFoundException", "Message": "User not found"}},
+                "AdminGetUser",
+            )
+
+        current = user.get("is_super_admin", False)
+        new_value = not current
+
+        self.cognito.admin_update_user_attributes(
+            UserPoolId=self._user_pool_id,
+            Username=user_id,
+            UserAttributes=[
+                {"Name": "custom:is_super_admin", "Value": "true" if new_value else "false"},
+            ],
+        )
+
+        logger.info(
+            "Super admin toggled",
+            user_id=user_id,
+            is_super_admin=new_value,
+        )
+
+        return {"user_id": user_id, "is_super_admin": new_value}
+
+    def list_workspace_members(self, workspace_id: str) -> dict:
+        """List team members and pending invitations for a workspace.
+
+        Args:
+            workspace_id: The workspace ID.
+
+        Returns:
+            Dict with members and invitations.
+        """
+        from complens.repositories.team import InvitationRepository, TeamRepository
+
+        team_repo = TeamRepository()
+        invitation_repo = InvitationRepository()
+
+        members = team_repo.list_members(workspace_id)
+        invitations = invitation_repo.list_pending(workspace_id)
+
+        return {
+            "members": [
+                {
+                    "user_id": m.user_id,
+                    "email": m.email,
+                    "name": m.name,
+                    "role": m.role,
+                    "status": m.status,
+                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                }
+                for m in members
+            ],
+            "invitations": [
+                {
+                    "email": inv.email,
+                    "role": inv.role,
+                    "invited_by": inv.invited_by,
+                    "expires_at": inv.expires_at.isoformat() if inv.expires_at else None,
+                }
+                for inv in invitations
+            ],
+        }
+
+    def _query_all_items(self, pk: str) -> list[dict]:
+        """Query all items for a given partition key.
+
+        Args:
+            pk: The partition key value.
+
+        Returns:
+            List of raw DynamoDB items.
+        """
+        import boto3 as _boto3
+
+        table = _boto3.resource("dynamodb").Table(self._table_name)
+        items = []
+
+        try:
+            response = table.query(
+                KeyConditionExpression="PK = :pk",
+                ExpressionAttributeValues={":pk": pk},
+            )
+            items.extend(response.get("Items", []))
+            while "LastEvaluatedKey" in response:
+                response = table.query(
+                    KeyConditionExpression="PK = :pk",
+                    ExpressionAttributeValues={":pk": pk},
+                    ExclusiveStartKey=response["LastEvaluatedKey"],
+                )
+                items.extend(response.get("Items", []))
+        except ClientError as e:
+            logger.warning("Failed to query items", pk=pk, error=str(e))
+
+        return items
+
+    def _remove_workspace_from_cognito(self, user_id: str, workspace_id: str) -> None:
+        """Remove a workspace ID from a user's Cognito workspace_ids attribute.
+
+        Args:
+            user_id: The Cognito user ID.
+            workspace_id: The workspace ID to remove.
+        """
+        user = self.get_cognito_user(user_id)
+        if not user:
+            return
+
+        ws_ids = user.get("workspace_ids", [])
+        if workspace_id in ws_ids:
+            ws_ids.remove(workspace_id)
+            self.cognito.admin_update_user_attributes(
+                UserPoolId=self._user_pool_id,
+                Username=user_id,
+                UserAttributes=[
+                    {"Name": "custom:workspace_ids", "Value": ",".join(ws_ids)},
+                ],
+            )
+
+    def _add_workspace_to_cognito(self, user_id: str, workspace_id: str) -> None:
+        """Add a workspace ID to a user's Cognito workspace_ids attribute.
+
+        Args:
+            user_id: The Cognito user ID.
+            workspace_id: The workspace ID to add.
+        """
+        user = self.get_cognito_user(user_id)
+        if not user:
+            return
+
+        ws_ids = user.get("workspace_ids", [])
+        if workspace_id not in ws_ids:
+            ws_ids.append(workspace_id)
+            self.cognito.admin_update_user_attributes(
+                UserPoolId=self._user_pool_id,
+                Username=user_id,
+                UserAttributes=[
+                    {"Name": "custom:workspace_ids", "Value": ",".join(ws_ids)},
+                ],
+            )
 
     def get_platform_stats(self) -> dict:
         """Get platform-wide aggregate statistics.

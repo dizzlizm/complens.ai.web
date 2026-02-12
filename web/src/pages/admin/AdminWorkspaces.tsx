@@ -1,12 +1,15 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { useAdminWorkspaces } from '@/lib/hooks/useAdmin';
-import { Building2, Search, ChevronRight } from 'lucide-react';
+import { useAdminWorkspaces, usePlatformStats } from '@/lib/hooks/useAdmin';
+import { Building2, Search, ChevronRight, Filter } from 'lucide-react';
 
 export default function AdminWorkspaces() {
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [searchQuery, setSearchQuery] = useState('');
+  const [planFilter, setPlanFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
   const { data, isLoading, error } = useAdminWorkspaces({ limit: 50, cursor });
+  const { data: platformStats } = usePlatformStats();
 
   const getPlanBadgeColor = (plan: string) => {
     switch (plan) {
@@ -27,16 +30,32 @@ export default function AdminWorkspaces() {
         return 'bg-red-600/20 text-red-400';
       case 'past_due':
         return 'bg-yellow-600/20 text-yellow-400';
+      case 'trialing':
+        return 'bg-cyan-600/20 text-cyan-400';
       default:
         return 'bg-gray-600/20 text-gray-400';
     }
   };
 
-  const filteredWorkspaces = (data?.workspaces ?? []).filter((ws) => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return ws.name.toLowerCase().includes(q) || ws.id.toLowerCase().includes(q);
-  });
+  const filteredWorkspaces = useMemo(() => {
+    return (data?.workspaces ?? []).filter((ws) => {
+      // Text search
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        if (!ws.name.toLowerCase().includes(q) && !ws.id.toLowerCase().includes(q)) {
+          return false;
+        }
+      }
+      // Plan filter
+      if (planFilter !== 'all' && ws.plan !== planFilter) return false;
+      // Status filter
+      if (statusFilter !== 'all') {
+        if (statusFilter === 'none' && ws.subscription_status) return false;
+        if (statusFilter !== 'none' && ws.subscription_status !== statusFilter) return false;
+      }
+      return true;
+    });
+  }, [data?.workspaces, searchQuery, planFilter, statusFilter]);
 
   return (
     <div>
@@ -46,26 +65,71 @@ export default function AdminWorkspaces() {
       </div>
 
       {/* Stats */}
-      {data && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <p className="text-gray-400 text-sm">Total Workspaces</p>
-            <p className="text-2xl font-bold text-white mt-1">{data.count}</p>
-          </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+          <p className="text-gray-400 text-sm">Total Workspaces</p>
+          <p className="text-2xl font-bold text-white mt-1">
+            {platformStats?.total_workspaces ?? data?.count ?? 0}
+          </p>
         </div>
-      )}
+        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+          <p className="text-gray-400 text-sm">Total Contacts</p>
+          <p className="text-2xl font-bold text-white mt-1">
+            {platformStats?.total_contacts ?? '-'}
+          </p>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+          <p className="text-gray-400 text-sm">Total Pages</p>
+          <p className="text-2xl font-bold text-white mt-1">
+            {platformStats?.total_pages ?? '-'}
+          </p>
+        </div>
+        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+          <p className="text-gray-400 text-sm">Total Workflows</p>
+          <p className="text-2xl font-bold text-white mt-1">
+            {platformStats?.total_workflows ?? '-'}
+          </p>
+        </div>
+      </div>
 
-      {/* Search */}
-      <div className="mb-6">
-        <div className="relative">
+      {/* Search & Filters */}
+      <div className="flex flex-col md:flex-row gap-3 mb-6">
+        <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
           <input
             type="text"
-            placeholder="Search workspaces..."
+            placeholder="Search workspaces by name or ID..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-red-500"
           />
+        </div>
+        <div className="flex gap-3">
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-gray-500" />
+            <select
+              value={planFilter}
+              onChange={(e) => setPlanFilter(e.target.value)}
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-red-500"
+            >
+              <option value="all">All Plans</option>
+              <option value="free">Free</option>
+              <option value="pro">Pro</option>
+              <option value="business">Business</option>
+            </select>
+          </div>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-red-500"
+          >
+            <option value="all">All Statuses</option>
+            <option value="active">Active</option>
+            <option value="trialing">Trialing</option>
+            <option value="past_due">Past Due</option>
+            <option value="canceled">Canceled</option>
+            <option value="none">No Subscription</option>
+          </select>
         </div>
       </div>
 
@@ -79,10 +143,14 @@ export default function AdminWorkspaces() {
           <div className="p-6 text-center text-red-400">
             Failed to load workspaces
           </div>
-        ) : data?.workspaces.length === 0 || filteredWorkspaces.length === 0 ? (
+        ) : filteredWorkspaces.length === 0 ? (
           <div className="p-12 text-center">
             <Building2 className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-            <p className="text-gray-400">No workspaces found</p>
+            <p className="text-gray-400">
+              {searchQuery || planFilter !== 'all' || statusFilter !== 'all'
+                ? 'No workspaces match your filters'
+                : 'No workspaces found'}
+            </p>
           </div>
         ) : (
           <>
@@ -97,6 +165,9 @@ export default function AdminWorkspaces() {
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                     Status
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    Owner
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                     Created
@@ -130,6 +201,15 @@ export default function AdminWorkspaces() {
                         {workspace.subscription_status || 'none'}
                       </span>
                     </td>
+                    <td className="px-4 py-4">
+                      <Link
+                        to={`/admin/users/${workspace.agency_id}`}
+                        className="text-sm text-gray-400 hover:text-red-400 font-mono"
+                        title={workspace.agency_id}
+                      >
+                        {workspace.agency_id?.slice(0, 8)}...
+                      </Link>
+                    </td>
                     <td className="px-4 py-4 text-sm text-gray-400">
                       {workspace.created_at
                         ? new Date(workspace.created_at).toLocaleDateString()
@@ -148,17 +228,20 @@ export default function AdminWorkspaces() {
               </tbody>
             </table>
 
-            {/* Pagination */}
-            {data?.next_cursor && (
-              <div className="px-4 py-3 border-t border-gray-700 flex justify-center">
+            {/* Result count + Pagination */}
+            <div className="px-4 py-3 border-t border-gray-700 flex items-center justify-between">
+              <span className="text-sm text-gray-500">
+                Showing {filteredWorkspaces.length} of {data?.count ?? 0} workspaces
+              </span>
+              {data?.next_cursor && (
                 <button
                   onClick={() => setCursor(data.next_cursor ?? undefined)}
                   className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
                 >
                   Load More
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </>
         )}
       </div>

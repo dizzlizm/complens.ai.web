@@ -22,19 +22,26 @@ def handler(event: dict[str, Any], context: Any) -> dict:
     """Handle admin API requests.
 
     Routes:
-        GET  /admin/workspaces - List all workspaces
-        GET  /admin/workspaces/{id} - Get workspace details
-        GET  /admin/workspaces/{id}/stats - Get workspace content stats
-        PUT  /admin/workspaces/{id} - Update workspace
-        GET  /admin/users - List Cognito users
-        GET  /admin/users/{id} - Get user details
-        GET  /admin/users/{id}/stats - Get user's aggregated stats
-        POST /admin/users/{id}/disable - Disable user
-        POST /admin/users/{id}/enable - Enable user
-        GET  /admin/billing/summary - Get billing summary
-        GET  /admin/system/health - Get system health
-        GET  /admin/costs/metrics - Get AWS cost metrics
-        GET  /admin/stats/platform - Get platform-wide stats
+        GET    /admin/workspaces - List all workspaces
+        GET    /admin/workspaces/{id} - Get workspace details
+        GET    /admin/workspaces/{id}/stats - Get workspace content stats
+        PUT    /admin/workspaces/{id} - Update workspace
+        DELETE /admin/workspaces/{id} - Delete workspace and all data
+        GET    /admin/workspaces/{id}/members - List workspace members
+        POST   /admin/workspaces/{id}/members - Add member to workspace
+        PUT    /admin/workspaces/{id}/members/{user_id} - Update member role
+        DELETE /admin/workspaces/{id}/members/{user_id} - Remove member
+        GET    /admin/users - List Cognito users
+        GET    /admin/users/{id} - Get user details
+        GET    /admin/users/{id}/stats - Get user's aggregated stats
+        POST   /admin/users/{id}/disable - Disable user
+        POST   /admin/users/{id}/enable - Enable user
+        DELETE /admin/users/{id} - Delete user
+        POST   /admin/users/{id}/toggle-super-admin - Toggle super admin
+        GET    /admin/billing/summary - Get billing summary
+        GET    /admin/system/health - Get system health
+        GET    /admin/costs/metrics - Get AWS cost metrics
+        GET    /admin/stats/platform - Get platform-wide stats
     """
     try:
         http_method = event.get("httpMethod", "").upper()
@@ -46,17 +53,37 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         require_super_admin(auth)
 
         # Route requests
+        # Workspace routes
         if path == "/admin/workspaces" and http_method == "GET":
             return list_workspaces(event)
         elif "/admin/workspaces/" in path and path.endswith("/stats") and http_method == "GET":
             workspace_id = path_params.get("workspace_id")
             return get_workspace_stats(workspace_id)
+        elif "/admin/workspaces/" in path and "/members/" in path and http_method == "PUT":
+            workspace_id = path_params.get("workspace_id")
+            user_id = path_params.get("user_id")
+            return update_workspace_member(workspace_id, user_id, event)
+        elif "/admin/workspaces/" in path and "/members/" in path and http_method == "DELETE":
+            workspace_id = path_params.get("workspace_id")
+            user_id = path_params.get("user_id")
+            return remove_workspace_member(workspace_id, user_id)
+        elif "/admin/workspaces/" in path and path.endswith("/members") and http_method == "GET":
+            workspace_id = path_params.get("workspace_id")
+            return list_workspace_members(workspace_id)
+        elif "/admin/workspaces/" in path and path.endswith("/members") and http_method == "POST":
+            workspace_id = path_params.get("workspace_id")
+            return add_workspace_member(workspace_id, event)
         elif path.startswith("/admin/workspaces/") and http_method == "GET":
             workspace_id = path_params.get("workspace_id")
             return get_workspace(workspace_id)
         elif path.startswith("/admin/workspaces/") and http_method == "PUT":
             workspace_id = path_params.get("workspace_id")
             return update_workspace(workspace_id, event)
+        elif path.startswith("/admin/workspaces/") and http_method == "DELETE":
+            workspace_id = path_params.get("workspace_id")
+            return delete_workspace(workspace_id)
+
+        # User routes
         elif path == "/admin/users" and http_method == "GET":
             return list_users(event)
         elif "/admin/users/" in path and path.endswith("/stats") and http_method == "GET":
@@ -68,9 +95,17 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         elif "/admin/users/" in path and path.endswith("/enable") and http_method == "POST":
             user_id = path_params.get("user_id")
             return enable_user(user_id)
+        elif "/admin/users/" in path and path.endswith("/toggle-super-admin") and http_method == "POST":
+            user_id = path_params.get("user_id")
+            return toggle_super_admin(user_id)
         elif path.startswith("/admin/users/") and http_method == "GET":
             user_id = path_params.get("user_id")
             return get_user(user_id)
+        elif path.startswith("/admin/users/") and http_method == "DELETE":
+            user_id = path_params.get("user_id")
+            return delete_user(user_id)
+
+        # Other routes
         elif path == "/admin/billing/summary" and http_method == "GET":
             return get_billing_summary()
         elif path == "/admin/system/health" and http_method == "GET":
@@ -401,6 +436,124 @@ def list_plans() -> dict:
     return success({
         "plans": [p.model_dump(mode="json") for p in plans],
     })
+
+
+def delete_workspace(workspace_id: str) -> dict:
+    """Delete a workspace and all associated data."""
+    ws_repo = WorkspaceRepository()
+    workspace = ws_repo.get_by_id(workspace_id)
+
+    if not workspace:
+        return not_found("workspace", workspace_id)
+
+    admin_service = AdminService()
+    result = admin_service.delete_workspace_data(workspace_id, workspace.agency_id)
+
+    logger.info("Workspace deleted by admin", workspace_id=workspace_id)
+
+    return success({
+        "message": "Workspace deleted",
+        "workspace_id": workspace_id,
+        "deleted_items": result["deleted_items"],
+    })
+
+
+def delete_user(user_id: str) -> dict:
+    """Delete a Cognito user and clean up all associated data."""
+    admin_service = AdminService()
+    user = admin_service.get_cognito_user(user_id)
+
+    if not user:
+        return not_found("user", user_id)
+
+    result = admin_service.delete_user(user_id)
+
+    return success({
+        "message": "User deleted",
+        "user_id": user_id,
+        "deleted_workspaces": result["deleted_workspaces"],
+        "removed_from_workspaces": result["removed_from_workspaces"],
+    })
+
+
+def list_workspace_members(workspace_id: str) -> dict:
+    """List team members and pending invitations for a workspace."""
+    ws_repo = WorkspaceRepository()
+    workspace = ws_repo.get_by_id(workspace_id)
+
+    if not workspace:
+        return not_found("workspace", workspace_id)
+
+    admin_service = AdminService()
+    result = admin_service.list_workspace_members(workspace_id)
+
+    return success(result)
+
+
+def add_workspace_member(workspace_id: str, event: dict) -> dict:
+    """Add a user to a workspace."""
+    ws_repo = WorkspaceRepository()
+    workspace = ws_repo.get_by_id(workspace_id)
+
+    if not workspace:
+        return not_found("workspace", workspace_id)
+
+    body = json.loads(event.get("body", "{}"))
+    user_id = body.get("user_id")
+    role = body.get("role", "member")
+
+    if not user_id:
+        return validation_error([{"field": "user_id", "message": "user_id is required"}])
+
+    if role not in ("owner", "admin", "member"):
+        return validation_error([{"field": "role", "message": "role must be owner, admin, or member"}])
+
+    admin_service = AdminService()
+    result = admin_service.add_member_to_workspace(workspace_id, user_id, role)
+
+    return success(result)
+
+
+def update_workspace_member(workspace_id: str, user_id: str, event: dict) -> dict:
+    """Update a workspace member's role."""
+    body = json.loads(event.get("body", "{}"))
+    role = body.get("role")
+
+    if not role or role not in ("owner", "admin", "member"):
+        return validation_error([{"field": "role", "message": "role must be owner, admin, or member"}])
+
+    admin_service = AdminService()
+    result = admin_service.update_member_role(workspace_id, user_id, role)
+
+    if not result:
+        return not_found("member", user_id)
+
+    return success(result)
+
+
+def remove_workspace_member(workspace_id: str, user_id: str) -> dict:
+    """Remove a member from a workspace."""
+    admin_service = AdminService()
+    admin_service.remove_member_from_workspace(workspace_id, user_id)
+
+    return success({
+        "message": "Member removed",
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+    })
+
+
+def toggle_super_admin(user_id: str) -> dict:
+    """Toggle super admin status for a user."""
+    admin_service = AdminService()
+    user = admin_service.get_cognito_user(user_id)
+
+    if not user:
+        return not_found("user", user_id)
+
+    result = admin_service.toggle_super_admin(user_id)
+
+    return success(result)
 
 
 def update_plan(plan_key: str, event: dict) -> dict:

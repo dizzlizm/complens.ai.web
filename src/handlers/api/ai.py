@@ -97,6 +97,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         POST   /workspaces/{workspace_id}/ai/suggest-workflow-step - Suggest next workflow step
         POST   /workspaces/{workspace_id}/ai/generate-page-workflow - Generate complete workflow for a page
         POST   /workspaces/{workspace_id}/ai/generate-workflow - Generate workflow from NL
+        POST   /workspaces/{workspace_id}/ai/autofill-node - Autofill empty workflow node config fields
+        POST   /workspaces/{workspace_id}/ai/analyze-domain - Analyze domain website for brand info
         POST   /workspaces/{workspace_id}/ai/generate-page-content - Generate page content from description
         POST   /workspaces/{workspace_id}/ai/refine-page-content - Refine generated content with feedback
         POST   /workspaces/{workspace_id}/ai/synthesize-page - Unified synthesis engine for complete page
@@ -149,6 +151,12 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         elif "/ai/generate-workflow" in path and http_method == "POST":
             _check_ai_rate_limit(auth, workspace_id)
             return generate_workflow(workspace_id, event)
+        elif "/ai/autofill-node" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
+            return autofill_node(workspace_id, event)
+        elif "/ai/analyze-domain" in path and http_method == "POST":
+            _check_ai_rate_limit(auth, workspace_id)
+            return analyze_domain(workspace_id, event)
         elif "/ai/generate-page-content" in path and http_method == "POST":
             _check_ai_rate_limit(auth, workspace_id)
             return generate_page_content(workspace_id, event)
@@ -736,6 +744,162 @@ def generate_workflow(workspace_id: str, event: dict) -> dict:
     except Exception as e:
         logger.error("Workflow generation failed", error=str(e))
         return error(f"Workflow generation failed: {str(e)}", 500)
+
+
+def autofill_node(workspace_id: str, event: dict) -> dict:
+    """Autofill empty fields in a workflow node's configuration.
+
+    Uses AI to suggest smart defaults for unconfigured node fields based on
+    the node type, preceding workflow context, and business profile.
+
+    Request body:
+        node_type: The workflow node type (required)
+        current_config: Current (possibly empty) config dict (required)
+        nodes: All workflow nodes [{id, type, data: {label, nodeType, config}}]
+        edges: All workflow edges [{source, target}]
+        node_id: The ID of the node being autofilled (required to trace predecessors)
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+        node_type = body.get("node_type", "")
+        current_config = body.get("current_config", {})
+        nodes = body.get("nodes", [])
+        edges = body.get("edges", [])
+        node_id = body.get("node_id", "")
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    if not node_type:
+        return error("node_type is required", 400)
+
+    # Build preceding_nodes by tracing edges backward from the target node
+    preceding_nodes = []
+    if node_id and nodes and edges:
+        # Build a lookup of node ID -> node data
+        node_map = {}
+        for n in nodes:
+            nid = n.get("id", "")
+            data = n.get("data", {})
+            node_map[nid] = {
+                "type": data.get("nodeType", n.get("type", "")),
+                "label": data.get("label", ""),
+                "config": data.get("config", {}),
+            }
+
+        # Walk backward through edges to collect predecessors in order
+        visited = set()
+        queue = [node_id]
+        while queue:
+            current = queue.pop(0)
+            for edge in edges:
+                if edge.get("target") == current:
+                    source = edge.get("source", "")
+                    if source and source not in visited and source in node_map:
+                        visited.add(source)
+                        preceding_nodes.append(node_map[source])
+                        queue.append(source)
+
+        # Reverse so earliest ancestors come first
+        preceding_nodes.reverse()
+
+    # Optionally fetch business profile for richer context
+    business_profile = None
+    try:
+        repo = BusinessProfileRepository()
+        profile = repo.get_or_create(workspace_id)
+        business_profile = profile.model_dump(mode="json")
+    except Exception:
+        pass
+
+    try:
+        suggested = ai_service.autofill_node_config(
+            workspace_id=workspace_id,
+            node_type=node_type,
+            current_config=current_config,
+            preceding_nodes=preceding_nodes,
+            business_profile=business_profile,
+        )
+
+        logger.info(
+            "Node config autofilled",
+            workspace_id=workspace_id,
+            node_type=node_type,
+            fields_suggested=len(suggested),
+        )
+
+        return success({"suggested_config": suggested})
+
+    except Exception as e:
+        logger.error("Node autofill failed", error=str(e))
+        return error(f"Autofill failed: {str(e)}", 500)
+
+
+def analyze_domain(workspace_id: str, event: dict) -> dict:
+    """Analyze a domain's website to extract brand and business information.
+
+    Fetches the domain homepage, extracts text content, and uses AI to
+    identify business name, industry, tagline, target audience, tone,
+    key features, and services.
+
+    Request body:
+        domain: The domain to analyze (required)
+        site_id: Optional site ID for scoping the profile
+    """
+    try:
+        body = json.loads(event.get("body", "{}"))
+        domain = body.get("domain", "").strip()
+        site_id = body.get("site_id")
+    except json.JSONDecodeError:
+        return error("Invalid JSON body", 400)
+
+    if not domain:
+        return error("domain is required", 400)
+
+    # Fetch and extract content from the domain
+    from complens.services.document_processor import extract_from_url
+
+    url = f"https://{domain}" if not domain.startswith("http") else domain
+    try:
+        content = extract_from_url(url)
+    except Exception as e:
+        logger.warning("Failed to fetch domain content", domain=domain, error=str(e))
+        return error(f"Could not fetch domain: {str(e)}", 422)
+
+    if not content or len(content.strip()) < 50:
+        return error("Could not extract enough content from the domain", 422)
+
+    # Truncate content to avoid token limits
+    content = content[:15000]
+
+    # Use AI to analyze the content
+    try:
+        analysis = ai_service.analyze_domain_content(
+            workspace_id=workspace_id,
+            domain=domain,
+            content=content,
+        )
+
+        # Optionally auto-update the business profile
+        if body.get("auto_update", False):
+            repo = BusinessProfileRepository()
+            profile = repo.get_or_create(workspace_id, site_id=site_id)
+            for field, value in analysis.items():
+                if value and hasattr(profile, field):
+                    current = getattr(profile, field)
+                    # Only fill empty fields
+                    if not current or (isinstance(current, list) and len(current) == 0):
+                        setattr(profile, field, value)
+            profile = repo.update_profile(profile)
+            return success({
+                "analysis": analysis,
+                "profile": profile.model_dump(mode="json"),
+            })
+
+        return success({"analysis": analysis})
+
+    except Exception as e:
+        logger.error("Domain analysis failed", domain=domain, error=str(e))
+        return error(f"Domain analysis failed: {str(e)}", 500)
 
 
 def generate_page_content(workspace_id: str, event: dict) -> dict:

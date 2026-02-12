@@ -28,6 +28,11 @@ export interface WorkspaceStats {
   pages: number;
   workflows: number;
   forms: number;
+  documents: number;
+  sites: number;
+  team_members: number;
+  deals: number;
+  conversations: number;
   workflow_runs: {
     total: number;
     succeeded: number;
@@ -360,6 +365,149 @@ export function usePlatformStats() {
     },
     // Refetch every 5 minutes
     refetchInterval: 5 * 60 * 1000,
+  });
+}
+
+// Workspace member types
+export interface WorkspaceMember {
+  user_id: string;
+  email: string;
+  name: string;
+  role: string;
+  status: string;
+  created_at: string | null;
+}
+
+export interface WorkspaceInvitation {
+  email: string;
+  role: string;
+  invited_by: string;
+  expires_at: string | null;
+}
+
+// Delete workspace
+export function useDeleteWorkspace() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (workspaceId: string) => {
+      const { data } = await api.delete<{
+        message: string;
+        workspace_id: string;
+        deleted_items: number;
+      }>(`/admin/workspaces/${workspaceId}`);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspaces'] });
+    },
+  });
+}
+
+// Delete user
+export function useDeleteUser() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      const { data } = await api.delete<{
+        message: string;
+        user_id: string;
+        deleted_workspaces: string[];
+        removed_from_workspaces: string[];
+      }>(`/admin/users/${userId}`);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspaces'] });
+    },
+  });
+}
+
+// List workspace members
+export function useWorkspaceMembers(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: ['admin', 'workspace', workspaceId, 'members'],
+    queryFn: async () => {
+      const { data } = await api.get<{
+        members: WorkspaceMember[];
+        invitations: WorkspaceInvitation[];
+      }>(`/admin/workspaces/${workspaceId}/members`);
+      return data;
+    },
+    enabled: !!workspaceId,
+  });
+}
+
+// Add member to workspace
+export function useAddWorkspaceMember(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ user_id, role }: { user_id: string; role: string }) => {
+      const { data } = await api.post<{ member: WorkspaceMember }>(
+        `/admin/workspaces/${workspaceId}/members`,
+        { user_id, role }
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspace', workspaceId, 'members'] });
+    },
+  });
+}
+
+// Update member role
+export function useUpdateWorkspaceMember(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
+      const { data } = await api.put<{ member: WorkspaceMember }>(
+        `/admin/workspaces/${workspaceId}/members/${userId}`,
+        { role }
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspace', workspaceId, 'members'] });
+    },
+  });
+}
+
+// Remove member from workspace
+export function useRemoveWorkspaceMember(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      const { data } = await api.delete<{ message: string }>(
+        `/admin/workspaces/${workspaceId}/members/${userId}`
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspace', workspaceId, 'members'] });
+    },
+  });
+}
+
+// Toggle super admin
+export function useToggleSuperAdmin() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      const { data } = await api.post<{ user_id: string; is_super_admin: boolean }>(
+        `/admin/users/${userId}/toggle-super-admin`
+      );
+      return data;
+    },
+    onSuccess: (_, userId) => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'user', userId] });
+    },
   });
 }
 

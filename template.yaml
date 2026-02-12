@@ -30,6 +30,14 @@ Parameters:
       - "false"
     Description: Enable custom domain configuration (requires valid hosted zone)
 
+  EnableObservability:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Enable X-Ray tracing, API Gateway metrics, and Step Functions tracing (set to true when budget allows)
+
   CertificateArn:
     Type: String
     Default: ""
@@ -650,7 +658,7 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Stage
-      TracingEnabled: !If [IsProd, true, false]
+      TracingEnabled: !If [ObservabilityEnabled, true, false]
       Cors:
         AllowMethods: "'GET,POST,PUT,PATCH,DELETE,OPTIONS'"
         AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Requested-With'"
@@ -711,7 +719,7 @@ Resources:
           HttpMethod: "*"
           ThrottlingBurstLimit: !If [IsProd, 200, 50]
           ThrottlingRateLimit: !If [IsProd, 100, 25]
-          MetricsEnabled: !If [IsProd, true, false]
+          MetricsEnabled: !If [ObservabilityEnabled, true, false]
 
   # ============================================
   # WebSocket API
@@ -3093,7 +3101,7 @@ Resources:
           Properties:
             Schedule: cron(5 0 * * ? *)
             Description: Advance warm-up days and drain deferred emails daily at 00:05 UTC
-            Enabled: !If [IsProd, true, false]
+            Enabled: true
 
   SESFeedbackHandlerFunction:
     Type: AWS::Serverless::Function
@@ -3141,7 +3149,7 @@ Resources:
           Properties:
             Schedule: rate(1 hour)
             Description: Send AI-generated warmup emails hourly
-            Enabled: !If [IsProd, true, false]
+            Enabled: true
 
   # ============================================
   # Warmup Inbound Reply Tracking
@@ -3241,7 +3249,7 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
       Tracing:
-        Enabled: !If [IsProd, true, false]
+        Enabled: !If [ObservabilityEnabled, true, false]
       Type: STANDARD
       Tags:
         Service: complens
@@ -3274,7 +3282,7 @@ Resources:
                 - logs:DescribeLogGroups
               Resource: "*"
       Tracing:
-        Enabled: !If [IsProd, true, false]
+        Enabled: !If [ObservabilityEnabled, true, false]
       Type: EXPRESS
       Logging:
         Level: ERROR
@@ -3874,6 +3882,7 @@ Resources:
 
 Conditions:
   IsProd: !Equals [!Ref Stage, "prod"]
+  ObservabilityEnabled: !Equals [!Ref EnableObservability, "true"]
   StripeEventBridgeEnabled: !Not [!Equals [!Ref StripeEventSourceName, ""]]
   CustomDomainEnabled: !Equals [!Ref EnableCustomDomain, "true"]
   CreateCertificate: !And

@@ -816,6 +816,133 @@ def _format_duration(seconds: int) -> str:
     return f"{minutes} Min{'s' if minutes != 1 else ''}"
 
 
+def autofill_node_config(
+    workspace_id: str,
+    node_type: str,
+    current_config: dict,
+    preceding_nodes: list[dict],
+    business_profile: dict | None = None,
+) -> dict:
+    """Suggest values for empty fields in a workflow node's configuration.
+
+    Uses AI to intelligently fill in unconfigured fields based on the node
+    type, what the preceding nodes do, and the business profile context.
+
+    Args:
+        workspace_id: The workspace ID for business context.
+        node_type: The workflow node type (e.g. 'action_send_email').
+        current_config: The current (possibly empty/partial) config dict.
+        preceding_nodes: List of preceding node dicts [{type, label, config}].
+        business_profile: Optional business profile dict for extra context.
+
+    Returns:
+        Dict of field:value pairs for fields that were empty.
+    """
+    # Build preceding nodes summary
+    if preceding_nodes:
+        preceding_lines = []
+        for i, node in enumerate(preceding_nodes, 1):
+            ntype = node.get("type") or node.get("nodeType", "unknown")
+            label = node.get("label", "")
+            config = node.get("config", {})
+            config_summary = json.dumps(config, indent=2) if config else "{}"
+            preceding_lines.append(
+                f"  {i}. [{ntype}] \"{label}\"\n     Config: {config_summary}"
+            )
+        preceding_summary = "\n".join(preceding_lines)
+    else:
+        preceding_summary = "  (this is the first node in the workflow)"
+
+    # Build business profile context
+    profile_ctx = ""
+    if business_profile:
+        profile_parts = []
+        for key in ("business_name", "description", "industry", "target_audience",
+                     "brand_voice", "unique_value_proposition"):
+            if business_profile.get(key):
+                profile_parts.append(f"- {key}: {business_profile[key]}")
+        if profile_parts:
+            profile_ctx = "Business profile:\n" + "\n".join(profile_parts)
+
+    # Identify empty fields
+    empty_fields = [k for k, v in current_config.items() if not v]
+    all_empty = not any(bool(v) for v in current_config.values()) if current_config else True
+
+    empty_note = ""
+    if current_config and not all_empty:
+        empty_note = f"\nFields that are currently EMPTY and need values: {', '.join(empty_fields) if empty_fields else 'all fields'}"
+        empty_note += f"\nFields that already have values (DO NOT override): {json.dumps({k: v for k, v in current_config.items() if v})}"
+
+    system = f"""You are an expert marketing automation architect.
+Given a workflow node type, its current configuration, and the preceding nodes in the
+workflow, suggest smart default values for any EMPTY fields.
+
+## Node type config schemas
+
+### Triggers
+- trigger_form_submitted: form_id
+- trigger_tag_added: tag_name, tag_operation (added|removed|any)
+- trigger_webhook: webhook_path, webhook_secret
+- trigger_schedule: cron_expression, timezone
+- trigger_chat_message: body_contains
+- trigger_sms_received: from_pattern, body_contains
+- trigger_email_received: from_pattern, body_contains
+
+### Actions
+- action_send_email: email_to, email_subject, email_body, email_from (optional)
+- action_send_sms: sms_to, sms_message
+- action_ai_respond: ai_prompt, ai_respond_via (email|sms|same_channel)
+- action_update_contact: add_tags, remove_tags, update_fields
+- action_wait: wait_duration (integer seconds: 300=5min, 3600=1hr, 86400=1day)
+- action_webhook: webhook_url, webhook_method, webhook_headers, webhook_body
+
+### Logic
+- logic_branch: conditions (array of condition objects with field, operator, value, output_handle), default_output
+- logic_filter: filter_conditions (array), filter_operator (and|or)
+- logic_ab_split: split_percentages (object like {{"a": 50, "b": 50}})
+
+### AI Nodes
+- ai_decision: ai_prompt
+- ai_generate: ai_prompt
+- ai_analyze: ai_prompt
+
+## Template variables
+{{{{contact.email}}}}, {{{{contact.first_name}}}}, {{{{contact.last_name}}}}, {{{{contact.phone}}}},
+{{{{contact.custom_fields.company}}}}, {{{{trigger_data.form_data.message}}}},
+{{{{workspace.notification_email}}}}, {{{{owner.email}}}}
+
+## Rules
+- ONLY suggest values for fields that are currently empty or missing
+- DO NOT override fields that already have values
+- Use the preceding nodes to understand context (e.g. if the trigger is form_submitted, use form template variables in email body)
+- Use real business context (name, brand voice) in any copy you write
+- Write real email subjects/bodies, not placeholders
+- For wait durations, choose realistic values based on what comes before/after
+
+{profile_ctx}
+
+Return ONLY valid JSON object with field:value pairs for the suggested fields.
+No markdown, no explanation."""
+
+    prompt = f"""Node type: {node_type}
+Current config: {json.dumps(current_config, indent=2)}
+{empty_note}
+
+Preceding nodes (in order, earliest first):
+{preceding_summary}
+
+Suggest values for the empty fields in this node's configuration.
+Return a JSON object with only the field names and suggested values."""
+
+    result = invoke_claude_json(prompt, system, workspace_id, model=FAST_MODEL)
+
+    # Only return suggestions for fields that were actually empty
+    if current_config and not all_empty:
+        result = {k: v for k, v in result.items() if k in empty_fields or k not in current_config}
+
+    return result
+
+
 def generate_workflow_from_description(
     workspace_id: str,
     description: str,
@@ -1157,6 +1284,49 @@ Return the extracted information as JSON."""
 
     # Sanitize the extracted data to match expected types
     return _sanitize_extracted_profile(extracted)
+
+
+def analyze_domain_content(
+    workspace_id: str,
+    domain: str,
+    content: str,
+) -> dict:
+    """Analyze website content to extract brand and business information.
+
+    Args:
+        workspace_id: Workspace ID.
+        domain: The domain being analyzed.
+        content: Extracted text content from the website.
+
+    Returns:
+        Dict with extracted business profile fields.
+    """
+    system_prompt = """You are a brand analyst. Analyze the website content and extract structured business information.
+
+Return a JSON object with these fields (leave null if not determinable):
+{
+  "business_name": "The company/business name",
+  "industry": "Industry/sector",
+  "description": "1-2 sentence business description",
+  "tagline": "Main tagline or value proposition",
+  "target_audience": "Who they serve",
+  "tone": "Brand voice tone (e.g., professional, friendly, bold)",
+  "key_features": ["Feature 1", "Feature 2", ...],
+  "services": ["Service 1", "Service 2", ...],
+  "unique_selling_points": ["USP 1", "USP 2", ...],
+  "colors": {"primary": "#hex", "secondary": "#hex"} or null
+}
+
+Only include information clearly present in the content. Do not fabricate details."""
+
+    user_prompt = f"Analyze this website content from {domain}:\n\n{content}"
+
+    result = invoke_claude_json(
+        prompt=user_prompt,
+        system=system_prompt,
+        model=FAST_MODEL,
+    )
+    return result
 
 
 def generate_page_content_from_description(

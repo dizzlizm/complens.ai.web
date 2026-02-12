@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Plus, X } from 'lucide-react';
 import {
   DndContext,
@@ -9,6 +9,8 @@ import {
   useSensors,
   DragEndEvent,
   DragStartEvent,
+  DragOverEvent,
+  DragOverlay,
   rectIntersection,
   CollisionDetection,
 } from '@dnd-kit/core';
@@ -26,9 +28,42 @@ import {
   groupBlocksIntoRows,
   flattenRowsToBlocks,
   createPlaceholderSlot,
+  getWidthLabel,
+  BLOCK_TYPES,
 } from './types';
 import LayoutRow from './LayoutRow';
 import GenerateToolbar from './GenerateToolbar';
+import BlockRenderer from './BlockRenderer';
+import { BlockTypePicker, BLOCK_ICONS } from './LayoutSlot';
+
+// ==================== RowInserter ====================
+function RowInserter({ onInsert }: { onInsert: (type: BlockType | 'placeholder') => void }) {
+  const [showPicker, setShowPicker] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <div className="relative group/inserter h-4 -my-1 flex items-center justify-center z-10">
+      {/* Hover line */}
+      <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-0.5 bg-indigo-400 opacity-0 group-hover/inserter:opacity-100 transition-opacity" />
+      {/* Plus button */}
+      <button
+        ref={buttonRef}
+        onClick={(e) => { e.stopPropagation(); setShowPicker(true); }}
+        className="relative z-10 w-6 h-6 rounded-full bg-indigo-500 text-white flex items-center justify-center opacity-0 group-hover/inserter:opacity-100 transition-all hover:scale-110 shadow-md"
+      >
+        <Plus className="w-3.5 h-3.5" />
+      </button>
+      {/* Picker popover — portalled via anchorEl */}
+      {showPicker && (
+        <BlockTypePicker
+          onSelect={(type) => { onInsert(type); setShowPicker(false); }}
+          onClose={() => setShowPicker(false)}
+          anchorEl={buttonRef.current}
+        />
+      )}
+    </div>
+  );
+}
 
 // Form data for the form block
 interface FormInfo {
@@ -52,6 +87,7 @@ interface LayoutCanvasProps {
   forms?: FormInfo[];
   workspaceId?: string;
   pageId?: string;
+  previewMode?: boolean;
 }
 
 export default function LayoutCanvas({
@@ -61,9 +97,11 @@ export default function LayoutCanvas({
   forms = [],
   workspaceId,
   pageId,
+  previewMode = false,
 }: LayoutCanvasProps) {
   const [selectedSlotIds, setSelectedSlotIds] = useState<Set<string>>(new Set());
   const [activeSlotId, setActiveSlotId] = useState<string | null>(null);
+  const [_dragOverRowIndex, setDragOverRowIndex] = useState<number | null>(null);
 
   // Setup drag-and-drop sensors
   const sensors = useSensors(
@@ -361,6 +399,143 @@ export default function LayoutCanvas({
     updateBlocks([...rows, newRow]);
   }, [rows, updateBlocks]);
 
+  // Insert a new row at a specific index with a chosen block type
+  const handleInsertRow = useCallback((atIndex: number, blockType: BlockType | 'placeholder') => {
+    const blockTypeInfo = blockType !== 'placeholder' ? BLOCK_TYPES.find(b => b.type === blockType) : null;
+    const newSlot: PageBlock = {
+      id: Math.random().toString(36).substring(2, 10),
+      type: blockType,
+      config: blockTypeInfo?.defaultConfig || {},
+      order: 0,
+      width: 4,
+      row: atIndex,
+      colSpan: 12,
+      colStart: 0,
+    };
+    const newRow: LayoutRowType = {
+      rowIndex: atIndex,
+      slots: [newSlot],
+      totalSpan: 12,
+    };
+    const newRows = [
+      ...rows.slice(0, atIndex),
+      newRow,
+      ...rows.slice(atIndex),
+    ].map((row, idx) => ({
+      ...row,
+      rowIndex: idx,
+      slots: row.slots.map(slot => ({ ...slot, row: idx })),
+    }));
+    updateBlocks(newRows);
+  }, [rows, updateBlocks]);
+
+  // Duplicate a slot
+  const handleDuplicateSlot = useCallback((slotId: string) => {
+    // Find the slot
+    let foundSlot: PageBlock | null = null;
+    let foundRowIndex = -1;
+    for (const row of rows) {
+      const slot = row.slots.find(s => s.id === slotId);
+      if (slot) {
+        foundSlot = slot;
+        foundRowIndex = row.rowIndex;
+        break;
+      }
+    }
+    if (!foundSlot) return;
+
+    // Create a duplicate in a new row below
+    const dupSlot: PageBlock = {
+      ...foundSlot,
+      id: Math.random().toString(36).substring(2, 10),
+      colSpan: 12,
+      colStart: 0,
+    };
+    const insertAt = foundRowIndex + 1;
+    const newRow: LayoutRowType = {
+      rowIndex: insertAt,
+      slots: [dupSlot],
+      totalSpan: 12,
+    };
+    const newRows = [
+      ...rows.slice(0, insertAt),
+      newRow,
+      ...rows.slice(insertAt),
+    ].map((row, idx) => ({
+      ...row,
+      rowIndex: idx,
+      slots: row.slots.map(slot => ({ ...slot, row: idx })),
+    }));
+    updateBlocks(newRows);
+  }, [rows, updateBlocks]);
+
+  // Move selected row up or down
+  const handleMoveRow = useCallback((direction: 'up' | 'down') => {
+    if (selectedSlotIds.size !== 1) return;
+    const selectedId = Array.from(selectedSlotIds)[0];
+    let rowIdx = -1;
+    for (const row of rows) {
+      if (row.slots.some(s => s.id === selectedId)) {
+        rowIdx = row.rowIndex;
+        break;
+      }
+    }
+    if (rowIdx === -1) return;
+    const newIdx = direction === 'up' ? rowIdx - 1 : rowIdx + 1;
+    if (newIdx < 0 || newIdx >= rows.length) return;
+    const reordered = [...rows];
+    [reordered[rowIdx], reordered[newIdx]] = [reordered[newIdx], reordered[rowIdx]];
+    const updated = reordered.map((row, idx) => ({
+      ...row,
+      rowIndex: idx,
+      slots: row.slots.map(slot => ({ ...slot, row: idx })),
+    }));
+    updateBlocks(updated);
+  }, [selectedSlotIds, rows, updateBlocks]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMod = e.metaKey || e.ctrlKey;
+      const target = e.target as HTMLElement;
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+
+      // Escape: deselect all
+      if (e.key === 'Escape') {
+        clearSelection();
+        return;
+      }
+
+      // Skip remaining shortcuts if typing in an input
+      if (isInput) return;
+
+      // Delete/Backspace: delete selected
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedSlotIds.size > 0) {
+        e.preventDefault();
+        const ids = Array.from(selectedSlotIds);
+        ids.forEach(id => handleDeleteSlot(id));
+        return;
+      }
+
+      // Cmd+D: duplicate selected
+      if (isMod && e.key === 'd' && selectedSlotIds.size === 1) {
+        e.preventDefault();
+        handleDuplicateSlot(Array.from(selectedSlotIds)[0]);
+        return;
+      }
+
+      // Cmd+Shift+ArrowUp/Down: move row
+      if (isMod && e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        handleMoveRow(e.key === 'ArrowUp' ? 'up' : 'down');
+        return;
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [selectedSlotIds, clearSelection, handleDeleteSlot, handleDuplicateSlot, handleMoveRow]);
+
   // Handle synthesis trigger
   const handleSynthesize = useCallback(() => {
     if (selectedSlotIds.size === 0) return;
@@ -388,10 +563,27 @@ export default function LayoutCanvas({
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const { active } = event;
     const activeId = String(active.id);
+    document.body.style.cursor = 'grabbing';
 
-    // Check if dragging a slot (not a row)
     if (activeId.startsWith('slot-')) {
       setActiveSlotId(activeId.replace('slot-', ''));
+    }
+  }, []);
+
+  // Handle drag over - track insertion position
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    const { over } = event;
+    if (!over) {
+      setDragOverRowIndex(null);
+      return;
+    }
+    const overId = String(over.id);
+    if (overId.startsWith('row-dropzone-')) {
+      setDragOverRowIndex(parseInt(overId.replace('row-dropzone-', ''), 10));
+    } else if (overId.startsWith('row-')) {
+      setDragOverRowIndex(parseInt(overId.replace('row-', ''), 10));
+    } else {
+      setDragOverRowIndex(null);
     }
   }, []);
 
@@ -401,6 +593,8 @@ export default function LayoutCanvas({
       const { active, over } = event;
 
       setActiveSlotId(null);
+      setDragOverRowIndex(null);
+      document.body.style.cursor = '';
 
       if (!over) return;
 
@@ -506,8 +700,64 @@ export default function LayoutCanvas({
   // Row IDs for sortable context (rows only - slots use useDraggable separately)
   const rowIds = useMemo(() => rows.map((row) => `row-${row.rowIndex}`), [rows]);
 
+  // Get info about the currently selected slot for breadcrumb
+  const selectedSlotInfo = useMemo(() => {
+    if (selectedSlotIds.size !== 1) return null;
+    const selectedId = Array.from(selectedSlotIds)[0];
+    for (const row of rows) {
+      const slot = row.slots.find(s => s.id === selectedId);
+      if (slot) {
+        const typeInfo = BLOCK_TYPES.find(b => b.type === slot.type);
+        return {
+          rowIndex: row.rowIndex,
+          type: typeInfo?.label || slot.type,
+          width: getWidthLabel(slot.colSpan ?? 12),
+          slotId: selectedId,
+        };
+      }
+    }
+    return null;
+  }, [selectedSlotIds, rows]);
+
+  // Get the dragged slot info for the ghost card overlay
+  const draggedSlotInfo = useMemo(() => {
+    if (!activeSlotId) return null;
+    for (const row of rows) {
+      const slot = row.slots.find(s => s.id === activeSlotId);
+      if (slot) {
+        const typeInfo = BLOCK_TYPES.find(b => b.type === slot.type);
+        const Icon = BLOCK_ICONS[slot.type];
+        return { label: typeInfo?.label || slot.type, Icon };
+      }
+    }
+    return null;
+  }, [activeSlotId, rows]);
+
+  // Preview mode: render blocks without any editing chrome
+  if (previewMode) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200">
+        {rows.map((row) => (
+          <div key={`preview-row-${row.rowIndex}`} className="grid grid-cols-12 gap-0">
+            {row.slots.map((slot) => {
+              if (slot.type === 'placeholder') return null;
+              const colClass = slot.colSpan === 4 ? 'col-span-4' : slot.colSpan === 6 ? 'col-span-6' : slot.colSpan === 8 ? 'col-span-8' : 'col-span-12';
+              return (
+                <div key={slot.id} className={colClass}>
+                  <div className="overflow-hidden">
+                    <BlockRenderer block={slot} isEditing={false} forms={forms} workspaceId={workspaceId} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
+    <div className="bg-white rounded-xl border border-gray-200 p-6 relative">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -520,7 +770,7 @@ export default function LayoutCanvas({
         {/* Selection indicator and clear button */}
         {selectedSlotIds.size > 0 && (
           <div className="flex items-center gap-3">
-            <span className="text-sm text-purple-600 font-medium">
+            <span className="text-sm text-indigo-600 font-medium">
               {selectedSlotIds.size} slot{selectedSlotIds.size !== 1 ? 's' : ''} selected
             </span>
             <button
@@ -539,35 +789,55 @@ export default function LayoutCanvas({
         sensors={sensors}
         collisionDetection={customCollisionDetection}
         onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
         <SortableContext items={rowIds} strategy={verticalListSortingStrategy}>
-          <div className="space-y-4 pl-10">
-            {rows.map((row) => (
-              <LayoutRow
-                key={`row-${row.rowIndex}-${row.slots.map(s => s.id).join('-')}`}
-                row={row}
-                rowId={`row-${row.rowIndex}`}
-                selectedSlotIds={selectedSlotIds}
-                onSelectSlot={handleSelectSlot}
-                onUpdateSlot={handleUpdateSlot}
-                onDeleteSlot={handleDeleteSlot}
-                onAddSlot={handleAddSlot}
-                onSplitSlot={handleSplitSlot}
-                onDeleteRow={handleDeleteRow}
-                isOnlyRow={rows.length === 1}
-                activeSlotId={activeSlotId}
-                forms={forms}
-                workspaceId={workspaceId}
-                pageId={pageId}
-              />
+          <div className="pl-10">
+            {rows.map((row, idx) => (
+              <div key={`row-group-${row.rowIndex}`}>
+                {/* Row inserter before first row and between rows */}
+                {idx === 0 && (
+                  <RowInserter onInsert={(type) => handleInsertRow(0, type)} />
+                )}
+                <LayoutRow
+                  row={row}
+                  rowId={`row-${row.rowIndex}`}
+                  selectedSlotIds={selectedSlotIds}
+                  onSelectSlot={handleSelectSlot}
+                  onUpdateSlot={handleUpdateSlot}
+                  onDeleteSlot={handleDeleteSlot}
+                  onAddSlot={handleAddSlot}
+                  onSplitSlot={handleSplitSlot}
+                  onDeleteRow={handleDeleteRow}
+                  isOnlyRow={rows.length === 1}
+                  activeSlotId={activeSlotId}
+                  forms={forms}
+                  workspaceId={workspaceId}
+                  pageId={pageId}
+                  onDuplicateSlot={handleDuplicateSlot}
+                  onOpenSettings={() => {}}
+                  previewMode={previewMode}
+                />
+                <RowInserter onInsert={(type) => handleInsertRow(row.rowIndex + 1, type)} />
+              </div>
             ))}
           </div>
         </SortableContext>
+
+        {/* Drag overlay ghost card */}
+        <DragOverlay dropAnimation={{ duration: 200, easing: 'ease' }}>
+          {draggedSlotInfo && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-white border border-indigo-300 rounded-lg shadow-xl max-w-[200px]">
+              {draggedSlotInfo.Icon && <draggedSlotInfo.Icon className="w-4 h-4 text-indigo-600" />}
+              <span className="text-sm font-medium text-gray-800 truncate">{draggedSlotInfo.label}</span>
+            </div>
+          )}
+        </DragOverlay>
       </DndContext>
 
       {/* Add row button */}
-      <div className="mt-4 pl-10">
+      <div className="mt-2 pl-10">
         <button
           onClick={handleAddRow}
           className="w-full py-3 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/50 hover:border-indigo-400 hover:bg-indigo-50/30 transition-all flex items-center justify-center gap-2 text-gray-500 hover:text-indigo-600"
@@ -587,7 +857,6 @@ export default function LayoutCanvas({
           onGenerate={handleSynthesize}
           onClear={clearSelection}
           onUpdateBlocks={(updatedBlocks) => {
-            // Merge updated blocks back into the rows
             const blockMap = new Map(updatedBlocks.map((b) => [b.id, b]));
             const newRows = rows.map((row) => ({
               ...row,
@@ -598,10 +867,28 @@ export default function LayoutCanvas({
         />
       )}
 
+      {/* Breadcrumb bar at bottom */}
+      {selectedSlotInfo && (
+        <div className="mt-4 px-4 py-2 bg-gray-50 rounded-lg border border-gray-200 flex items-center gap-2 text-sm text-gray-600">
+          <button
+            onClick={() => {
+              // Deselect slot — keep row context visible but no slot selected
+              clearSelection();
+            }}
+            className="hover:text-indigo-600 hover:underline transition-colors"
+          >
+            Row {selectedSlotInfo.rowIndex + 1}
+          </button>
+          <span className="text-gray-400">&rsaquo;</span>
+          <span className="font-medium text-gray-900">{selectedSlotInfo.type}</span>
+          <span className="text-gray-400">({selectedSlotInfo.width})</span>
+        </div>
+      )}
+
       {/* Helper text */}
-      <div className="mt-6 pt-4 border-t border-gray-100">
+      <div className="mt-4 pt-4 border-t border-gray-100">
         <p className="text-xs text-gray-400 text-center">
-          Click slots to select them for AI content generation. Use "Let AI Decide" for automatic block type selection.
+          Click slots to select them for AI content generation. Press <kbd className="px-1 py-0.5 bg-gray-100 rounded text-gray-500 font-mono text-[10px]">Cmd+K</kbd> for commands.
         </p>
       </div>
     </div>

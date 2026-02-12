@@ -465,6 +465,8 @@ export default function PageEditor() {
               }
             }}
             isSaving={updatePage.isPending}
+            chatConfig={formData.chat_config ?? page.chat_config}
+            pageStatus={formData.status ?? page.status}
           />
         )}
       </div>

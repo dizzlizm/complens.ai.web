@@ -12,10 +12,12 @@ import {
   ArrowLeft,
   Shield,
   Settings2,
+  LayoutDashboard,
 } from 'lucide-react';
 import { useState } from 'react';
 
 const navigation = [
+  { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
   { name: 'Workspaces', href: '/admin/workspaces', icon: Building2 },
   { name: 'Users', href: '/admin/users', icon: Users },
   { name: 'Billing', href: '/admin/billing', icon: CreditCard },
@@ -101,8 +103,9 @@ export default function AdminLayout() {
           {/* Navigation */}
           <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
             {navigation.map((item) => {
-              const isActive = location.pathname === item.href ||
-                (item.href !== '/admin' && location.pathname.startsWith(item.href));
+              const isActive = item.href === '/admin'
+                ? location.pathname === '/admin'
+                : location.pathname === item.href || location.pathname.startsWith(item.href + '/');
               return (
                 <Link
                   key={item.name}

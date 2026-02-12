@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Zap, Play, GitBranch, Sparkles, Loader2, ChevronDown, Variable, Plus, Trash2, FileText, Eye, Settings } from 'lucide-react';
-import { type Node } from '@xyflow/react';
+import { X, Zap, Play, GitBranch, Sparkles, Loader2, ChevronDown, Variable, Plus, Trash2, FileText, Eye, Settings, Wand2, Copy, Check } from 'lucide-react';
+import { type Node, useReactFlow } from '@xyflow/react';
+import { useAutofillNode } from '../../lib/hooks/useAI';
 import { useForms, usePageForms } from '../../lib/hooks/useForms';
 import { usePages, usePage } from '../../lib/hooks/usePages';
 import { useWorkflows } from '../../lib/hooks/useWorkflows';
@@ -204,13 +205,35 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
   trigger_schedule: {
     title: 'Schedule',
     fields: [
-      { key: 'cron_expression', label: 'Cron Expression', type: 'text', placeholder: '0 9 * * *', helperText: 'e.g., "0 9 * * *" for 9 AM daily' },
+      { key: 'frequency', label: 'Frequency', type: 'select', options: [
+        { value: 'hourly', label: 'Every hour' },
+        { value: 'daily', label: 'Every day' },
+        { value: 'weekly', label: 'Every week' },
+        { value: 'monthly', label: 'Every month' },
+      ]},
+      { key: 'time', label: 'At time', type: 'text', placeholder: '09:00', helperText: 'HH:MM in 24-hour format' },
+      { key: 'day_of_week', label: 'Day of week', type: 'select', options: [
+        { value: 'MON', label: 'Monday' },
+        { value: 'TUE', label: 'Tuesday' },
+        { value: 'WED', label: 'Wednesday' },
+        { value: 'THU', label: 'Thursday' },
+        { value: 'FRI', label: 'Friday' },
+        { value: 'SAT', label: 'Saturday' },
+        { value: 'SUN', label: 'Sunday' },
+      ]},
+      { key: 'day_of_month', label: 'Day of month', type: 'number', placeholder: '1', helperText: '1-28 recommended' },
       { key: 'timezone', label: 'Timezone', type: 'select', options: [
         { value: 'UTC', label: 'UTC' },
         { value: 'America/New_York', label: 'Eastern Time' },
         { value: 'America/Chicago', label: 'Central Time' },
         { value: 'America/Denver', label: 'Mountain Time' },
         { value: 'America/Los_Angeles', label: 'Pacific Time' },
+        { value: 'America/Anchorage', label: 'Alaska Time' },
+        { value: 'Pacific/Honolulu', label: 'Hawaii Time' },
+        { value: 'Europe/London', label: 'London' },
+        { value: 'Europe/Paris', label: 'Central European' },
+        { value: 'Asia/Tokyo', label: 'Tokyo' },
+        { value: 'Australia/Sydney', label: 'Sydney' },
       ]},
     ],
   },
@@ -346,15 +369,6 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
       ], defaultValue: 'POST' },
       { key: 'webhook_headers', label: 'Headers (JSON)', type: 'textarea', placeholder: '{"Authorization": "Bearer token"}' },
       { key: 'webhook_body', label: 'Body (JSON)', type: 'textarea', placeholder: '{"contact_id": "{{contact.id}}"}' },
-    ],
-  },
-  action_create_task: {
-    title: 'Create Task',
-    fields: [
-      { key: 'task_title', label: 'Title', type: 'text', placeholder: 'Follow up with {{contact.first_name}}' },
-      { key: 'task_description', label: 'Description', type: 'textarea', placeholder: 'Task details...' },
-      { key: 'task_assigned_to', label: 'Assign To', type: 'text', placeholder: 'user@example.com' },
-      { key: 'task_due_in_hours', label: 'Due In (hours)', type: 'number', placeholder: '24' },
     ],
   },
   // Stripe actions
@@ -903,6 +917,62 @@ function ConfigField({ field, value, onChange, dynamicOptions, isLoading, contex
 }
 
 // ============================================================================
+// WEBHOOK URL DISPLAY
+// ============================================================================
+
+function WebhookUrlDisplay({ workspaceId, webhookPath }: { workspaceId: string; webhookPath: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const apiUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  const path = webhookPath ? webhookPath.replace(/^\//, '') : 'your-path';
+  const fullUrl = `${apiUrl}/public/webhooks/${workspaceId}/${path}`;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(fullUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const input = document.createElement('input');
+      input.value = fullUrl;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+      <label className="block text-xs font-medium text-gray-500 mb-1.5">Webhook URL</label>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 text-xs text-gray-700 bg-white px-2 py-1.5 rounded border border-gray-200 break-all select-all">
+          {fullUrl}
+        </code>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="shrink-0 p-1.5 rounded hover:bg-gray-200 transition-colors"
+          title="Copy webhook URL"
+        >
+          {copied ? (
+            <Check className="w-4 h-4 text-green-500" />
+          ) : (
+            <Copy className="w-4 h-4 text-gray-500" />
+          )}
+        </button>
+      </div>
+      <p className="mt-1.5 text-xs text-gray-500">
+        Send POST or GET requests to this URL to trigger the workflow.
+      </p>
+    </div>
+  );
+}
+
+// ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 
@@ -1044,6 +1114,36 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
     150
   );
 
+  const { getNodes, getEdges } = useReactFlow();
+  const autofill = useAutofillNode(workspaceId || '');
+
+  const handleAutofill = useCallback(async () => {
+    if (!node || !workspaceId) return;
+    const nodeType = (node.data as unknown as NodeData).nodeType;
+    const currentConfig = (node.data as unknown as NodeData).config || {};
+    try {
+      const suggestedConfig = await autofill.mutateAsync({
+        node_id: node.id,
+        node_type: nodeType,
+        current_config: currentConfig,
+        nodes: getNodes().map(n => ({ id: n.id, type: n.type, data: n.data })),
+        edges: getEdges().map(e => ({ source: e.source, target: e.target })),
+      });
+      if (suggestedConfig && Object.keys(suggestedConfig).length > 0) {
+        const mergedConfig = { ...currentConfig };
+        for (const [key, value] of Object.entries(suggestedConfig)) {
+          const current = currentConfig[key];
+          if (current === undefined || current === null || current === '') {
+            mergedConfig[key] = value;
+          }
+        }
+        onUpdate(node.id, { config: mergedConfig });
+      }
+    } catch (err) {
+      console.error('Autofill failed:', err);
+    }
+  }, [node, workspaceId, autofill, getNodes, getEdges, onUpdate]);
+
   if (!node) return null;
 
   const nodeData = node.data as unknown as NodeData;
@@ -1084,9 +1184,23 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
             {getNodeIcon(node.type || '')}
             <h3 className="font-semibold text-gray-900">{config.title}</h3>
           </div>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded">
-            <X className="w-5 h-5 text-gray-500" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleAutofill}
+              disabled={autofill.isPending}
+              className="p-1 hover:bg-violet-100 rounded transition-colors"
+              title="AI autofill empty fields"
+            >
+              {autofill.isPending ? (
+                <Loader2 className="w-4 h-4 text-violet-500 animate-spin" />
+              ) : (
+                <Wand2 className="w-4 h-4 text-violet-500" />
+              )}
+            </button>
+            <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded">
+              <X className="w-5 h-5 text-gray-500" />
+            </button>
+          </div>
         </div>
         {/* Page context indicator */}
         {isPageContext && currentPage && (
@@ -1142,8 +1256,24 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
 
           {config.fields.length > 0 && <hr className="border-gray-200" />}
 
+          {/* Webhook URL display */}
+          {nodeType === 'trigger_webhook' && workspaceId && (
+            <WebhookUrlDisplay
+              workspaceId={workspaceId}
+              webhookPath={(localConfig.webhook_path as string) || ''}
+            />
+          )}
+
           {/* Type-specific fields */}
           {config.fields.map((field) => {
+            // Conditional schedule fields
+            if (nodeType === 'trigger_schedule') {
+              const freq = (localConfig.frequency as string) || '';
+              if (field.key === 'time' && freq === 'hourly') return null;
+              if (field.key === 'day_of_week' && freq !== 'weekly') return null;
+              if (field.key === 'day_of_month' && freq !== 'monthly') return null;
+            }
+
             const dynamicData = ['dynamic_select', 'tag_input'].includes(field.type)
               ? getDynamicOptions(field.dataSource)
               : { options: [], isLoading: false, contextNote: undefined };

@@ -21,6 +21,9 @@ export default function GalleryBlock({ config, isEditing, onConfigChange, worksp
 
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
+  // In non-editing mode, filter out images without URLs
+  const displayImages = isEditing ? images : images.filter(img => img.url);
+
   const gridColsClass = {
     2: 'grid-cols-2',
     3: 'grid-cols-3',
@@ -82,8 +85,8 @@ export default function GalleryBlock({ config, isEditing, onConfigChange, worksp
   const navigateLightbox = (direction: 'prev' | 'next') => {
     if (lightboxIndex === null) return;
     const newIndex = direction === 'prev'
-      ? (lightboxIndex - 1 + images.length) % images.length
-      : (lightboxIndex + 1) % images.length;
+      ? (lightboxIndex - 1 + displayImages.length) % displayImages.length
+      : (lightboxIndex + 1) % displayImages.length;
     setLightboxIndex(newIndex);
   };
 
@@ -108,9 +111,9 @@ export default function GalleryBlock({ config, isEditing, onConfigChange, worksp
         )}
 
         {/* Gallery Grid */}
-        {images.length > 0 ? (
+        {displayImages.length > 0 ? (
           <div className={`grid ${gridColsClass} gap-4`}>
-            {images.map((image, index) => (
+            {displayImages.map((image, index) => (
               <div key={index} className="relative group">
                 {isEditing && (
                   <button
@@ -203,7 +206,7 @@ export default function GalleryBlock({ config, isEditing, onConfigChange, worksp
         )}
 
         {/* Add image button in editing mode */}
-        {isEditing && images.length > 0 && (
+        {isEditing && displayImages.length > 0 && (
           <div className="mt-4 flex justify-center gap-3">
             {workspaceId && (
               <ImageUploadButton
@@ -223,7 +226,7 @@ export default function GalleryBlock({ config, isEditing, onConfigChange, worksp
         )}
 
         {/* Lightbox */}
-        {lightboxIndex !== null && images[lightboxIndex] && (
+        {lightboxIndex !== null && displayImages[lightboxIndex] && (
           <div
             className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
             onClick={closeLightbox}
@@ -245,8 +248,8 @@ export default function GalleryBlock({ config, isEditing, onConfigChange, worksp
             </button>
 
             <img
-              src={images[lightboxIndex].url}
-              alt={images[lightboxIndex].alt || ''}
+              src={displayImages[lightboxIndex].url}
+              alt={displayImages[lightboxIndex].alt || ''}
               className="max-h-[90vh] max-w-[90vw] object-contain"
               onClick={(e) => e.stopPropagation()}
             />
@@ -260,9 +263,9 @@ export default function GalleryBlock({ config, isEditing, onConfigChange, worksp
               </svg>
             </button>
 
-            {images[lightboxIndex].caption && (
+            {displayImages[lightboxIndex].caption && (
               <div className="absolute bottom-4 left-0 right-0 text-center text-white">
-                {images[lightboxIndex].caption}
+                {displayImages[lightboxIndex].caption}
               </div>
             )}
           </div>

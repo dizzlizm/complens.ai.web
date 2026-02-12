@@ -20,6 +20,7 @@ DEFAULT_PLAN_LIMITS = {
         "custom_domain": False,
         "knowledge_base": False,
         "email_warmup": False,
+        "chat": False,
     },
     "pro": {
         "contacts": 10000,
@@ -31,6 +32,7 @@ DEFAULT_PLAN_LIMITS = {
         "custom_domain": True,
         "knowledge_base": True,
         "email_warmup": True,
+        "chat": True,
     },
     "business": {
         "contacts": -1,  # unlimited
@@ -42,6 +44,7 @@ DEFAULT_PLAN_LIMITS = {
         "custom_domain": True,
         "knowledge_base": True,
         "email_warmup": True,
+        "chat": True,
     },
 }
 

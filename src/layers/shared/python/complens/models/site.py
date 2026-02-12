@@ -26,14 +26,12 @@ class Site(BaseModel):
 
     workspace_id: str = Field(..., description="Parent workspace ID")
     domain_name: str = Field(
-        ...,
-        min_length=1,
+        default="",
         max_length=255,
-        description="Internet domain (e.g., example.com)",
+        description="Internet domain (e.g., example.com). Empty for default/free sites.",
     )
     name: str = Field(..., min_length=1, max_length=255, description="Display name")
     description: str | None = Field(None, max_length=1000, description="Site description")
-    default_page_id: str | None = Field(None, description="Page served at root domain")
     settings: dict = Field(default_factory=dict, description="Site-specific settings")
 
     @field_validator("domain_name")
@@ -58,7 +56,13 @@ class Site(BaseModel):
         }
 
     def get_gsi3_keys(self) -> dict[str, str]:
-        """Get GSI3 keys for global domain lookup."""
+        """Get GSI3 keys for global domain lookup.
+
+        Returns empty dict for sites without a domain (default/free sites)
+        since there's nothing to look up globally.
+        """
+        if not self.domain_name:
+            return {}
         return {
             "GSI3PK": f"SITE_DOMAIN#{self.domain_name}",
             "GSI3SK": f"SITE#{self.id}",
@@ -68,7 +72,7 @@ class Site(BaseModel):
 class CreateSiteRequest(PydanticBaseModel):
     """Request model for creating a site."""
 
-    domain_name: str = Field(..., min_length=1, max_length=255)
+    domain_name: str = Field(default="", max_length=255)
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(None, max_length=1000)
     settings: dict = Field(default_factory=dict)
@@ -80,5 +84,4 @@ class UpdateSiteRequest(PydanticBaseModel):
     domain_name: str | None = Field(None, min_length=1, max_length=255)
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = Field(None, max_length=1000)
-    default_page_id: str | None = None
     settings: dict | None = None

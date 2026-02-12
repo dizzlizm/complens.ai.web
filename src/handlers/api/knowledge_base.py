@@ -26,6 +26,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         GET    /workspaces/{ws}/knowledge-base/documents
         POST   /workspaces/{ws}/knowledge-base/documents
         DELETE /workspaces/{ws}/knowledge-base/documents/{document_id}
+        POST   /workspaces/{ws}/knowledge-base/import-url
         POST   /workspaces/{ws}/knowledge-base/sync
         GET    /workspaces/{ws}/knowledge-base/status
     """
@@ -45,8 +46,10 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
         if path.endswith("/sync") and http_method == "POST":
             return trigger_sync(kb_service)
+        elif path.endswith("/import-url") and http_method == "POST":
+            return import_from_url(repo, kb_service, workspace_id, event)
         elif path.endswith("/status") and http_method == "GET":
-            return get_status(repo, workspace_id)
+            return get_status(repo, workspace_id, event)
         elif http_method == "GET" and not document_id:
             return list_documents(repo, workspace_id, event)
         elif http_method == "POST" and not document_id:
@@ -160,6 +163,83 @@ def create_document(
     result["upload_url"] = upload_url
 
     return created(result)
+
+
+def import_from_url(
+    repo: DocumentRepository,
+    kb_service,
+    workspace_id: str,
+    event: dict,
+) -> dict:
+    """Import a document from a URL by fetching and extracting its content.
+
+    Args:
+        repo: Document repository.
+        kb_service: Knowledge base service.
+        workspace_id: Workspace ID.
+        event: API Gateway event.
+
+    Returns:
+        API response with created document.
+    """
+    from urllib.parse import urlparse
+
+    from complens.services.document_processor import extract_from_url
+
+    # Enforce knowledge_base feature gate
+    plan = get_workspace_plan(workspace_id)
+    require_feature(plan, "knowledge_base")
+
+    body = json.loads(event.get("body", "{}"))
+    url = body.get("url", "").strip()
+
+    if not url or not (url.startswith("http://") or url.startswith("https://")):
+        return validation_error([{"loc": ["url"], "msg": "A valid http or https URL is required"}])
+
+    site_id = body.get("site_id")
+
+    # Extract content from URL
+    try:
+        markdown = extract_from_url(url)
+    except Exception as e:
+        logger.error("URL extraction failed", url=url, error=str(e))
+        return error(f"Failed to fetch URL: {e}", 400)
+
+    if not markdown.strip():
+        return error("No content could be extracted from the URL", 400)
+
+    # Derive document name from URL hostname
+    parsed = urlparse(url)
+    doc_name = parsed.hostname or url
+
+    document = Document(
+        workspace_id=workspace_id,
+        site_id=site_id,
+        name=doc_name,
+        content_type="text/html",
+        status=DocumentStatus.INDEXED,
+    )
+
+    # Store the processed markdown in S3
+    file_key = kb_service.get_file_key(workspace_id, document.id, doc_name)
+    processed_key = file_key.rsplit("/", 1)[0] + "/processed.md"
+    document.file_key = file_key
+    document.processed_key = processed_key
+
+    bucket = os.environ.get("KB_DOCUMENTS_BUCKET", "")
+    kb_service.put_document_content(bucket, processed_key, markdown)
+
+    document = repo.create_document(document)
+
+    logger.info(
+        "Knowledge base document imported from URL",
+        workspace_id=workspace_id,
+        document_id=document.id,
+        url=url,
+        name=doc_name,
+    )
+
+    return created(document.model_dump(mode="json", by_alias=True))
 
 
 def confirm_upload(
@@ -349,17 +429,24 @@ def trigger_sync(kb_service) -> dict:
     return success(result)
 
 
-def get_status(repo: DocumentRepository, workspace_id: str) -> dict:
+def get_status(repo: DocumentRepository, workspace_id: str, event: dict) -> dict:
     """Get knowledge base status.
 
     Args:
         repo: Document repository.
         workspace_id: Workspace ID.
+        event: API Gateway event.
 
     Returns:
         API response with KB status.
     """
-    documents, _ = repo.list_by_workspace(workspace_id, limit=1000)
+    query_params = event.get("queryStringParameters", {}) or {}
+    site_id = query_params.get("site_id")
+
+    if site_id:
+        documents, _ = repo.list_by_site(workspace_id, site_id, limit=1000)
+    else:
+        documents, _ = repo.list_by_workspace(workspace_id, limit=1000)
 
     total = len(documents)
     indexed = sum(1 for d in documents if d.status == DocumentStatus.INDEXED)

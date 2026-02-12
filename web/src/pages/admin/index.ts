@@ -1,3 +1,4 @@
+export { default as AdminDashboard } from './AdminDashboard';
 export { default as AdminWorkspaces } from './AdminWorkspaces';
 export { default as AdminWorkspaceDetail } from './AdminWorkspaceDetail';
 export { default as AdminUsers } from './AdminUsers';

@@ -38,7 +38,7 @@ export default function CtaBlock({ config, isEditing, onConfigChange }: CtaBlock
             type="text"
             value={headline}
             onChange={(e) => handleChange('headline', e.target.value)}
-            className={`w-full text-3xl font-bold bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/30 rounded text-center mb-4 ${textClasses}`}
+            className={`w-full text-3xl font-bold bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/30 rounded text-center mb-4 hover:border-b hover:border-dashed hover:border-white/40 focus:border-b-2 focus:border-solid focus:border-white/60 ${textClasses}`}
             placeholder="Call to action headline..."
           />
         ) : (
@@ -49,7 +49,7 @@ export default function CtaBlock({ config, isEditing, onConfigChange }: CtaBlock
           <textarea
             value={description}
             onChange={(e) => handleChange('description', e.target.value)}
-            className={`w-full text-lg bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/30 rounded text-center resize-none mb-8 ${descClasses}`}
+            className={`w-full text-lg bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-white/30 rounded text-center resize-none mb-8 hover:border-b hover:border-dashed hover:border-white/40 focus:border-b-2 focus:border-solid focus:border-white/60 ${descClasses}`}
             placeholder="Supporting description..."
             rows={2}
           />
@@ -65,7 +65,7 @@ export default function CtaBlock({ config, isEditing, onConfigChange }: CtaBlock
               type="text"
               value={buttonText}
               onChange={(e) => handleChange('buttonText', e.target.value)}
-              className="bg-transparent border-none focus:outline-none text-center"
+              className="bg-transparent border-none focus:outline-none text-center hover:border-b hover:border-dashed hover:border-white/40 focus:border-b-2 focus:border-solid focus:border-white/60"
               placeholder="Button text..."
               onClick={(e) => e.stopPropagation()}
             />

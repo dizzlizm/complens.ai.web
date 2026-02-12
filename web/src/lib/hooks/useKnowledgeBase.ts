@@ -148,6 +148,24 @@ export function useDeleteKBDocument(workspaceId: string) {
   });
 }
 
+export function useImportKBUrl(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: { url: string; site_id?: string }) => {
+      const { data } = await api.post<KBDocument>(
+        `/workspaces/${workspaceId}/knowledge-base/import-url`,
+        input
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kb-documents', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['kb-status', workspaceId] });
+    },
+  });
+}
+
 export function useSyncKB(workspaceId: string) {
   const queryClient = useQueryClient();
 

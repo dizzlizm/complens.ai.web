@@ -200,6 +200,66 @@ class ImageGeneratorService:
             folder="profile-images",
         )
 
+    def generate_gallery_images(
+        self,
+        page_context: str,
+        gallery_title: str,
+        count: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Generate gallery images for a landing page gallery block.
+
+        Args:
+            page_context: Description of the page/business.
+            gallery_title: Title of the gallery section.
+            count: Number of images to generate (max 4).
+
+        Returns:
+            List of dicts with url, alt, caption.
+        """
+        angles = [
+            "professional workspace environment showing the service in action",
+            "close-up detail shot highlighting quality and craftsmanship",
+            "wide angle overview showcasing the full scope of work",
+            "team collaboration or customer interaction moment",
+        ]
+
+        images: list[dict[str, Any]] = []
+        for i in range(min(count, len(angles))):
+            prompt = (
+                f"Professional photo for '{gallery_title}'. {page_context}. "
+                f"{angles[i]}. High quality, editorial photography style, "
+                f"well-lit, no text or watermarks."
+            )
+
+            negative_prompt = (
+                "text, words, letters, watermark, signature, blurry, "
+                "low quality, distorted, ugly, amateur"
+            )
+
+            result = self.generate_and_upload(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                width=512,
+                height=512,
+                folder="gallery-images",
+            )
+
+            if "error" in result:
+                logger.warning(
+                    "Gallery image generation failed",
+                    index=i,
+                    error=result["error"],
+                )
+                continue
+
+            images.append({
+                "url": result["image_url"],
+                "alt": f"{gallery_title} - Image {i + 1}",
+                "caption": "",
+            })
+
+        return images
+
     def generate_icon_image(self, concept: str) -> dict[str, Any]:
         """Generate an icon/illustration for a feature or service.
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAdminUsers, useDisableUser, useEnableUser } from '@/lib/hooks/useAdmin';
 import { Users, Search, ChevronRight, Shield, UserX, UserCheck } from 'lucide-react';
@@ -6,10 +6,22 @@ import { useToast } from '@/components/Toast';
 
 export default function AdminUsers() {
   const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [searchQuery, setSearchQuery] = useState('');
   const { data, isLoading, error } = useAdminUsers({ limit: 50, cursor });
   const disableUser = useDisableUser();
   const enableUser = useEnableUser();
   const { showToast } = useToast();
+
+  const filteredUsers = useMemo(() => {
+    if (!data?.users) return [];
+    if (!searchQuery) return data.users;
+    const q = searchQuery.toLowerCase();
+    return data.users.filter(
+      (user) =>
+        user.email.toLowerCase().includes(q) ||
+        (user.name && user.name.toLowerCase().includes(q))
+    );
+  }, [data?.users, searchQuery]);
 
   const handleToggleUser = async (userId: string, currentlyEnabled: boolean) => {
     try {
@@ -61,7 +73,9 @@ export default function AdminUsers() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
           <input
             type="text"
-            placeholder="Search users..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search users by email or name..."
             className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-red-500"
           />
         </div>
@@ -77,10 +91,10 @@ export default function AdminUsers() {
           <div className="p-6 text-center text-red-400">
             Failed to load users
           </div>
-        ) : data?.users.length === 0 ? (
+        ) : filteredUsers.length === 0 ? (
           <div className="p-12 text-center">
             <Users className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-            <p className="text-gray-400">No users found</p>
+            <p className="text-gray-400">{searchQuery ? 'No users match your search' : 'No users found'}</p>
           </div>
         ) : (
           <>
@@ -105,7 +119,7 @@ export default function AdminUsers() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-700">
-                {data?.users.map((user) => (
+                {filteredUsers.map((user) => (
                   <tr key={user.id} className="hover:bg-gray-700/30 transition-colors">
                     <td className="px-4 py-4">
                       <div className="flex items-center gap-3">
