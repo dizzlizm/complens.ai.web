@@ -162,7 +162,7 @@ def create_workflow(
 
     try:
         body = json.loads(event.get("body", "{}"))
-        logger.info("Create workflow request", workspace_id=workspace_id, body=body)
+        logger.info("Create workflow request", workspace_id=workspace_id)
         request = CreateWorkflowRequest.model_validate(body)
     except PydanticValidationError as e:
         logger.warning("Workflow request validation failed", errors=e.errors())
@@ -250,7 +250,7 @@ def update_workflow(
 
     try:
         body = json.loads(event.get("body", "{}"))
-        logger.info("Update workflow request", workflow_id=workflow_id, body=body)
+        logger.info("Update workflow request", workflow_id=workflow_id)
         request = UpdateWorkflowRequest.model_validate(body)
     except PydanticValidationError as e:
         logger.warning("Update request validation failed", errors=e.errors())
@@ -260,6 +260,9 @@ def update_workflow(
         ])
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
+
+    # Track status change for schedule management
+    old_status = workflow.status.value if hasattr(workflow.status, 'value') else workflow.status
 
     # Apply updates
     if request.name is not None:
@@ -314,6 +317,19 @@ def update_workflow(
     # Save
     workflow = repo.update_workflow(workflow)
 
+    # Manage EventBridge schedule for trigger_schedule workflows
+    new_status = workflow.status.value if hasattr(workflow.status, 'value') else workflow.status
+    if request.status is not None and old_status != new_status:
+        trigger_node = workflow.get_trigger_node()
+        if trigger_node and (
+            (hasattr(trigger_node, 'node_type') and trigger_node.node_type == 'trigger_schedule')
+            or (hasattr(trigger_node, 'type') and trigger_node.type == 'trigger_schedule')
+        ):
+            if new_status == WorkflowStatus.ACTIVE.value:
+                _create_schedule(workspace_id, workflow_id, trigger_node.get_config())
+            else:
+                _delete_schedule(workflow_id)
+
     logger.info("Workflow updated", workflow_id=workflow_id, workspace_id=workspace_id)
 
     # Use by_alias=True to return 'type' instead of 'node_type' for React Flow compatibility
@@ -326,6 +342,9 @@ def delete_workflow(
     workflow_id: str,
 ) -> dict:
     """Delete a workflow."""
+    # Clean up any EventBridge schedule before deleting
+    _delete_schedule(workflow_id)
+
     deleted = repo.delete_workflow(workspace_id, workflow_id)
 
     if not deleted:
@@ -513,3 +532,149 @@ def send_test_email(
     except Exception as e:
         logger.error("Test email failed", error=str(e), workspace_id=workspace_id)
         return error(f"Failed to send test email: {str(e)}", 400)
+
+
+# ============================================================================
+# EventBridge Scheduler helpers for trigger_schedule
+# ============================================================================
+
+
+def _human_to_cron(config: dict) -> str:
+    """Convert human-readable schedule config to EventBridge cron expression.
+
+    Args:
+        config: Schedule config with frequency, time, day_of_week, day_of_month.
+
+    Returns:
+        EventBridge cron expression string.
+    """
+    freq = config.get("frequency", "daily")
+    time_str = config.get("time", "09:00")
+
+    try:
+        parts = time_str.split(":")
+        hour = int(parts[0])
+        minute = int(parts[1]) if len(parts) > 1 else 0
+    except (ValueError, IndexError):
+        hour, minute = 9, 0
+
+    if freq == "hourly":
+        return "cron(0 * * * ? *)"
+    elif freq == "daily":
+        return f"cron({minute} {hour} * * ? *)"
+    elif freq == "weekly":
+        dow = (config.get("day_of_week") or "MON").upper()[:3]
+        return f"cron({minute} {hour} ? * {dow} *)"
+    elif freq == "monthly":
+        dom = config.get("day_of_month", 1)
+        try:
+            dom = max(1, min(28, int(dom)))
+        except (ValueError, TypeError):
+            dom = 1
+        return f"cron({minute} {hour} {dom} * ? *)"
+    else:
+        return f"cron({minute} {hour} * * ? *)"
+
+
+def _create_schedule(workspace_id: str, workflow_id: str, config: dict) -> None:
+    """Create an EventBridge Scheduler schedule for a workflow.
+
+    Args:
+        workspace_id: Workspace ID.
+        workflow_id: Workflow ID.
+        config: Trigger node config with frequency, time, etc.
+    """
+    queue_url = os.environ.get("WORKFLOW_QUEUE_URL")
+    scheduler_role_arn = os.environ.get("SCHEDULER_ROLE_ARN")
+
+    if not queue_url or not scheduler_role_arn:
+        logger.warning(
+            "Cannot create schedule: missing WORKFLOW_QUEUE_URL or SCHEDULER_ROLE_ARN",
+            workflow_id=workflow_id,
+        )
+        return
+
+    schedule_name = f"wf-schedule-{workflow_id}"
+    cron_expr = _human_to_cron(config)
+    timezone = config.get("timezone", "UTC")
+
+    # Build the SQS message payload
+    payload = json.dumps({
+        "detail": {
+            "trigger_type": "trigger_schedule",
+            "workspace_id": workspace_id,
+            "workflow_id": workflow_id,
+            "data": {},
+            "contact_id": None,
+        },
+    })
+
+    # Extract queue ARN from URL
+    # URL format: https://sqs.{region}.amazonaws.com/{account}/{queue-name}
+    parts = queue_url.rstrip("/").split("/")
+    queue_name = parts[-1]
+    # Build ARN from env
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    account_id = queue_url.split("/")[-2] if len(parts) >= 2 else ""
+    queue_arn = f"arn:aws:sqs:{region}:{account_id}:{queue_name}"
+
+    try:
+        scheduler = boto3.client("scheduler")
+
+        # Delete existing schedule if any (idempotent update)
+        try:
+            scheduler.delete_schedule(Name=schedule_name)
+        except scheduler.exceptions.ResourceNotFoundException:
+            pass
+
+        scheduler.create_schedule(
+            Name=schedule_name,
+            ScheduleExpression=cron_expr,
+            ScheduleExpressionTimezone=timezone,
+            FlexibleTimeWindow={"Mode": "OFF"},
+            Target={
+                "Arn": queue_arn,
+                "RoleArn": scheduler_role_arn,
+                "Input": payload,
+                "SqsParameters": {
+                    "MessageGroupId": workspace_id,
+                },
+            },
+            State="ENABLED",
+        )
+
+        logger.info(
+            "EventBridge schedule created",
+            schedule_name=schedule_name,
+            cron=cron_expr,
+            timezone=timezone,
+            workflow_id=workflow_id,
+        )
+    except Exception as e:
+        logger.exception(
+            "Failed to create EventBridge schedule",
+            workflow_id=workflow_id,
+            error=str(e),
+        )
+
+
+def _delete_schedule(workflow_id: str) -> None:
+    """Delete an EventBridge Scheduler schedule for a workflow.
+
+    Args:
+        workflow_id: Workflow ID.
+    """
+    schedule_name = f"wf-schedule-{workflow_id}"
+
+    try:
+        scheduler = boto3.client("scheduler")
+        scheduler.delete_schedule(Name=schedule_name)
+        logger.info("EventBridge schedule deleted", schedule_name=schedule_name)
+    except Exception as e:
+        # ResourceNotFoundException is expected if schedule doesn't exist
+        if "ResourceNotFoundException" not in str(type(e).__name__):
+            logger.warning(
+                "Failed to delete EventBridge schedule",
+                schedule_name=schedule_name,
+                error=str(e),
+            )

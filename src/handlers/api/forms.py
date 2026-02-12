@@ -120,7 +120,7 @@ def create_form(
     """Create a new form."""
     try:
         body = json.loads(event.get("body", "{}"))
-        logger.info("Create form request", workspace_id=workspace_id, body=body)
+        logger.info("Create form request", workspace_id=workspace_id)
         request = CreateFormRequest.model_validate(body)
     except PydanticValidationError as e:
         logger.warning("Form request validation failed", errors=e.errors())
@@ -168,7 +168,7 @@ def update_form(
 
     try:
         body = json.loads(event.get("body", "{}"))
-        logger.info("Update form request", form_id=form_id, body=body)
+        logger.info("Update form request", form_id=form_id)
         request = UpdateFormRequest.model_validate(body)
     except PydanticValidationError as e:
         logger.warning("Update request validation failed", errors=e.errors())

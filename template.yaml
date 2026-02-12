@@ -129,7 +129,7 @@ Globals:
     Runtime: python3.12
     Timeout: 30
     MemorySize: 256
-    Tracing: Active
+    Tracing: PassThrough
     Architectures:
       - x86_64
     Environment:
@@ -591,6 +591,23 @@ Resources:
           SqsParameters:
             MessageGroupId: "workflow-triggers"
 
+  ChatMessageRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref WorkflowEventBus
+      EventPattern:
+        source:
+          - "complens.chat"
+        detail-type:
+          - "chat_message"
+          - "chat_started"
+      State: ENABLED
+      Targets:
+        - Id: WorkflowTriggerQueue
+          Arn: !GetAtt WorkflowQueue.Arn
+          SqsParameters:
+            MessageGroupId: "workflow-triggers"
+
   # Permission for EventBridge to send to SQS
   WorkflowQueuePolicy:
     Type: AWS::SQS::QueuePolicy
@@ -633,7 +650,7 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Stage
-      TracingEnabled: true
+      TracingEnabled: !If [IsProd, true, false]
       Cors:
         AllowMethods: "'GET,POST,PUT,PATCH,DELETE,OPTIONS'"
         AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Requested-With'"
@@ -694,7 +711,7 @@ Resources:
           HttpMethod: "*"
           ThrottlingBurstLimit: !If [IsProd, 200, 50]
           ThrottlingRateLimit: !If [IsProd, 100, 25]
-          MetricsEnabled: true
+          MetricsEnabled: !If [IsProd, true, false]
 
   # ============================================
   # WebSocket API
@@ -906,7 +923,9 @@ Resources:
               Action:
                 - ses:SendEmail
                 - ses:SendRawEmail
-              Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+              Resource:
+                - !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+                - !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${SESConfigurationSet}"
       Events:
         ListTeam:
           Type: Api
@@ -1198,6 +1217,8 @@ Resources:
       Environment:
         Variables:
           WORKFLOW_STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor"
+          WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerSqsRole.Arn
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
@@ -1205,6 +1226,18 @@ Resources:
             QueueName: !GetAtt WorkflowQueue.QueueName
         - StepFunctionsExecutionPolicy:
             StateMachineName: !GetAtt WorkflowExecutorStateMachine.Name
+        - Statement:
+            - Effect: Allow
+              Action:
+                - scheduler:CreateSchedule
+                - scheduler:DeleteSchedule
+                - scheduler:GetSchedule
+              Resource: !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/wf-schedule-*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - iam:PassRole
+              Resource: !GetAtt SchedulerSqsRole.Arn
       Events:
         List:
           Type: Api
@@ -1551,6 +1584,18 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/ai/generate-workflow
             Method: POST
+        AutofillNode:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/autofill-node
+            Method: POST
+        AnalyzeDomain:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/ai/analyze-domain
+            Method: POST
         GeneratePageContent:
           Type: Api
           Properties:
@@ -1806,6 +1851,22 @@ Resources:
             Method: GET
             Auth:
               Authorizer: NONE
+        TrackPageView:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/track
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        TrackPageViewOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/track
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
 
   # ============================================
   # Lambda Functions - WebSocket
@@ -2055,7 +2116,9 @@ Resources:
                 - ses:SendEmail
                 - ses:SendRawEmail
                 - ses:SendTemplatedEmail
-              Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+              Resource:
+                - !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+                - !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${SESConfigurationSet}"
 
   # Sharded Queue Processor - processes events from sharded standard queues
   ShardedQueueProcessorFunction:
@@ -2151,7 +2214,9 @@ Resources:
             - Effect: Allow
               Action:
                 - ses:SendEmail
-              Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+              Resource:
+                - !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+                - !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${SESConfigurationSet}"
       Events:
         FifoDLQ:
           Type: SQS
@@ -2191,6 +2256,32 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor"
                   - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:complens-${Stage}-workflow-executor-express"
+      Tags:
+        - Key: Service
+          Value: complens
+        - Key: Stage
+          Value: !Ref Stage
+
+  # IAM Role for EventBridge Scheduler to send to SQS WorkflowQueue
+  SchedulerSqsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SendToWorkflowQueue
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt WorkflowQueue.Arn
       Tags:
         - Key: Service
           Value: complens
@@ -2247,6 +2338,39 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /webhooks/segment/{workspace_id}
             Method: POST
+            Auth:
+              Authorizer: NONE
+
+  WebhookInboundFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: webhook_inbound.handler
+      CodeUri: src/handlers/webhooks/
+      Description: Public inbound webhook endpoint for external triggers
+      Environment:
+        Variables:
+          WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
+          TABLE_NAME: !Ref MainTable
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WorkflowQueue.QueueName
+        - DynamoDBReadPolicy:
+            TableName: !Ref MainTable
+      Events:
+        WebhookPost:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/webhooks/{workspace_id}/{proxy+}
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        WebhookGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/webhooks/{workspace_id}/{proxy+}
+            Method: GET
             Auth:
               Authorizer: NONE
 
@@ -2426,7 +2550,7 @@ Resources:
       Handler: admin.handler
       CodeUri: src/handlers/api/
       Description: Super admin platform management
-      Timeout: 30
+      Timeout: 60
       Environment:
         Variables:
           COGNITO_USER_POOL_ID: !Ref UserPool
@@ -2441,6 +2565,8 @@ Resources:
                 - cognito-idp:AdminGetUser
                 - cognito-idp:AdminDisableUser
                 - cognito-idp:AdminEnableUser
+                - cognito-idp:AdminDeleteUser
+                - cognito-idp:AdminUpdateUserAttributes
               Resource: !GetAtt UserPool.Arn
             - Effect: Allow
               Action:
@@ -2564,6 +2690,48 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /admin/plans/{plan_key}
             Method: PUT
+        DeleteWorkspace:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}
+            Method: DELETE
+        DeleteUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/users/{user_id}
+            Method: DELETE
+        ListWorkspaceMembers:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/members
+            Method: GET
+        AddWorkspaceMember:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/members
+            Method: POST
+        UpdateWorkspaceMember:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/members/{user_id}
+            Method: PUT
+        RemoveWorkspaceMember:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/members/{user_id}
+            Method: DELETE
+        ToggleSuperAdmin:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/users/{user_id}/toggle-super-admin
+            Method: POST
 
   BillingWebhookFunction:
     Type: AWS::Serverless::Function
@@ -2689,6 +2857,12 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/knowledge-base/status
             Method: GET
+        ImportUrl:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/knowledge-base/import-url
+            Method: POST
 
   # S3 Bucket for Knowledge Base documents
   KBDocumentsBucket:
@@ -2864,12 +3038,30 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/email-warmup/{domain}/settings
             Method: PUT
+        SendTestEmail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/send-test
+            Method: POST
         DeleteDomain:
           Type: Api
           Properties:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/email-warmup/domains/{domain}
             Method: DELETE
+        VerifyFromEmail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/verify-from-email
+            Method: POST
+        ConfirmFromEmail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/confirm-from-email
+            Method: POST
 
   WarmupDailyProcessorFunction:
     Type: AWS::Serverless::Function
@@ -2901,7 +3093,7 @@ Resources:
           Properties:
             Schedule: cron(5 0 * * ? *)
             Description: Advance warm-up days and drain deferred emails daily at 00:05 UTC
-            Enabled: true
+            Enabled: !If [IsProd, true, false]
 
   SESFeedbackHandlerFunction:
     Type: AWS::Serverless::Function
@@ -2949,7 +3141,7 @@ Resources:
           Properties:
             Schedule: rate(1 hour)
             Description: Send AI-generated warmup emails hourly
-            Enabled: true
+            Enabled: !If [IsProd, true, false]
 
   # ============================================
   # Warmup Inbound Reply Tracking
@@ -3049,7 +3241,7 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
       Tracing:
-        Enabled: true
+        Enabled: !If [IsProd, true, false]
       Type: STANDARD
       Tags:
         Service: complens
@@ -3082,7 +3274,7 @@ Resources:
                 - logs:DescribeLogGroups
               Resource: "*"
       Tracing:
-        Enabled: true
+        Enabled: !If [IsProd, true, false]
       Type: EXPRESS
       Logging:
         Level: ERROR

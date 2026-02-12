@@ -64,7 +64,7 @@ from complens.repositories.page import PageRepository
 from complens.repositories.workflow import WorkflowRepository
 from complens.services.cdn_service import invalidate_page_cache
 from complens.repositories.workspace import WorkspaceRepository
-from complens.services.feature_gate import FeatureGateError, enforce_limit, get_workspace_plan, count_resources
+from complens.services.feature_gate import FeatureGateError, enforce_limit, get_workspace_plan, require_feature, count_resources
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from complens.utils.responses import created, error, not_found, success, validation_error
@@ -333,7 +333,7 @@ def create_page(
     """Create a new page."""
     try:
         body = json.loads(event.get("body", "{}"))
-        logger.info("Create page request", workspace_id=workspace_id, body=body)
+        logger.info("Create page request", workspace_id=workspace_id)
         request = CreatePageRequest.model_validate(body)
     except PydanticValidationError as e:
         logger.warning("Page request validation failed", errors=e.errors())
@@ -413,7 +413,7 @@ def update_page(
 
     try:
         body = json.loads(event.get("body", "{}"))
-        logger.info("Update page request", page_id=page_id, body=body)
+        logger.info("Update page request", page_id=page_id)
         request = UpdatePageRequest.model_validate(body)
     except PydanticValidationError as e:
         logger.warning("Update request validation failed", errors=e.errors())
@@ -456,6 +456,12 @@ def update_page(
     if request.body_content is not None:
         page.body_content = request.body_content
     if request.chat_config is not None:
+        if request.chat_config.enabled:
+            try:
+                plan = get_workspace_plan(workspace_id)
+                require_feature(plan, "chat")
+            except FeatureGateError as e:
+                return error(str(e), 403, error_code="PLAN_LIMIT")
         page.chat_config = request.chat_config
     if request.form_ids is not None:
         page.form_ids = request.form_ids
@@ -493,11 +499,17 @@ def update_page(
                 block_dict["id"] = block_data.id
             blocks.append(PageBlock.model_validate(block_dict))
         page.blocks = blocks
-        logger.info("Saving blocks", page_id=page_id, block_count=len(blocks), blocks=[b.model_dump() for b in blocks])
+        logger.info("Saving blocks", page_id=page_id, block_count=len(blocks))
 
         # Auto-sync chat_config.enabled from block presence
         has_chat_block = any(b.type == "chat" for b in blocks)
         if page.chat_config.enabled != has_chat_block:
+            if has_chat_block:
+                try:
+                    plan = get_workspace_plan(workspace_id)
+                    require_feature(plan, "chat")
+                except FeatureGateError as e:
+                    return error(str(e), 403, error_code="PLAN_LIMIT")
             page.chat_config.enabled = has_chat_block
             logger.info(
                 "Auto-synced chat_config.enabled from blocks",
@@ -1919,7 +1931,7 @@ def create_page_form(
     """Create a new form for a page."""
     try:
         body = json.loads(event.get("body", "{}"))
-        logger.info("Create form request", workspace_id=workspace_id, page_id=page_id, body=body)
+        logger.info("Create form request", workspace_id=workspace_id, page_id=page_id)
         request = CreateFormRequest.model_validate(body)
     except PydanticValidationError as e:
         logger.warning("Form request validation failed", errors=e.errors())
@@ -1970,7 +1982,7 @@ def update_page_form(
 
     try:
         body = json.loads(event.get("body", "{}"))
-        logger.info("Update form request", form_id=form_id, body=body)
+        logger.info("Update form request", form_id=form_id)
         request = UpdateFormRequest.model_validate(body)
     except PydanticValidationError as e:
         logger.warning("Update request validation failed", errors=e.errors())
@@ -2124,7 +2136,7 @@ def create_page_workflow(
 
     try:
         body = json.loads(event.get("body", "{}"))
-        logger.info("Create page workflow request", workspace_id=workspace_id, page_id=page_id, body=body)
+        logger.info("Create page workflow request", workspace_id=workspace_id, page_id=page_id)
         request = CreateWorkflowRequest.model_validate(body)
     except PydanticValidationError as e:
         logger.warning("Workflow request validation failed", errors=e.errors())
@@ -2212,7 +2224,7 @@ def update_page_workflow(
 
     try:
         body = json.loads(event.get("body", "{}"))
-        logger.info("Update page workflow request", workflow_id=workflow_id, body=body)
+        logger.info("Update page workflow request", workflow_id=workflow_id)
         request = UpdateWorkflowRequest.model_validate(body)
     except PydanticValidationError as e:
         logger.warning("Update request validation failed", errors=e.errors())

@@ -1,4 +1,4 @@
-.PHONY: install build test deploy clean local lint format web-install web-dev web-build web-deploy web-env deploy-full
+.PHONY: install build test deploy clean local lint format web-install web-dev web-build web-deploy web-env deploy-full set-log-retention
 
 # Default stage
 STAGE ?= dev
@@ -158,6 +158,19 @@ deploy-full: deploy web-env web-deploy
 deploy-full-dev:
 	$(MAKE) deploy-full STAGE=dev
 
+# Set CloudWatch log retention on all Lambda log groups (default: 7 days for dev, 30 for prod)
+LOG_RETENTION_DAYS ?= $(if $(filter prod,$(STAGE)),30,7)
+set-log-retention:
+	@echo "Setting $(LOG_RETENTION_DAYS)-day retention on all complens-$(STAGE) Lambda log groups..."
+	@aws logs describe-log-groups \
+		--log-group-name-prefix "/aws/lambda/complens-$(STAGE)-" \
+		--query "logGroups[].logGroupName" --output text | \
+	tr '\t' '\n' | while read -r lg; do \
+		echo "  $$lg -> $(LOG_RETENTION_DAYS) days"; \
+		aws logs put-retention-policy --log-group-name "$$lg" --retention-in-days $(LOG_RETENTION_DAYS); \
+	done
+	@echo "Done."
+
 # Help
 help:
 	@echo "Complens.ai - Marketing Automation Platform"
@@ -193,3 +206,4 @@ help:
 	@echo "  logs           Tail logs for FUNCTION"
 	@echo "  seed           Seed development data"
 	@echo "  env-json       Generate env.json for local dev"
+	@echo "  set-log-retention  Set CloudWatch log retention (default 7 days)"
