@@ -9,7 +9,6 @@ import structlog
 
 from complens.models.domain import DomainStatus
 from complens.repositories.domain import DomainRepository
-from complens.repositories.page import PageRepository
 
 logger = structlog.get_logger()
 
@@ -36,7 +35,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
     task = event.get("task")
     workspace_id = event.get("workspace_id")
     domain = event.get("domain")
-    page_id = event.get("page_id")
+    site_id = event.get("site_id")
     certificate_arn = event.get("certificate_arn")
 
     logger.info(
@@ -51,12 +50,12 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return check_certificate_status(workspace_id, domain, certificate_arn)
         elif task == "create_distribution":
             return create_cloudfront_distribution(
-                workspace_id, domain, page_id, certificate_arn
+                workspace_id, domain, site_id, certificate_arn
             )
         elif task == "check_distribution":
             return check_distribution_status(workspace_id, domain)
         elif task == "activate_domain":
-            return activate_domain(workspace_id, domain, page_id)
+            return activate_domain(workspace_id, domain)
         elif task == "mark_failed":
             return mark_failed(workspace_id, domain, event.get("error"))
         else:
@@ -142,7 +141,7 @@ def check_certificate_status(
 def create_cloudfront_distribution(
     workspace_id: str,
     domain: str,
-    page_id: str,
+    site_id: str,
     certificate_arn: str,
 ) -> dict:
     """Create CloudFront distribution for the custom domain.
@@ -329,14 +328,13 @@ def check_distribution_status(workspace_id: str, domain: str) -> dict:
         return {"deployed": False, "error": str(e)}
 
 
-def activate_domain(workspace_id: str, domain: str, page_id: str) -> dict:
-    """Mark domain as active and update page.
+def activate_domain(workspace_id: str, domain: str) -> dict:
+    """Mark domain as active.
 
     Returns:
         Dict with activation status.
     """
     domain_repo = DomainRepository()
-    page_repo = PageRepository()
 
     domain_setup = domain_repo.get_by_domain(workspace_id, domain)
     if not domain_setup:
@@ -349,12 +347,6 @@ def activate_domain(workspace_id: str, domain: str, page_id: str) -> dict:
         DomainStatus.ACTIVE,
         f"Domain is live! Point your DNS CNAME to: {domain_setup.distribution_domain}",
     )
-
-    # Update page with final CNAME target
-    page = page_repo.get_by_id(workspace_id, page_id)
-    if page:
-        page.custom_domain = domain
-        page_repo.update_page(page)
 
     logger.info(
         "Domain activated",

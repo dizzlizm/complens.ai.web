@@ -23,12 +23,12 @@ class DomainStatus(str, Enum):
 class DomainSetup(BaseModel):
     """Custom domain setup entity.
 
-    Tracks the provisioning status of a custom domain for a landing page.
+    Tracks the provisioning status of a custom domain for a site.
 
     Key Pattern:
         PK: WS#{workspace_id}
         SK: DOMAIN#{domain}
-        GSI1PK: PAGE#{page_id}
+        GSI1PK: SITE#{site_id}
         GSI1SK: DOMAIN#{domain}
     """
 
@@ -36,7 +36,7 @@ class DomainSetup(BaseModel):
     _sk_prefix: ClassVar[str] = "DOMAIN#"
 
     workspace_id: str = Field(..., description="Parent workspace ID")
-    page_id: str = Field(..., description="Page this domain points to")
+    site_id: str = Field(..., description="Site this domain belongs to")
     domain: str = Field(..., description="Custom domain (e.g., landing.example.com)")
 
     # Status tracking
@@ -81,9 +81,9 @@ class DomainSetup(BaseModel):
         return f"DOMAIN#{self.domain}"
 
     def get_gsi1_keys(self) -> dict[str, str]:
-        """Get GSI1 keys for page lookup."""
+        """Get GSI1 keys for site lookup."""
         return {
-            "GSI1PK": f"PAGE#{self.page_id}",
+            "GSI1PK": f"SITE#{self.site_id}",
             "GSI1SK": f"DOMAIN#{self.domain}",
         }
 
@@ -98,14 +98,14 @@ class CreateDomainRequest(PydanticBaseModel):
         pattern=r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$",
         description="Custom domain (lowercase, no protocol)",
     )
-    page_id: str = Field(..., description="Page ID to connect domain to")
+    site_id: str = Field(..., description="Site ID to connect domain to")
 
 
 class DomainStatusResponse(PydanticBaseModel):
     """Domain status response for UI."""
 
     domain: str
-    page_id: str  # Which page this domain is connected to
+    site_id: str  # Which site this domain belongs to
     status: DomainStatus
     status_message: str | None = None
 

@@ -25,17 +25,17 @@ class DomainRepository(BaseRepository[DomainSetup]):
         """
         return self.get(pk=f"WS#{workspace_id}", sk=f"DOMAIN#{domain}")
 
-    def get_by_page(self, page_id: str) -> list[DomainSetup]:
-        """Get all domains for a page using GSI1.
+    def get_by_site(self, site_id: str) -> list[DomainSetup]:
+        """Get all domains for a site using GSI1.
 
         Args:
-            page_id: The page ID.
+            site_id: The site ID.
 
         Returns:
-            List of domain setups for the page.
+            List of domain setups for the site.
         """
         items, _ = self.query(
-            pk=f"PAGE#{page_id}",
+            pk=f"SITE#{site_id}",
             sk_begins_with="DOMAIN#",
             index_name="GSI1",
         )

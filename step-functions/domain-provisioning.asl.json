@@ -9,7 +9,7 @@
         "task": "check_certificate",
         "workspace_id.$": "$.workspace_id",
         "domain.$": "$.domain",
-        "page_id.$": "$.page_id",
+        "site_id.$": "$.site_id",
         "certificate_arn.$": "$.certificate_arn"
       },
       "ResultPath": "$.cert_result",
@@ -61,7 +61,7 @@
         "task": "check_certificate",
         "workspace_id.$": "$.workspace_id",
         "domain.$": "$.domain",
-        "page_id.$": "$.page_id",
+        "site_id.$": "$.site_id",
         "certificate_arn.$": "$.certificate_arn"
       },
       "ResultPath": "$.cert_result",
@@ -105,7 +105,7 @@
       "Parameters": {
         "workspace_id.$": "$.workspace_id",
         "domain.$": "$.domain",
-        "page_id.$": "$.page_id",
+        "site_id.$": "$.site_id",
         "certificate_arn.$": "$.certificate_arn",
         "retry_count.$": "States.MathAdd($.retry_count, 1)"
       },
@@ -142,7 +142,7 @@
         "task": "create_distribution",
         "workspace_id.$": "$.workspace_id",
         "domain.$": "$.domain",
-        "page_id.$": "$.page_id",
+        "site_id.$": "$.site_id",
         "certificate_arn.$": "$.certificate_arn"
       },
       "ResultPath": "$.dist_result",
@@ -189,7 +189,7 @@
         "task": "check_distribution",
         "workspace_id.$": "$.workspace_id",
         "domain.$": "$.domain",
-        "page_id.$": "$.page_id"
+        "site_id.$": "$.site_id"
       },
       "ResultPath": "$.dist_status",
       "Next": "IsDistributionDeployed",
@@ -229,7 +229,7 @@
         "task": "activate_domain",
         "workspace_id.$": "$.workspace_id",
         "domain.$": "$.domain",
-        "page_id.$": "$.page_id"
+        "site_id.$": "$.site_id"
       },
       "ResultPath": "$.activation_result",
       "Next": "ProvisioningComplete",

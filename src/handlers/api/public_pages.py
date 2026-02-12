@@ -37,6 +37,7 @@ from complens.repositories.contact import ContactRepository
 from complens.repositories.form import FormRepository, FormSubmissionRepository
 from complens.repositories.business_profile import BusinessProfileRepository
 from complens.repositories.page import PageRepository
+from complens.repositories.visitor import VisitorRepository
 from complens.services.page_templates import render_full_page
 from complens.utils.rate_limiter import (
     check_rate_limit,
@@ -114,7 +115,11 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         workspace_id = query_params.get("ws")
 
         # Handle OPTIONS preflight for public endpoints (custom domain / embed CORS)
-        if http_method == "OPTIONS" and ("/public/submit/" in path or "/public/chat-config/" in path):
+        if http_method == "OPTIONS" and (
+            "/public/submit/" in path
+            or "/public/chat-config/" in path
+            or path == "/public/track"
+        ):
             return handle_options_preflight(event)
 
         # Route to appropriate handler
@@ -132,6 +137,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return submit_form(form_id, event)
         elif "/public/forms/" in path and http_method == "GET":
             return get_public_form(form_id, workspace_id)
+        elif path == "/public/track" and http_method == "POST":
+            return track_page_view(event)
         elif path == "/public/plans" and http_method == "GET":
             return get_public_plans()
         else:
@@ -211,6 +218,14 @@ def get_chat_config(page_id: str, workspace_id: str | None, event: dict) -> dict
     status_value = page.status.value if hasattr(page.status, 'value') else page.status
     if status_value != "published":
         return public_error("Page not found", origin, 404, "NOT_FOUND")
+
+    # Gate chat behind paid plan
+    from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
+    try:
+        plan = get_workspace_plan(workspace_id)
+        require_feature(plan, "chat")
+    except FeatureGateError:
+        return public_error("Chat requires a paid plan", origin, 403, "PLAN_LIMIT")
 
     # Extract chat config
     chat_config = page.chat_config
@@ -439,13 +454,28 @@ def get_page_by_domain(domain: str) -> dict:
             elif page:
                 page = None  # No site association, can't verify domain ownership
 
-        # 3. If still no match, try site's default page (root domain homepage)
-        if not page:
-            site = site_repo.get_by_domain_global(domain)
-            if site and site.default_page_id:
-                page = repo.get_by_id(site.workspace_id, site.default_page_id)
-                if page:
-                    canonical_domain = domain
+    # 3. Root domain fallback: look up site by domain and serve default page
+    if not page:
+        from complens.repositories.site import SiteRepository
+        site_repo = SiteRepository()
+
+        site = site_repo.get_by_domain_global(domain)
+        if site:
+            from complens.models.page import PageStatus
+
+            # Check for a configured default page
+            default_page_id = site.settings.get("default_page_id")
+            if default_page_id:
+                page = repo.get_by_id(site.workspace_id, default_page_id)
+
+            # Fall back to first published page in the site
+            if not page:
+                pages, _ = repo.list_by_site(
+                    site.workspace_id, site.id,
+                    status=PageStatus.PUBLISHED, limit=1,
+                )
+                if pages:
+                    page = pages[0]
 
     if not page:
         logger.info("Page not found for domain", domain=domain)
@@ -608,6 +638,138 @@ def get_public_plans() -> dict:
             for p in plans
         ],
     })
+
+
+def track_page_view(event: dict) -> dict:
+    """Track an anonymous page view from the JS beacon.
+
+    Creates/updates a Visitor record with attribution data and fires
+    a trigger_page_visit event to the workflow queue.
+    """
+    origin = _get_origin(event)
+
+    # Rate limit: 10 requests/minute per IP
+    client_ip = get_client_ip(event)
+    rate_check = check_rate_limit(
+        identifier=client_ip,
+        action="page_track",
+        requests_per_minute=10,
+        requests_per_hour=120,
+    )
+    if not rate_check.allowed:
+        return {
+            "statusCode": 204,
+            "headers": _cors_headers(origin),
+            "body": "",
+        }
+
+    try:
+        body = json.loads(event.get("body", "{}"))
+    except json.JSONDecodeError:
+        return {"statusCode": 204, "headers": _cors_headers(origin), "body": ""}
+
+    visitor_id = body.get("visitor_id", "")
+    page_id = body.get("page_id", "")
+    workspace_id = body.get("workspace_id", "")
+
+    # Basic validation — don't query DynamoDB, just check non-empty
+    if not visitor_id or not page_id or not workspace_id:
+        return {"statusCode": 204, "headers": _cors_headers(origin), "body": ""}
+
+    # Sanitize visitor_id format (must start with v_ and be alphanumeric)
+    if not visitor_id.startswith("v_") or len(visitor_id) > 20:
+        return {"statusCode": 204, "headers": _cors_headers(origin), "body": ""}
+
+    referrer = (body.get("referrer") or "")[:2000]
+    utm_source = (body.get("utm_source") or "")[:200]
+    utm_medium = (body.get("utm_medium") or "")[:200]
+    utm_campaign = (body.get("utm_campaign") or "")[:200]
+    utm_content = (body.get("utm_content") or "")[:200]
+    utm_term = (body.get("utm_term") or "")[:200]
+
+    headers = event.get("headers", {}) or {}
+    user_agent = (headers.get("User-Agent") or "")[:500]
+
+    # Upsert visitor record
+    try:
+        visitor_repo = VisitorRepository()
+        visitor_repo.upsert_page_view(
+            workspace_id=workspace_id,
+            visitor_id=visitor_id,
+            page_id=page_id,
+            referrer=referrer or None,
+            utm_source=utm_source or None,
+            utm_medium=utm_medium or None,
+            utm_campaign=utm_campaign or None,
+            utm_content=utm_content or None,
+            utm_term=utm_term or None,
+            ip=client_ip,
+            user_agent=user_agent or None,
+        )
+    except Exception as e:
+        logger.warning("Visitor upsert failed", error=str(e), visitor_id=visitor_id)
+
+    # Fire trigger_page_visit to workflow queue
+    try:
+        _trigger_page_visit(
+            workspace_id=workspace_id,
+            visitor_id=visitor_id,
+            page_id=page_id,
+            referrer=referrer,
+            utm_source=utm_source,
+            utm_medium=utm_medium,
+            utm_campaign=utm_campaign,
+        )
+    except Exception as e:
+        logger.warning("Page visit trigger failed", error=str(e))
+
+    return {"statusCode": 204, "headers": _cors_headers(origin), "body": ""}
+
+
+def _cors_headers(origin: str | None) -> dict:
+    """Build CORS headers for tracking responses."""
+    allow_origin = origin if origin and origin.startswith("https://") else "*"
+    return {
+        "Access-Control-Allow-Origin": allow_origin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+    }
+
+
+def _trigger_page_visit(
+    workspace_id: str,
+    visitor_id: str,
+    page_id: str,
+    referrer: str,
+    utm_source: str,
+    utm_medium: str,
+    utm_campaign: str,
+) -> None:
+    """Fire trigger_page_visit to the SQS workflow queue."""
+    sqs = boto3.client("sqs")
+    queue_url = os.environ.get("WORKFLOW_QUEUE_URL")
+
+    if not queue_url:
+        return
+
+    message_body = {
+        "detail": {
+            "trigger_type": "trigger_page_visit",
+            "workspace_id": workspace_id,
+            "visitor_id": visitor_id,
+            "page_id": page_id,
+            "referrer": referrer,
+            "utm_source": utm_source,
+            "utm_medium": utm_medium,
+            "utm_campaign": utm_campaign,
+        }
+    }
+
+    sqs.send_message(
+        QueueUrl=queue_url,
+        MessageBody=json.dumps(message_body),
+        MessageGroupId=workspace_id,
+    )
 
 
 def _get_origin(event: dict) -> str | None:
@@ -938,6 +1100,47 @@ def _process_form_submission(
         page_repo = PageRepository()
         page_repo.increment_form_submission_count(form.workspace_id, page_id)
 
+    # Link visitor to contact if both exist
+    visitor_id = data.get("_visitor_id", "")
+    if visitor_id and visitor_id.startswith("v_") and len(visitor_id) <= 20:
+        try:
+            visitor_repo = VisitorRepository()
+            visitor_repo.increment_form_submissions(form.workspace_id, visitor_id)
+
+            if contact_id:
+                visitor_repo.link_to_contact(form.workspace_id, visitor_id, contact_id)
+
+                # Copy attribution data to contact custom fields
+                visitor = visitor_repo.get_by_visitor_id(form.workspace_id, visitor_id)
+                if visitor:
+                    contact_repo = ContactRepository()
+                    existing = contact_repo.get_by_id(form.workspace_id, contact_id)
+                    if existing:
+                        attribution = {}
+                        if visitor.visitor_id:
+                            attribution["_visitor_id"] = visitor.visitor_id
+                        if visitor.first_referrer:
+                            attribution["_first_referrer"] = visitor.first_referrer
+                        if visitor.first_utm_source:
+                            attribution["_utm_source"] = visitor.first_utm_source
+                        if visitor.first_utm_medium:
+                            attribution["_utm_medium"] = visitor.first_utm_medium
+                        if visitor.first_utm_campaign:
+                            attribution["_utm_campaign"] = visitor.first_utm_campaign
+                        if visitor.total_page_views:
+                            attribution["_total_page_views_at_conversion"] = str(visitor.total_page_views)
+
+                        if attribution:
+                            existing.custom_fields = {**existing.custom_fields, **attribution}
+                            contact_repo.update_contact(existing)
+        except Exception as e:
+            logger.warning(
+                "Visitor-contact linking failed",
+                visitor_id=visitor_id,
+                contact_id=contact_id,
+                error=str(e),
+            )
+
     # Trigger workflow via EventBridge if enabled
     if form.trigger_workflow:
         _trigger_workflow(form, submission, contact_id)
@@ -1090,7 +1293,7 @@ def _trigger_workflow(form: Any, submission: Any, contact_id: str | None) -> Non
         response = sqs.send_message(
             QueueUrl=queue_url,
             MessageBody=json.dumps(message_body),
-            MessageGroupId="workflow-triggers",
+            MessageGroupId=form.workspace_id,
         )
 
         # Mark submission as workflow triggered

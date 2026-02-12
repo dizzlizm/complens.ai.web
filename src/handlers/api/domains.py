@@ -15,8 +15,7 @@ from complens.models.domain import (
     DomainStatusResponse,
 )
 from complens.repositories.domain import DomainRepository
-from complens.repositories.page import PageRepository
-from complens.repositories.workspace import WorkspaceRepository
+from complens.repositories.site import SiteRepository
 from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError
@@ -89,7 +88,7 @@ def list_domains(workspace_id: str) -> dict:
         "items": [
             DomainStatusResponse(
                 domain=d.domain,
-                page_id=d.page_id,
+                site_id=d.site_id,
                 status=d.status,
                 status_message=d.status_message,
                 validation_record_name=d.validation_record_name if d.status == DomainStatus.PENDING_VALIDATION else None,
@@ -115,7 +114,7 @@ def get_domain_status(workspace_id: str, domain: str) -> dict:
 
     response = DomainStatusResponse(
         domain=domain_setup.domain,
-        page_id=domain_setup.page_id,
+        site_id=domain_setup.site_id,
         status=domain_setup.status,
         status_message=domain_setup.status_message,
         validation_record_name=domain_setup.validation_record_name,
@@ -155,12 +154,12 @@ def create_domain(workspace_id: str, event: dict) -> dict:
     require_feature(plan, "custom_domain")
 
     domain_repo = DomainRepository()
-    page_repo = PageRepository()
+    site_repo = SiteRepository()
 
-    # Check if page exists
-    page = page_repo.get_by_id(workspace_id, request.page_id)
-    if not page:
-        return not_found("Page", request.page_id)
+    # Check if site exists
+    site = site_repo.get_by_id(workspace_id, request.site_id)
+    if not site:
+        return not_found("Site", request.site_id)
 
     # Check domain limit
     active_count = domain_repo.count_active_domains(workspace_id)
@@ -190,7 +189,7 @@ def create_domain(workspace_id: str, event: dict) -> dict:
             Tags=[
                 {"Key": "Service", "Value": "complens"},
                 {"Key": "WorkspaceId", "Value": workspace_id},
-                {"Key": "PageId", "Value": request.page_id},
+                {"Key": "SiteId", "Value": request.site_id},
             ],
         )
         certificate_arn = cert_response["CertificateArn"]
@@ -242,7 +241,7 @@ def create_domain(workspace_id: str, event: dict) -> dict:
     # Create domain setup record
     domain_setup = DomainSetup(
         workspace_id=workspace_id,
-        page_id=request.page_id,
+        site_id=request.site_id,
         domain=request.domain,
         status=DomainStatus.PENDING_VALIDATION,
         status_message="Waiting for DNS validation. Add the CNAME record below.",
@@ -264,7 +263,7 @@ def create_domain(workspace_id: str, event: dict) -> dict:
                 input=json.dumps({
                     "workspace_id": workspace_id,
                     "domain": request.domain,
-                    "page_id": request.page_id,
+                    "site_id": request.site_id,
                     "certificate_arn": certificate_arn,
                 }),
             )
@@ -272,10 +271,6 @@ def create_domain(workspace_id: str, event: dict) -> dict:
     except Exception as e:
         logger.warning("Failed to start provisioning workflow", error=str(e))
         # Don't fail - user can still add DNS records and we can retry later
-
-    # Update page with custom domain
-    page.custom_domain = request.domain
-    page_repo.update_page(page)
 
     return created({
         "domain": request.domain,
@@ -303,7 +298,6 @@ def delete_domain(workspace_id: str, domain: str) -> dict:
     3. Remove the domain record
     """
     domain_repo = DomainRepository()
-    page_repo = PageRepository()
 
     domain_setup = domain_repo.get_by_domain(workspace_id, domain)
     if not domain_setup:
@@ -357,12 +351,6 @@ def delete_domain(workspace_id: str, domain: str) -> dict:
                 arn=domain_setup.certificate_arn,
                 error=str(e),
             )
-
-    # Remove custom_domain from page
-    page = page_repo.get_by_id(workspace_id, domain_setup.page_id)
-    if page and page.custom_domain == domain:
-        page.custom_domain = None
-        page_repo.update_page(page)
 
     # Delete domain record
     domain_repo.delete_domain(workspace_id, domain)

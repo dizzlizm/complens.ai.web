@@ -52,10 +52,12 @@ class SiteRepository(BaseRepository[Site]):
         return items[0] if items else None
 
     def get_by_domain_global(self, domain_name: str) -> Site | None:
-        """Get site by domain name without workspace_id (global lookup via GSI3).
+        """Get site by domain name globally using GSI3.
+
+        Used for public domain resolution where workspace_id is unknown.
 
         Args:
-            domain_name: The domain name (e.g., 'itsross.com').
+            domain_name: The domain name.
 
         Returns:
             Site or None if not found.

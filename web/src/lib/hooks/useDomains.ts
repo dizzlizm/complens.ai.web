@@ -11,7 +11,7 @@ export type DomainStatus =
 
 export interface Domain {
   domain: string;
-  page_id: string;  // Which page this domain is connected to
+  site_id: string;  // Which site this domain belongs to
   status: DomainStatus;
   status_message: string | null;
   validation_record_name: string | null;
@@ -29,7 +29,7 @@ export interface DomainsResponse {
 
 export interface CreateDomainRequest {
   domain: string;
-  page_id: string;
+  site_id: string;
 }
 
 export interface CreateDomainResponse {

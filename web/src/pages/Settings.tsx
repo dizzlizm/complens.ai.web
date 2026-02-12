@@ -10,6 +10,8 @@ import {
 import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe, useCheckDomainAuth, useSetupDomain, useListDomains, useDeleteSavedDomain } from '../lib/hooks';
 import type { DomainSetupResult, DnsRecord } from '../lib/hooks/useEmailWarmup';
 import { useBillingStatus, useCreateCheckout, useCreatePortal } from '../lib/hooks/useBilling';
+import { useDomains, useCreateDomain, useDeleteDomain, getDomainStatusInfo } from '../lib/hooks/useDomains';
+import { useSites } from '../lib/hooks/useSites';
 import TwilioConfigCard from '../components/settings/TwilioConfigCard';
 import SegmentConfigCard from '../components/settings/SegmentConfigCard';
 import TeamManagement from '../components/settings/TeamManagement';
@@ -956,6 +958,9 @@ function EmailDomainSettings() {
 
   return (
     <div className="space-y-6">
+      {/* Custom Domain Provisioning */}
+      <CustomDomainCard workspaceId={workspaceId} />
+
       {/* Email Sending Defaults */}
       <div className="card">
         <h2 className="text-lg font-semibold text-gray-900 mb-2">Email Sending Defaults</h2>
@@ -1004,6 +1009,250 @@ function EmailDomainSettings() {
 
       {/* Sending Domains */}
       <SendingDomainsCard workspaceId={workspaceId} />
+    </div>
+  );
+}
+
+function CustomDomainCard({ workspaceId }: { workspaceId: string | undefined }) {
+  const { data: sites, isLoading: sitesLoading } = useSites(workspaceId);
+  const { data: domainsData, isLoading: domainsLoading } = useDomains(workspaceId);
+  const createDomain = useCreateDomain(workspaceId || '');
+  const deleteDomain = useDeleteDomain(workspaceId || '');
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+
+  const provisionedDomains = domainsData?.items || [];
+  const isLoading = sitesLoading || domainsLoading;
+
+  const handleCopy = (text: string, field: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const handleProvision = async (siteId: string, domainName: string) => {
+    try {
+      await createDomain.mutateAsync({ domain: domainName, site_id: siteId });
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
+  const handleDelete = (domain: string) => {
+    if (confirmDelete === domain) {
+      deleteDomain.mutate(domain);
+      setConfirmDelete(null);
+    } else {
+      setConfirmDelete(domain);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="card flex items-center justify-center py-8">
+        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!sites || sites.length === 0) {
+    return (
+      <div className="card">
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">Custom Domains</h2>
+        <p className="text-sm text-gray-500 mb-4">Serve your pages on your own domain</p>
+        <div className="p-6 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-center">
+          <Globe className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+          <p className="font-medium text-gray-700">No sites created yet</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Create a site first to set up a custom domain
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <h2 className="text-lg font-semibold text-gray-900 mb-2">Custom Domains</h2>
+      <p className="text-sm text-gray-500 mb-4">Serve your pages on your own domain with automatic SSL</p>
+
+      <div className="space-y-3">
+        {sites.map((site) => {
+          const domainSetup = provisionedDomains.find((d) => d.site_id === site.id);
+          const statusInfo = domainSetup ? getDomainStatusInfo(domainSetup.status) : null;
+
+          return (
+            <div key={site.id} className="border border-gray-200 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-gray-400" />
+                  <span className="font-medium text-gray-900">{site.domain_name}</span>
+                  <span className="text-xs text-gray-500">({site.name})</span>
+                </div>
+                {statusInfo && (
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusInfo.bgColor} ${statusInfo.color}`}>
+                    {statusInfo.label}
+                  </span>
+                )}
+              </div>
+
+              {/* No domain provisioned yet */}
+              {!domainSetup && (
+                <button
+                  onClick={() => handleProvision(site.id, site.domain_name)}
+                  disabled={createDomain.isPending}
+                  className="btn btn-primary btn-sm inline-flex items-center gap-2 mt-1"
+                >
+                  {createDomain.isPending ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="w-3.5 h-3.5" />
+                  )}
+                  Set Up Custom Domain
+                </button>
+              )}
+
+              {/* Pending validation — show CNAME record */}
+              {domainSetup && domainSetup.status === 'pending_validation' && domainSetup.validation_record_name && (
+                <div className="mt-3 space-y-3">
+                  <p className="text-sm text-amber-700">
+                    Add this CNAME record to your DNS to verify domain ownership:
+                  </p>
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-0.5">Name / Host</label>
+                      <div className="flex items-center gap-1">
+                        <code className="flex-1 text-xs bg-white rounded px-2 py-1.5 font-mono text-gray-800 break-all border border-gray-100">
+                          {domainSetup.validation_record_name}
+                        </code>
+                        <button
+                          onClick={() => handleCopy(domainSetup.validation_record_name!, `${site.id}-name`)}
+                          className="p-1 text-gray-400 hover:text-gray-600 rounded shrink-0"
+                          title="Copy"
+                        >
+                          {copiedField === `${site.id}-name` ? (
+                            <Check className="w-3.5 h-3.5 text-green-600" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-0.5">Value</label>
+                      <div className="flex items-center gap-1">
+                        <code className="flex-1 text-xs bg-white rounded px-2 py-1.5 font-mono text-gray-800 break-all border border-gray-100">
+                          {domainSetup.validation_record_value}
+                        </code>
+                        <button
+                          onClick={() => handleCopy(domainSetup.validation_record_value!, `${site.id}-value`)}
+                          className="p-1 text-gray-400 hover:text-gray-600 rounded shrink-0"
+                          title="Copy"
+                        >
+                          {copiedField === `${site.id}-value` ? (
+                            <Check className="w-3.5 h-3.5 text-green-600" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Checking DNS every 10 seconds...
+                  </div>
+                </div>
+              )}
+
+              {/* Provisioning — distribution deploying */}
+              {domainSetup && domainSetup.status === 'provisioning' && (
+                <div className="mt-3 flex items-center gap-2 text-sm text-indigo-700">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {domainSetup.status_message || 'CDN distribution deploying globally...'}
+                </div>
+              )}
+
+              {/* Active — show CNAME target */}
+              {domainSetup && domainSetup.status === 'active' && (
+                <div className="mt-3 space-y-3">
+                  <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-green-700 font-medium">Domain is live!</span>
+                  </div>
+                  {domainSetup.cname_target && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                      <p className="text-xs text-gray-500 mb-1">Point your domain's DNS CNAME record to:</p>
+                      <div className="flex items-center gap-1">
+                        <code className="flex-1 text-xs bg-white rounded px-2 py-1.5 font-mono text-gray-800 break-all border border-gray-100">
+                          {domainSetup.cname_target}
+                        </code>
+                        <button
+                          onClick={() => handleCopy(domainSetup.cname_target!, `${site.id}-cname`)}
+                          className="p-1 text-gray-400 hover:text-gray-600 rounded shrink-0"
+                          title="Copy"
+                        >
+                          {copiedField === `${site.id}-cname` ? (
+                            <Check className="w-3.5 h-3.5 text-green-600" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Failed — show error with retry */}
+              {domainSetup && domainSetup.status === 'failed' && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm">
+                    <AlertCircle className="w-4 h-4 text-red-600" />
+                    <span className="text-red-700">{domainSetup.status_message || 'Domain setup failed'}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      deleteDomain.mutate(domainSetup.domain, {
+                        onSuccess: () => handleProvision(site.id, site.domain_name),
+                      });
+                    }}
+                    disabled={deleteDomain.isPending || createDomain.isPending}
+                    className="btn btn-secondary btn-sm inline-flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {/* Delete button for non-idle domains */}
+              {domainSetup && domainSetup.status !== 'failed' && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <button
+                    onClick={() => handleDelete(domainSetup.domain)}
+                    className={`text-xs px-3 py-1.5 rounded-md transition-colors inline-flex items-center gap-1 ${
+                      confirmDelete === domainSetup.domain
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600'
+                    }`}
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    {confirmDelete === domainSetup.domain ? 'Click again to confirm' : 'Remove Domain'}
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {createDomain.isError && (
+        <p className="text-sm text-red-600 mt-3 flex items-center gap-1">
+          <AlertCircle className="w-4 h-4" />
+          {(createDomain.error as any)?.response?.data?.error || 'Failed to set up domain'}
+        </p>
+      )}
     </div>
   );
 }
@@ -1173,7 +1422,7 @@ function SendingDomainsCard({ workspaceId }: { workspaceId: string | undefined }
       <div className="flex items-center justify-between mb-2">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Domains</h2>
-          <p className="text-sm text-gray-500">Set up and verify domains for email sending, landing pages, and platform features</p>
+          <p className="text-sm text-gray-500">Set up and verify domains for email sending and platform features</p>
         </div>
         {!showAddWizard && (
           <button
