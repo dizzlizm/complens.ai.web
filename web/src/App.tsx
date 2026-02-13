@@ -24,7 +24,6 @@ import Sites from './pages/Sites';
 import Pages from './pages/Pages';
 import PageEditor from './pages/PageEditor';
 // Forms removed - now managed inside Page Editor
-import Analytics from './pages/Analytics';
 import Conversations from './pages/Conversations';
 import Settings from './pages/Settings';
 import EmailWarmup from './pages/EmailWarmup';
@@ -79,7 +78,6 @@ function App() {
           >
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/analytics" element={<Analytics />} />
             <Route path="/inbox" element={<Conversations />} />
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/contacts/:id" element={<ContactDetail />} />
