@@ -348,6 +348,21 @@ def activate_domain(workspace_id: str, domain: str) -> dict:
         f"Domain is live! Point your DNS CNAME to: {domain_setup.distribution_domain}",
     )
 
+    # Safety net: ensure site.domain_name is set for GSI3 page resolution
+    if domain_setup.site_id:
+        from complens.repositories.site import SiteRepository
+
+        site_repo = SiteRepository()
+        site = site_repo.get_by_id(workspace_id, domain_setup.site_id)
+        if site and site.domain_name != domain:
+            site.domain_name = domain
+            site_repo.update_site(site)
+            logger.info(
+                "Updated site.domain_name during activation",
+                site_id=domain_setup.site_id,
+                domain=domain,
+            )
+
     logger.info(
         "Domain activated",
         domain=domain,

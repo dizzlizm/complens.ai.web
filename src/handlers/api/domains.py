@@ -238,6 +238,11 @@ def create_domain(workspace_id: str, event: dict) -> dict:
         logger.exception("Failed to request ACM certificate", error=str(e))
         return error("Failed to request SSL certificate. Please try again.", 500)
 
+    # Ensure site.domain_name matches the provisioned domain for GSI3 resolution
+    if site.domain_name != request.domain:
+        site.domain_name = request.domain
+        site_repo.update_site(site)
+
     # Create domain setup record
     domain_setup = DomainSetup(
         workspace_id=workspace_id,

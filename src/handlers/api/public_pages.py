@@ -426,38 +426,34 @@ def get_page_by_domain(domain: str) -> dict:
     # Normalize domain
     domain = domain.lower().strip()
 
-    # 1. Try exact domain match (root domain like "itsross.com")
     repo = PageRepository()
-    page = repo.get_by_custom_domain(domain)
+    page = None
     canonical_domain = domain
 
-    # 2. If no match, try subdomain.rootdomain or site default page
+    from complens.repositories.site import SiteRepository
+    site_repo = SiteRepository()
+
+    # 1. Try subdomain.rootdomain pattern (e.g., findme.itsross.com)
+    parts = domain.split('.', 1)  # ["findme", "itsross.com"]
+    if len(parts) == 2 and '.' in parts[1]:  # Ensure root has at least one dot
+        subdomain_part = parts[0]
+        root_domain = parts[1]
+
+        # Look up page by subdomain via GSI3
+        page = repo.get_by_subdomain(subdomain_part)
+
+        if page and page.site_id:
+            # Verify page's site matches the root domain
+            site = site_repo.get_by_id(page.workspace_id, page.site_id)
+            if not site or site.domain_name != root_domain:
+                page = None  # Wrong site — don't serve
+            else:
+                canonical_domain = domain  # subdomain.rootdomain
+        elif page:
+            page = None  # No site association, can't verify domain ownership
+
+    # 2. Root domain fallback: look up site by domain (GSI3) and serve default page
     if not page:
-        from complens.repositories.site import SiteRepository
-        site_repo = SiteRepository()
-
-        parts = domain.split('.', 1)  # ["findme", "itsross.com"]
-        if len(parts) == 2 and '.' in parts[1]:  # Ensure root has at least one dot
-            subdomain_part = parts[0]
-            root_domain = parts[1]
-
-            # Look up page by subdomain via GSI3
-            page = repo.get_by_subdomain(subdomain_part)
-
-            if page and page.site_id:
-                # Verify page's site matches the root domain
-                site = site_repo.get_by_id(page.workspace_id, page.site_id)
-                if not site or site.domain_name != root_domain:
-                    page = None  # Wrong site — don't serve
-                else:
-                    canonical_domain = domain  # subdomain.rootdomain
-            elif page:
-                page = None  # No site association, can't verify domain ownership
-
-    # 3. Root domain fallback: look up site by domain and serve default page
-    if not page:
-        from complens.repositories.site import SiteRepository
-        site_repo = SiteRepository()
 
         site = site_repo.get_by_domain_global(domain)
         if site:

@@ -284,9 +284,13 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  // Verification state
-  const [verificationStatus, setVerificationStatus] = useState<'idle' | 'sent' | 'verified'>('idle');
-  const [lastVerifiedEmail, setLastVerifiedEmail] = useState('');
+  // Domain-level verification for from email
+  const { data: savedDomainsData } = useListDomains(workspaceId);
+  const savedDomains = savedDomainsData?.items || [];
+
+  // Reply-to verification state
+  const [replyVerificationStatus, setReplyVerificationStatus] = useState<'idle' | 'sent' | 'verified'>('idle');
+  const [lastVerifiedReply, setLastVerifiedReply] = useState('');
 
   const verifySender = useVerifySender(workspaceId || '');
   const checkSender = useCheckSender(workspaceId || '');
@@ -297,50 +301,55 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
       setFromEmail(workspace.from_email || '');
       setReplyTo(workspace.settings?.reply_to || '');
 
-      // If workspace already has a verified from_email, mark as verified
-      if (workspace.from_email) {
-        setLastVerifiedEmail(workspace.from_email);
-        setVerificationStatus('verified');
+      // If workspace already has a reply-to saved, mark as verified
+      if (workspace.settings?.reply_to) {
+        setLastVerifiedReply(workspace.settings.reply_to);
+        setReplyVerificationStatus('verified');
       }
     }
   }, [workspace]);
 
-  // Reset verification state when email changes
-  useEffect(() => {
-    if (fromEmail && fromEmail !== lastVerifiedEmail) {
-      setVerificationStatus('idle');
-    } else if (fromEmail && fromEmail === lastVerifiedEmail) {
-      setVerificationStatus('verified');
-    }
-  }, [fromEmail, lastVerifiedEmail]);
+  // Check if the from email's domain is verified
+  const fromEmailDomain = fromEmail.includes('@') ? fromEmail.split('@')[1]?.toLowerCase() : '';
+  const fromDomainVerified = fromEmailDomain
+    ? savedDomains.some(d => d.domain === fromEmailDomain && d.ready)
+    : false;
 
-  const handleVerify = async () => {
-    if (!fromEmail || !fromEmail.includes('@')) return;
+  // Reset reply verification state when reply-to changes
+  useEffect(() => {
+    if (replyTo && replyTo !== lastVerifiedReply) {
+      setReplyVerificationStatus('idle');
+    } else if (replyTo && replyTo === lastVerifiedReply) {
+      setReplyVerificationStatus('verified');
+    }
+  }, [replyTo, lastVerifiedReply]);
+
+  const handleVerifyReplyTo = async () => {
+    if (!replyTo || !replyTo.includes('@')) return;
     try {
-      await verifySender.mutateAsync({ email: fromEmail });
-      setVerificationStatus('sent');
+      await verifySender.mutateAsync({ email: replyTo });
+      setReplyVerificationStatus('sent');
     } catch {
       // Error handled by mutation state
     }
   };
 
-  const handleCheckVerification = async () => {
-    if (!fromEmail) return;
+  const handleCheckReplyVerification = async () => {
+    if (!replyTo) return;
     try {
-      const result = await checkSender.mutateAsync({ email: fromEmail });
+      const result = await checkSender.mutateAsync({ email: replyTo });
       if (result.verified) {
-        setVerificationStatus('verified');
-        setLastVerifiedEmail(fromEmail);
+        setReplyVerificationStatus('verified');
+        setLastVerifiedReply(replyTo);
       }
     } catch {
       // Error handled by mutation state
     }
   };
 
-  // Only include from_email if verified or unchanged
-  const fromEmailIsVerified = verificationStatus === 'verified';
+  // From email can be saved if domain is verified or email is unchanged
   const fromEmailChanged = fromEmail !== (workspace?.from_email || '');
-  const canSaveFromEmail = !fromEmailChanged || fromEmailIsVerified;
+  const canSaveFromEmail = !fromEmailChanged || fromDomainVerified;
 
   const handleSave = async () => {
     setSaving(true);
@@ -348,7 +357,7 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
       const payload: Record<string, unknown> = {
         settings: { ...workspace?.settings, from_name: fromName, reply_to: replyTo },
       };
-      // Only include from_email if it's verified or unchanged
+      // Only include from_email if domain is verified or unchanged
       if (canSaveFromEmail && fromEmail) {
         payload.from_email = fromEmail;
       }
@@ -380,7 +389,7 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
           <p className="text-xs text-gray-500 mt-1">The display name recipients will see</p>
         </div>
 
-        {/* From Email + Verification */}
+        {/* From Email — domain-level verification */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">From Email</label>
           <div className="flex gap-2">
@@ -391,17 +400,7 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
               value={fromEmail}
               onChange={(e) => setFromEmail(e.target.value)}
             />
-            {fromEmail && fromEmail.includes('@') && verificationStatus === 'idle' && (
-              <button
-                onClick={handleVerify}
-                disabled={verifySender.isPending}
-                className="btn btn-secondary inline-flex items-center gap-1.5 shrink-0"
-              >
-                {verifySender.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-                Verify Address
-              </button>
-            )}
-            {verificationStatus === 'verified' && (
+            {fromEmail && fromEmailDomain && fromDomainVerified && (
               <span className="inline-flex items-center gap-1.5 px-3 py-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg shrink-0">
                 <Check className="w-4 h-4" />
                 Verified
@@ -409,14 +408,62 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
             )}
           </div>
 
-          {/* Verification sent — instructions */}
-          {verificationStatus === 'sent' && (
+          {/* Domain not verified warning */}
+          {fromEmail && fromEmailDomain && !fromDomainVerified && (
+            <div className="mt-2 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+              <div className="text-sm text-amber-800">
+                <p>
+                  Domain <strong>{fromEmailDomain}</strong> is not verified.{' '}
+                  <a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ''; window.dispatchEvent(new CustomEvent('navigate-settings', { detail: 'email' })); }} className="font-medium underline">
+                    Verify your domain in Settings &gt; Email
+                  </a>{' '}
+                  first.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-gray-500 mt-1">Verified automatically when your sending domain is set up</p>
+        </div>
+
+        {/* Reply-To + Verification */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Reply-To Email</label>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              className="input flex-1"
+              placeholder="support@yourcompany.com"
+              value={replyTo}
+              onChange={(e) => setReplyTo(e.target.value)}
+            />
+            {replyTo && replyTo.includes('@') && replyVerificationStatus === 'idle' && (
+              <button
+                onClick={handleVerifyReplyTo}
+                disabled={verifySender.isPending}
+                className="btn btn-secondary inline-flex items-center gap-1.5 shrink-0"
+              >
+                {verifySender.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                Verify Address
+              </button>
+            )}
+            {replyVerificationStatus === 'verified' && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg shrink-0">
+                <Check className="w-4 h-4" />
+                Verified
+              </span>
+            )}
+          </div>
+
+          {/* Reply-to verification sent — instructions */}
+          {replyVerificationStatus === 'sent' && (
             <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <p className="text-sm text-blue-700 mb-2">
-                Verification email sent to <strong>{fromEmail}</strong>. Check your inbox for an email from AWS and click the verification link, then click below.
+                Verification email sent to <strong>{replyTo}</strong>. Check your inbox for an email from AWS and click the verification link, then click below.
               </p>
               <button
-                onClick={handleCheckVerification}
+                onClick={handleCheckReplyVerification}
                 disabled={checkSender.isPending}
                 className="btn btn-primary btn-sm inline-flex items-center gap-1.5"
               >
@@ -437,40 +484,14 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
           )}
 
           {/* Verify error */}
-          {verifySender.isError && verificationStatus === 'idle' && (
+          {verifySender.isError && replyVerificationStatus === 'idle' && (
             <p className="text-xs text-red-600 mt-1">
               {(verifySender.error as any)?.response?.data?.error || 'Failed to send verification email'}
             </p>
           )}
 
-          <p className="text-xs text-gray-500 mt-1">Must be verified via AWS SES before sending</p>
+          <p className="text-xs text-gray-500 mt-1">Must be a real mailbox — SES will send a verification link</p>
         </div>
-
-        {/* Reply-To */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Reply-To Email</label>
-          <input
-            type="email"
-            className="input"
-            placeholder="support@yourcompany.com"
-            value={replyTo}
-            onChange={(e) => setReplyTo(e.target.value)}
-          />
-          <p className="text-xs text-gray-500 mt-1">Must be a real mailbox that can receive mail — bounced replies hurt sender reputation</p>
-        </div>
-
-        {/* Unverified from-email warning */}
-        {fromEmailChanged && !fromEmailIsVerified && fromEmail && (
-          <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-            <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-            <div className="text-sm text-amber-800">
-              <p className="font-medium">From email not verified</p>
-              <p className="text-amber-700">
-                You must verify <strong>{fromEmail}</strong> before it can be saved. Click "Verify Address" above and follow the instructions.
-              </p>
-            </div>
-          </div>
-        )}
 
         {/* Save */}
         <div className="flex items-center gap-3 pt-2">
