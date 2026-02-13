@@ -54,6 +54,37 @@ def get_business_context(workspace_id: str, page_id: str | None = None) -> str:
     return profile.get_ai_context()
 
 
+def get_kb_context(workspace_id: str, query: str) -> str:
+    """Retrieve relevant knowledge base documents for AI prompts.
+
+    Args:
+        workspace_id: The workspace ID.
+        query: Search query to find relevant documents.
+
+    Returns:
+        Formatted context string from KB, or empty string if no results.
+    """
+    try:
+        from complens.services.knowledge_base_service import KnowledgeBaseService
+
+        kb_service = KnowledgeBaseService()
+        results = kb_service.retrieve(workspace_id, query, max_results=3)
+
+        if not results:
+            return ""
+
+        parts = ["=== KNOWLEDGE BASE ==="]
+        for r in results:
+            text = r.get("text", "").strip()
+            if text:
+                parts.append(text)
+
+        return "\n\n".join(parts) if len(parts) > 1 else ""
+    except Exception as e:
+        logger.warning("KB retrieval failed", error=str(e))
+        return ""
+
+
 def invoke_claude(
     prompt: str,
     system: str | None = None,
@@ -85,6 +116,12 @@ def invoke_claude(
         if context:
             system_parts.append(context)
             system_parts.append("")  # Add blank line
+
+        # Include knowledge base context
+        kb_context = get_kb_context(workspace_id, prompt)
+        if kb_context:
+            system_parts.append(kb_context)
+            system_parts.append("")
 
     if system:
         system_parts.append(system)

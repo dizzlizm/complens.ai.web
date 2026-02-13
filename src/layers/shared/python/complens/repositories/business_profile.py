@@ -153,25 +153,16 @@ class BusinessProfileRepository(BaseRepository[BusinessProfile]):
         Returns:
             The existing or newly created profile.
         """
-        if page_id:
-            profile = self.get_by_page(workspace_id, page_id)
-        elif site_id:
-            profile = self.get_by_site(workspace_id, site_id)
-        else:
-            profile = self.get_by_workspace(workspace_id)
+        # Cascade: page → site → workspace (return most specific available)
+        profile = self.get_effective_profile(workspace_id, page_id, site_id)
 
         if not profile:
-            profile = BusinessProfile(
-                workspace_id=workspace_id,
-                page_id=page_id,
-                site_id=site_id,
-            )
-            profile = self.create_profile(profile, page_id)
+            # No profile at any level — create at workspace level
+            profile = BusinessProfile(workspace_id=workspace_id)
+            profile = self.create_profile(profile)
             logger.info(
                 "Created new business profile",
                 workspace_id=workspace_id,
-                page_id=page_id,
-                site_id=site_id,
             )
 
         return profile

@@ -42,7 +42,7 @@ from complens.models.synthesis import (
     WorkflowConfig,
 )
 from complens.repositories.business_profile import BusinessProfileRepository
-from complens.services.ai_service import FAST_MODEL, invoke_claude_json
+from complens.services.ai_service import FAST_MODEL, get_kb_context, invoke_claude_json
 
 logger = structlog.get_logger()
 
@@ -192,7 +192,7 @@ class SynthesisEngine:
         # Stage 5: Content Synthesis
         logger.debug("Stage 5: Synthesizing content")
         synthesized = self._synthesize_content(
-            profile, description, intent, plan, design
+            workspace_id, profile, description, intent, plan, design
         )
         stages_executed.append("content_synthesis")
 
@@ -319,7 +319,10 @@ class SynthesisEngine:
         design = self._generate_design_system(profile, intent, style_preference)
 
         # Brand foundation (single Haiku call)
-        brand_dict = self._synthesize_brand_foundation(profile, description, intent, design)
+        kb_context = get_kb_context(workspace_id, description)
+        brand_dict = self._synthesize_brand_foundation(
+            profile, description, intent, design, extra_context=kb_context
+        )
         brand = BrandFoundation(
             business_name=brand_dict.get("business_name", profile.business_name or ""),
             tagline=brand_dict.get("tagline", profile.tagline or ""),
@@ -396,6 +399,11 @@ class SynthesisEngine:
 
         profile = self._get_profile(workspace_id, page_id)
         profile_context = profile.get_ai_context() if profile.business_name else ""
+
+        # Add knowledge base context
+        kb_context = get_kb_context(workspace_id, description)
+        if kb_context:
+            profile_context = (profile_context + "\n\n" + kb_context) if profile_context else kb_context
 
         # Convert BrandFoundation to dict for existing _synthesize_block_batch
         brand_dict = brand.model_dump()
@@ -1197,6 +1205,7 @@ class SynthesisEngine:
 
     def _synthesize_content(
         self,
+        workspace_id: str,
         profile: BusinessProfile,
         description: str,
         intent: PageIntent,
@@ -1212,9 +1221,14 @@ class SynthesisEngine:
         # Build profile context
         profile_context = profile.get_ai_context() if profile.business_name else ""
 
+        # Add knowledge base context
+        kb_context = get_kb_context(workspace_id, description)
+        if kb_context:
+            profile_context = (profile_context + "\n\n" + kb_context) if profile_context else kb_context
+
         # Step 1: Generate brand foundation (small, focused call)
         brand = self._synthesize_brand_foundation(
-            profile, description, intent, design
+            profile, description, intent, design, extra_context=kb_context
         )
 
         # Step 2: Generate blocks in focused batches
@@ -1254,6 +1268,7 @@ class SynthesisEngine:
         description: str,
         intent: PageIntent,
         design: DesignSystem,
+        extra_context: str = "",
     ) -> dict[str, Any]:
         """Generate brand foundation - business name, tagline, tone, theme.
 
@@ -1261,6 +1276,8 @@ class SynthesisEngine:
         for all subsequent block generation.
         """
         profile_context = profile.get_ai_context() if profile.business_name else ""
+        if extra_context:
+            profile_context = (profile_context + "\n\n" + extra_context) if profile_context else extra_context
 
         prompt = f"""Extract/generate brand foundation and SEO metadata for a landing page.
 
