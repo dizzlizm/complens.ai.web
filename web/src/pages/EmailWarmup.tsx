@@ -3,13 +3,14 @@ import { Link, useParams } from 'react-router-dom';
 import {
   Loader2, Check, AlertCircle, Globe, Plus, ChevronRight, ChevronDown, Mail, Send,
   Pause, Play, Trash2, AlertTriangle, TrendingUp, X, Eye, RefreshCw, SlidersHorizontal, Shield,
-  BookOpen, Users, Search,
+  BookOpen, Users, Search, Settings, Flame,
 } from 'lucide-react';
 import {
-  useCurrentWorkspace, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup,
+  useCurrentWorkspace, useUpdateWorkspace, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup,
   useCancelWarmup, getWarmupStatusInfo, useUpdateSeedList, useSendWarmupTestEmail,
   useUpdateWarmupSettings, useWarmupLog, useDomainHealth, getHealthStatusInfo,
   useListDomains, useVerifyFromEmail, useConfirmFromEmail, useSite,
+  useVerifySender, useCheckSender,
 } from '../lib/hooks';
 import type { WarmupDomain } from '../lib/hooks/useEmailWarmup';
 import { useContacts } from '../lib/hooks/useContacts';
@@ -223,6 +224,7 @@ function ContactImportPicker({
 export default function EmailWarmup() {
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { siteId } = useParams<{ siteId: string }>();
+  const [activeTab, setActiveTab] = useState<'settings' | 'warmup'>('settings');
 
   if (isLoadingWorkspace) {
     return (
@@ -233,15 +235,238 @@ export default function EmailWarmup() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Email Warmup</h1>
-        <p className="mt-1 text-gray-500">
-          Build sending reputation by gradually ramping up email volume. Warmup emails are AI-generated and sent automatically to your seed list.
-        </p>
+    <div className="max-w-5xl mx-auto px-4 py-6">
+      <h1 className="text-2xl font-bold text-gray-900 mb-1">Email</h1>
+      <p className="text-gray-500 mb-6">Configure your sender identity and warm up domains</p>
+
+      {/* Tab bar */}
+      <div className="flex border-b border-gray-200 mb-6">
+        <button
+          onClick={() => setActiveTab('settings')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
+            activeTab === 'settings'
+              ? 'border-primary-600 text-primary-700'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+        >
+          <Settings className="w-4 h-4" />
+          Settings
+        </button>
+        <button
+          onClick={() => setActiveTab('warmup')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
+            activeTab === 'warmup'
+              ? 'border-primary-600 text-primary-700'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+        >
+          <Flame className="w-4 h-4" />
+          Warmup
+        </button>
       </div>
 
-      <EmailWarmupSection workspaceId={workspaceId} siteId={siteId} />
+      {activeTab === 'settings' ? (
+        <EmailSettingsTab workspaceId={workspaceId} />
+      ) : (
+        <EmailWarmupSection workspaceId={workspaceId} siteId={siteId} />
+      )}
+    </div>
+  );
+}
+
+function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) {
+  const { workspace } = useCurrentWorkspace();
+  const updateWorkspace = useUpdateWorkspace(workspaceId || '');
+
+  const [fromName, setFromName] = useState('');
+  const [fromEmail, setFromEmail] = useState('');
+  const [replyTo, setReplyTo] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  // Verification state
+  const [verificationStatus, setVerificationStatus] = useState<'idle' | 'sent' | 'verified'>('idle');
+  const [lastVerifiedEmail, setLastVerifiedEmail] = useState('');
+
+  const verifySender = useVerifySender(workspaceId || '');
+  const checkSender = useCheckSender(workspaceId || '');
+
+  useEffect(() => {
+    if (workspace) {
+      setFromName(workspace.settings?.from_name || '');
+      setFromEmail(workspace.from_email || '');
+      setReplyTo(workspace.settings?.reply_to || '');
+
+      // If workspace already has a verified from_email, mark as verified
+      if (workspace.from_email) {
+        setLastVerifiedEmail(workspace.from_email);
+        setVerificationStatus('verified');
+      }
+    }
+  }, [workspace]);
+
+  // Reset verification state when email changes
+  useEffect(() => {
+    if (fromEmail && fromEmail !== lastVerifiedEmail) {
+      setVerificationStatus('idle');
+    } else if (fromEmail && fromEmail === lastVerifiedEmail) {
+      setVerificationStatus('verified');
+    }
+  }, [fromEmail, lastVerifiedEmail]);
+
+  const handleVerify = async () => {
+    if (!fromEmail || !fromEmail.includes('@')) return;
+    try {
+      await verifySender.mutateAsync({ email: fromEmail });
+      setVerificationStatus('sent');
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
+  const handleCheckVerification = async () => {
+    if (!fromEmail) return;
+    try {
+      const result = await checkSender.mutateAsync({ email: fromEmail });
+      if (result.verified) {
+        setVerificationStatus('verified');
+        setLastVerifiedEmail(fromEmail);
+      }
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await updateWorkspace.mutateAsync({
+        from_email: fromEmail || undefined,
+        settings: { ...workspace?.settings, from_name: fromName, reply_to: replyTo },
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      console.error('Failed to save:', err);
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="card">
+      <h2 className="text-lg font-semibold text-gray-900 mb-1">Sender Identity</h2>
+      <p className="text-sm text-gray-500 mb-4">Configure default sender information for outbound emails</p>
+
+      <div className="space-y-4">
+        {/* From Name */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">From Name</label>
+          <input
+            type="text"
+            className="input"
+            placeholder="Your Company"
+            value={fromName}
+            onChange={(e) => setFromName(e.target.value)}
+          />
+          <p className="text-xs text-gray-500 mt-1">The display name recipients will see</p>
+        </div>
+
+        {/* From Email + Verification */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">From Email</label>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              className="input flex-1"
+              placeholder="hello@yourcompany.com"
+              value={fromEmail}
+              onChange={(e) => setFromEmail(e.target.value)}
+            />
+            {fromEmail && fromEmail.includes('@') && verificationStatus === 'idle' && (
+              <button
+                onClick={handleVerify}
+                disabled={verifySender.isPending}
+                className="btn btn-secondary inline-flex items-center gap-1.5 shrink-0"
+              >
+                {verifySender.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                Verify Address
+              </button>
+            )}
+            {verificationStatus === 'verified' && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg shrink-0">
+                <Check className="w-4 h-4" />
+                Verified
+              </span>
+            )}
+          </div>
+
+          {/* Verification sent — instructions */}
+          {verificationStatus === 'sent' && (
+            <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-sm text-blue-700 mb-2">
+                Verification email sent to <strong>{fromEmail}</strong>. Check your inbox for an email from AWS and click the verification link, then click below.
+              </p>
+              <button
+                onClick={handleCheckVerification}
+                disabled={checkSender.isPending}
+                className="btn btn-primary btn-sm inline-flex items-center gap-1.5"
+              >
+                {checkSender.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                Check Verification
+              </button>
+              {checkSender.isSuccess && !checkSender.data?.verified && (
+                <p className="text-xs text-amber-600 mt-2">
+                  Not verified yet. Click the link in the email from AWS, then try again.
+                </p>
+              )}
+              {checkSender.isError && (
+                <p className="text-xs text-red-600 mt-2">
+                  {(checkSender.error as any)?.response?.data?.error || 'Failed to check verification status'}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Verify error */}
+          {verifySender.isError && verificationStatus === 'idle' && (
+            <p className="text-xs text-red-600 mt-1">
+              {(verifySender.error as any)?.response?.data?.error || 'Failed to send verification email'}
+            </p>
+          )}
+
+          <p className="text-xs text-gray-500 mt-1">Must be verified via AWS SES before sending</p>
+        </div>
+
+        {/* Reply-To */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Reply-To Email</label>
+          <input
+            type="email"
+            className="input"
+            placeholder="support@yourcompany.com"
+            value={replyTo}
+            onChange={(e) => setReplyTo(e.target.value)}
+          />
+          <p className="text-xs text-gray-500 mt-1">Where replies will be directed (optional)</p>
+        </div>
+
+        {/* Save */}
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="btn btn-primary inline-flex items-center gap-2"
+          >
+            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+            Save Changes
+          </button>
+          {saved && (
+            <span className="text-sm text-green-600 flex items-center gap-1">
+              <Check className="w-4 h-4" /> Saved
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

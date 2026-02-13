@@ -15,6 +15,12 @@ import {
 } from './types';
 import LayoutSlot from './LayoutSlot';
 
+export interface DragHandleProps {
+  attributes: ReturnType<typeof import('@dnd-kit/core').useDraggable>['attributes'];
+  listeners: ReturnType<typeof import('@dnd-kit/core').useDraggable>['listeners'];
+  canBeMoved: boolean;
+}
+
 // Form data for the form block
 interface FormInfo {
   id: string;
@@ -57,7 +63,7 @@ function DraggableSlot({
   children,
 }: {
   slot: PageBlock;
-  children: React.ReactNode;
+  children: (props: DragHandleProps) => React.ReactNode;
 }) {
   const slotSpan = slot.colSpan ?? 12;
   const canBeMoved = slotSpan <= 8; // Only allow moving slots that could fit somewhere
@@ -86,21 +92,9 @@ function DraggableSlot({
     <div
       ref={setNodeRef}
       style={style}
-      className={`relative ${isDragging ? 'opacity-50' : ''}`}
+      className={`relative h-full ${isDragging ? 'opacity-50' : ''}`}
     >
-      {/* Drag handle overlay - only show for moveable slots */}
-      {canBeMoved && (
-        <div
-          {...attributes}
-          {...listeners}
-          className="absolute top-12 left-2 z-20 p-1.5 bg-white border border-gray-300 rounded-lg shadow-md cursor-grab active:cursor-grabbing hover:bg-gray-50 transition-colors"
-          title="Drag to move to another row"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <GripVertical className="w-4 h-4 text-gray-600" />
-        </div>
-      )}
-      {children}
+      {children({ attributes, listeners, canBeMoved })}
     </div>
   );
 }
@@ -267,23 +261,26 @@ export default function LayoutRow({
             className={`${colSpanToClass(slot.colSpan ?? 12)} relative group/slot`}
           >
             <DraggableSlot slot={slot}>
-              <LayoutSlot
-                slot={slot}
-                isSelected={selectedSlotIds.has(slot.id)}
-                onSelect={() => onSelectSlot(slot.id)}
-                onTypeChange={(type) => handleSlotTypeChange(slot.id, type)}
-                onDelete={() => onDeleteSlot(slot.id)}
-                onWidthChange={(width) => handleSlotWidthChange(slot.id, width)}
-                onConfigChange={(config) => handleSlotConfigChange(slot.id, config)}
-                onDuplicate={_onDuplicateSlot ? () => _onDuplicateSlot(slot.id) : undefined}
-                showDeleteButton={slots.length > 1 || !isOnlyRow}
-                isFirst={slotIndex === 0}
-                isLast={slotIndex === slots.length - 1}
-                forms={forms}
-                workspaceId={workspaceId}
-                pageId={pageId}
-                previewMode={_previewMode}
-              />
+              {(dragHandleProps) => (
+                <LayoutSlot
+                  slot={slot}
+                  isSelected={selectedSlotIds.has(slot.id)}
+                  onSelect={() => onSelectSlot(slot.id)}
+                  onTypeChange={(type) => handleSlotTypeChange(slot.id, type)}
+                  onDelete={() => onDeleteSlot(slot.id)}
+                  onWidthChange={(width) => handleSlotWidthChange(slot.id, width)}
+                  onConfigChange={(config) => handleSlotConfigChange(slot.id, config)}
+                  onDuplicate={_onDuplicateSlot ? () => _onDuplicateSlot(slot.id) : undefined}
+                  showDeleteButton={slots.length > 1 || !isOnlyRow}
+                  isFirst={slotIndex === 0}
+                  isLast={slotIndex === slots.length - 1}
+                  forms={forms}
+                  workspaceId={workspaceId}
+                  pageId={pageId}
+                  previewMode={_previewMode}
+                  dragHandleProps={dragHandleProps}
+                />
+              )}
             </DraggableSlot>
 
             {/* Split button - show on hover for wide slots */}

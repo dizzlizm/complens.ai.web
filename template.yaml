@@ -3070,6 +3070,18 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/email-warmup/{domain}/confirm-from-email
             Method: POST
+        VerifySender:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/verify-sender
+            Method: POST
+        CheckSender:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/check-sender
+            Method: POST
 
   WarmupDailyProcessorFunction:
     Type: AWS::Serverless::Function

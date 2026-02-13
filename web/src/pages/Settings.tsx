@@ -925,87 +925,12 @@ function SecuritySettings() {
 }
 
 function EmailDomainSettings() {
-  const { workspace, workspaceId } = useCurrentWorkspace();
-  const updateWorkspace = useUpdateWorkspace(workspaceId || '');
-  const [fromEmail, setFromEmail] = useState('');
-  const [fromName, setFromName] = useState('');
-  const [replyTo, setReplyTo] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    if (workspace) {
-      setFromEmail(workspace.from_email || '');
-      setFromName(workspace.settings?.from_name || '');
-      setReplyTo(workspace.settings?.reply_to || '');
-    }
-  }, [workspace]);
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await updateWorkspace.mutateAsync({
-        from_email: fromEmail || undefined,
-        settings: { ...workspace?.settings, from_name: fromName, reply_to: replyTo },
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (error) {
-      console.error('Failed to save:', error);
-    }
-    setSaving(false);
-  };
+  const { workspaceId } = useCurrentWorkspace();
 
   return (
     <div className="space-y-6">
       {/* Custom Domain Provisioning */}
       <CustomDomainCard workspaceId={workspaceId} />
-
-      {/* Email Sending Defaults */}
-      <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-2">Email Sending Defaults</h2>
-        <p className="text-sm text-gray-500 mb-4">Configure default sender information for workflow emails</p>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">From Name</label>
-            <input
-              type="text"
-              className="input"
-              placeholder="Your Company"
-              value={fromName}
-              onChange={(e) => setFromName(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">From Email</label>
-            <input
-              type="email"
-              className="input"
-              placeholder="hello@yourcompany.com"
-              value={fromEmail}
-              onChange={(e) => setFromEmail(e.target.value)}
-            />
-            <p className="text-xs text-gray-500 mt-1">Must be verified in your email provider</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Reply-To Email</label>
-            <input
-              type="email"
-              className="input"
-              placeholder="support@yourcompany.com"
-              value={replyTo}
-              onChange={(e) => setReplyTo(e.target.value)}
-            />
-          </div>
-          <div className="flex items-center gap-3">
-            <button onClick={handleSave} disabled={saving} className="btn btn-primary inline-flex items-center gap-2">
-              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-              Save Changes
-            </button>
-            {saved && <span className="text-sm text-green-600 flex items-center gap-1"><Check className="w-4 h-4" /> Saved</span>}
-          </div>
-        </div>
-      </div>
 
       {/* Sending Domains */}
       <SendingDomainsCard workspaceId={workspaceId} />

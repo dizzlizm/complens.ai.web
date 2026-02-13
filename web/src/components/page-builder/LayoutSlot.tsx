@@ -33,6 +33,7 @@ import {
   BLOCK_TYPES,
   getWidthLabel,
 } from './types';
+import type { DragHandleProps } from './LayoutRow';
 import BlockRenderer, { blockHasContent } from './BlockRenderer';
 import BlockSettingsModal from './BlockSettingsModal';
 
@@ -214,6 +215,7 @@ interface LayoutSlotProps {
   workspaceId?: string;
   pageId?: string;
   previewMode?: boolean;
+  dragHandleProps?: DragHandleProps;
 }
 
 export default function LayoutSlot({
@@ -230,6 +232,7 @@ export default function LayoutSlot({
   workspaceId,
   pageId,
   previewMode = false,
+  dragHandleProps,
 }: LayoutSlotProps) {
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
   const [showWidthDropdown, setShowWidthDropdown] = useState(false);
@@ -248,9 +251,8 @@ export default function LayoutSlot({
       return;
     }
     const rect = slotRef.current.getBoundingClientRect();
-    const scrollTop = window.scrollY;
-    const above = rect.top + scrollTop - 44;
-    const below = rect.bottom + scrollTop + 4;
+    const above = rect.top - 44;
+    const below = rect.bottom + 4;
     // If too close to top, show below
     const top = rect.top < 60 ? below : above;
     setToolbarPos({ top, left: rect.left + rect.width / 2, width: rect.width });
@@ -315,7 +317,7 @@ export default function LayoutSlot({
       <div
         ref={slotRef}
         className={`
-          relative group rounded-xl border-2 transition-all duration-200 min-h-[140px] flex flex-col
+          relative group rounded-xl border-2 transition-all duration-200 min-h-[140px] h-full flex flex-col
           ${isSelected
             ? 'border-indigo-500 ring-2 ring-indigo-200 shadow-lg'
             : isPlaceholder
@@ -341,7 +343,14 @@ export default function LayoutSlot({
         `}>
           {/* Left: Drag handle + Type dropdown */}
           <div className="flex items-center gap-2">
-            <div className="cursor-grab text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div
+              {...(dragHandleProps?.canBeMoved ? { ...dragHandleProps.attributes, ...dragHandleProps.listeners } : {})}
+              className={`text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity ${
+                dragHandleProps?.canBeMoved ? 'touch-none cursor-grab active:cursor-grabbing' : 'cursor-default'
+              }`}
+              title={dragHandleProps?.canBeMoved ? 'Drag to move to another row' : undefined}
+              onClick={(e) => e.stopPropagation()}
+            >
               <GripVertical className="w-4 h-4" />
             </div>
 
@@ -491,8 +500,6 @@ export default function LayoutSlot({
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <GripVertical className="w-4 h-4 text-gray-400 cursor-grab" />
-          <div className="w-px h-4 bg-gray-200 mx-0.5" />
           <span className="text-xs font-medium text-gray-600 px-1">{getTypeLabel()}</span>
           <div className="w-px h-4 bg-gray-200 mx-0.5" />
           {onDuplicate && (

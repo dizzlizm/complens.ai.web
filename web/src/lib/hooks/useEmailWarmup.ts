@@ -442,6 +442,32 @@ export function useConfirmFromEmail(workspaceId: string) {
   });
 }
 
+// Verify a sender email address (workspace-level, not domain-scoped)
+export function useVerifySender(workspaceId: string) {
+  return useMutation({
+    mutationFn: async ({ email }: { email: string }) => {
+      const { data } = await api.post<{ sent_to: string }>(
+        `/workspaces/${workspaceId}/email-warmup/verify-sender`,
+        { email }
+      );
+      return data;
+    },
+  });
+}
+
+// Check sender email verification status (workspace-level)
+export function useCheckSender(workspaceId: string) {
+  return useMutation({
+    mutationFn: async ({ email }: { email: string }) => {
+      const { data } = await api.post<{ verified: boolean; ses_status: string; email: string }>(
+        `/workspaces/${workspaceId}/email-warmup/check-sender`,
+        { email }
+      );
+      return data;
+    },
+  });
+}
+
 // Helper to get status display info
 export function getWarmupStatusInfo(status: WarmupStatus): {
   label: string;

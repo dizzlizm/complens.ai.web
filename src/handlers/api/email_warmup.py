@@ -48,7 +48,11 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         repo = WarmupDomainRepository()
         service = WarmupService(repo=repo)
 
-        if path.endswith("/verify-from-email") and http_method == "POST" and domain:
+        if path.endswith("/verify-sender") and http_method == "POST" and not domain:
+            return verify_sender(workspace_id, event)
+        elif path.endswith("/check-sender") and http_method == "POST" and not domain:
+            return check_sender(workspace_id, event)
+        elif path.endswith("/verify-from-email") and http_method == "POST" and domain:
             return verify_from_email(service, workspace_id, domain, event)
         elif path.endswith("/confirm-from-email") and http_method == "POST" and domain:
             return confirm_from_email(service, workspace_id, domain, event)
@@ -571,6 +575,99 @@ def confirm_from_email(
         "verified": False,
         "ses_status": ses_status,
         "email": target_email,
+    })
+
+
+def verify_sender(workspace_id: str, event: dict) -> dict:
+    """Request SES email identity verification for a full email address.
+
+    Workspace-level endpoint (not scoped to a warmup domain).  SES sends its
+    own verification email with a click-to-verify link.
+
+    Args:
+        workspace_id: Workspace ID.
+        event: API Gateway event with ``email`` in body.
+
+    Returns:
+        API response confirming SES verification was requested.
+    """
+    body = json.loads(event.get("body", "{}"))
+    email = body.get("email", "").strip().lower()
+
+    if not email or "@" not in email:
+        return error("A valid email address is required", 400)
+
+    ses = boto3.client("ses")
+    try:
+        ses.verify_email_identity(EmailAddress=email)
+    except Exception as e:
+        logger.error("SES verify_email_identity failed", email=email, error=str(e))
+        return error("Failed to request email verification", 500)
+
+    logger.info(
+        "SES sender verification requested",
+        workspace_id=workspace_id,
+        email=email,
+    )
+
+    return success({"sent_to": email})
+
+
+def check_sender(workspace_id: str, event: dict) -> dict:
+    """Check SES verification status for a sender email address.
+
+    Workspace-level endpoint (not scoped to a warmup domain).
+
+    Args:
+        workspace_id: Workspace ID.
+        event: API Gateway event with ``email`` in body.
+
+    Returns:
+        API response with current verification status.
+    """
+    body = json.loads(event.get("body", "{}"))
+    email = body.get("email", "").strip().lower()
+
+    if not email or "@" not in email:
+        return error("A valid email address is required", 400)
+
+    ses = boto3.client("ses")
+    try:
+        response = ses.get_identity_verification_attributes(
+            Identities=[email],
+        )
+        attrs = response.get("VerificationAttributes", {}).get(email, {})
+        ses_status = attrs.get("VerificationStatus", "NotStarted")
+    except Exception as e:
+        logger.error("SES get_identity_verification_attributes failed", email=email, error=str(e))
+        return error("Failed to check verification status", 500)
+
+    verified = ses_status == "Success"
+
+    if verified:
+        # Persist to workspace from_email so other features can use it
+        try:
+            from complens.repositories.workspace import WorkspaceRepository
+            ws_repo = WorkspaceRepository()
+            workspace = ws_repo.get_by_id(workspace_id)
+            if workspace and not workspace.from_email:
+                workspace.from_email = email
+                ws_repo.update_workspace(workspace, check_version=False)
+                logger.info("Auto-set workspace from_email on verification", workspace_id=workspace_id, from_email=email)
+        except Exception:
+            logger.warning("Failed to auto-set from_email after verification", workspace_id=workspace_id, exc_info=True)
+
+    logger.info(
+        "SES sender verification checked",
+        workspace_id=workspace_id,
+        email=email,
+        ses_status=ses_status,
+    )
+
+    return success({
+        "verified": verified,
+        "ses_status": ses_status,
+        "email": email,
     })
 
 
