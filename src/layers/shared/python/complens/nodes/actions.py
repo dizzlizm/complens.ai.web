@@ -4,8 +4,11 @@ Actions perform operations like sending messages, updating data,
 calling APIs, etc.
 """
 
+import ipaddress
 import json
+import socket
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -586,6 +589,38 @@ class WaitAction(BaseNode):
         return []
 
 
+def _validate_webhook_url(url: str) -> str | None:
+    """Validate a webhook URL is safe to call (SSRF protection).
+
+    Returns None if safe, or an error message if blocked.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return "Invalid URL"
+
+    # Only allow http and https
+    if parsed.scheme not in ("http", "https"):
+        return f"Scheme '{parsed.scheme}' not allowed — only http/https"
+
+    hostname = parsed.hostname
+    if not hostname:
+        return "URL has no hostname"
+
+    # Resolve hostname to IP and check against blocked ranges
+    try:
+        addr_info = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return f"Cannot resolve hostname '{hostname}'"
+
+    for _family, _type, _proto, _canonname, sockaddr in addr_info:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return f"Blocked: {hostname} resolves to private/reserved address"
+
+    return None
+
+
 class WebhookAction(BaseNode):
     """Call an external webhook/API."""
 
@@ -605,6 +640,12 @@ class WebhookAction(BaseNode):
 
         if not url:
             return NodeResult.failed(error="Webhook URL is required")
+
+        # SSRF protection — block private/internal IPs and non-http schemes
+        ssrf_error = _validate_webhook_url(url)
+        if ssrf_error:
+            self.logger.warning("Webhook URL blocked by SSRF filter", url=url, reason=ssrf_error)
+            return NodeResult.failed(error=f"Webhook URL not allowed: {ssrf_error}")
 
         method = self._get_config_value("webhook_method", "POST").upper()
         headers = self._get_config_value("webhook_headers", {})

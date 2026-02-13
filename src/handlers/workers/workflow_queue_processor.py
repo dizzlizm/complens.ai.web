@@ -5,6 +5,8 @@ The FIFO queue uses MessageGroupId=workspace_id to ensure fair
 multi-tenant processing - no single workspace can monopolize the queue.
 """
 
+import hashlib
+import hmac
 import json
 import os
 from typing import Any
@@ -296,6 +298,27 @@ def _matches_trigger_config(
         incoming_path = trigger_data.get("webhook_path", "")
         if configured_path and configured_path.strip("/") != incoming_path.strip("/"):
             return False
+
+        # Validate HMAC signature if workflow has a webhook_secret configured
+        webhook_secret = config.get("webhook_secret")
+        if webhook_secret:
+            incoming_sig = trigger_data.get("webhook_signature", "")
+            body_raw = trigger_data.get("webhook_body_raw", "")
+            if not incoming_sig:
+                logger.warning(
+                    "Webhook rejected: secret configured but no signature provided",
+                    webhook_path=incoming_path,
+                )
+                return False
+            expected = hmac.new(
+                webhook_secret.encode(), body_raw.encode(), hashlib.sha256
+            ).hexdigest()
+            if not hmac.compare_digest(expected, incoming_sig):
+                logger.warning(
+                    "Webhook rejected: HMAC signature mismatch",
+                    webhook_path=incoming_path,
+                )
+                return False
 
     elif trigger_type == "trigger_schedule":
         # Schedule triggers match by workflow_id if present

@@ -2,6 +2,16 @@
 
 Receives external HTTP calls and forwards them to the workflow queue
 for trigger_webhook matching.
+
+Callers can authenticate by including an HMAC-SHA256 signature in the
+X-Webhook-Signature header.  The signature is computed over the raw
+request body using the webhook_secret configured on the workflow's
+trigger node.  Validation happens in the queue processor during
+trigger matching (not here) because the inbound handler doesn't know
+which workflow — or which secret — will match.
+
+However, we do enforce a basic workspace-exists check and rate-limit
+the payload size to prevent abuse.
 """
 
 import json
@@ -15,6 +25,8 @@ import structlog
 from complens.utils.responses import success, error
 
 logger = structlog.get_logger()
+
+MAX_BODY_SIZE = 256 * 1024  # 256 KB
 
 
 def handler(event: dict[str, Any], context: Any) -> dict:
@@ -36,11 +48,22 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         headers = event.get("headers", {}) or {}
         query_params = event.get("queryStringParameters", {}) or {}
 
+        # Extract signature header (passed through for downstream validation)
+        signature = (
+            headers.get("X-Webhook-Signature")
+            or headers.get("x-webhook-signature")
+            or ""
+        )
+
         # Parse body
         body_raw = event.get("body", "")
         if event.get("isBase64Encoded") and body_raw:
             import base64
             body_raw = base64.b64decode(body_raw).decode("utf-8", errors="replace")
+
+        # Reject oversized payloads
+        if len(body_raw or "") > MAX_BODY_SIZE:
+            return error("Payload too large", 413)
 
         # Try to parse as JSON, fall back to raw string
         try:
@@ -53,6 +76,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             workspace_id=workspace_id,
             webhook_path=webhook_path,
             method=http_method,
+            has_signature=bool(signature),
         )
 
         # Build trigger event
@@ -68,6 +92,10 @@ def handler(event: dict[str, Any], context: Any) -> dict:
                     "body": body,
                     "query_params": dict(query_params),
                 },
+                # Pass raw body + signature so the queue processor can
+                # verify HMAC against each workflow's configured secret.
+                "webhook_signature": signature,
+                "webhook_body_raw": body_raw or "",
                 "contact_id": None,
                 "created_at": now.isoformat(),
             },
