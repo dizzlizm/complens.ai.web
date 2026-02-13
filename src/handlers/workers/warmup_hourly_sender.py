@@ -120,6 +120,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
                     body_html=email_content.get("body_html"),
                     from_email=from_email,
                     tags={"warmup": "true", "domain": warmup.domain},
+                    _skip_warmup_check=True,
                 )
             except Exception:
                 logger.exception(
@@ -130,6 +131,12 @@ def handler(event: dict[str, Any], context: Any) -> dict:
                 continue
 
             sent_for_domain += 1
+
+            # Increment daily send counter (we skipped the warmup check above)
+            try:
+                repo.increment_daily_send(warmup.domain, today, daily_limit)
+            except Exception:
+                logger.warning("Failed to increment daily send counter", domain=warmup.domain)
 
             # Record per-recipient for detailed audit log
             try:
