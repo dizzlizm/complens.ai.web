@@ -37,7 +37,6 @@ export default function Pages() {
       const basePath = siteId ? `/sites/${siteId}` : '';
       navigate(`${basePath}/pages/${page.id}`);
     } catch (err) {
-      console.error('Failed to create page:', err);
       toast.error('Failed to create page. Please try again.');
     }
   };
@@ -48,7 +47,6 @@ export default function Pages() {
       setDeleteConfirm(null);
       toast.success('Page deleted successfully');
     } catch (err) {
-      console.error('Failed to delete page:', err);
       toast.error('Failed to delete page. Please try again.');
     }
   };

@@ -92,8 +92,7 @@ export default function GenerateToolbar({
               instruction,
             });
             return { ...block, config: result || block.config };
-          } catch (err) {
-            console.error(`Failed to improve block ${block.id}:`, err);
+          } catch {
             return block;
           }
         })
@@ -103,8 +102,8 @@ export default function GenerateToolbar({
       const blockMap = new Map(updatedBlocks.map((b) => [b.id, b]));
       const finalBlocks = selectedBlocks.map((b) => blockMap.get(b.id) || b);
       onUpdateBlocks(finalBlocks);
-    } catch (error) {
-      console.error('AI edit failed:', error);
+    } catch {
+      // AI edit failed
     } finally {
       setIsEditing(false);
       setCurrentAction(null);

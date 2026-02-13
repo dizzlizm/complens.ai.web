@@ -79,7 +79,6 @@ export default function PageEditor() {
       // Reset to idle after showing "saved" briefly
       setTimeout(() => setAutoSaveStatus('idle'), 2000);
     } catch (err) {
-      console.error('Auto-save failed:', err);
       setAutoSaveStatus('error');
     }
   }, [workspaceId, pageId, updatePage]);
@@ -182,7 +181,6 @@ export default function PageEditor() {
       setHasChanges(false);
       toast.success('Page saved successfully');
     } catch (err: any) {
-      console.error('Failed to save page:', err);
       const errorMessage = err?.response?.data?.message
         || err?.response?.data?.errors?.map((e: any) => `${e.field}: ${e.message}`).join(', ')
         || err?.message
@@ -207,7 +205,6 @@ export default function PageEditor() {
       setHasChanges(false);
       toast.success('Page published successfully');
     } catch (err: any) {
-      console.error('Failed to publish page:', err);
       const errorMessage = err?.response?.data?.message
         || err?.response?.data?.errors?.map((e: any) => `${e.field}: ${e.message}`).join(', ')
         || err?.message

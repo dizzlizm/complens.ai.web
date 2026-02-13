@@ -97,8 +97,7 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
         });
         resetBuilder();
         toast.success('Form updated successfully');
-      } catch (err) {
-        console.error('Failed to update form:', err);
+      } catch {
         toast.error('Failed to update form');
       }
     } else {
@@ -113,8 +112,7 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
         });
         resetBuilder();
         toast.success('Form created successfully');
-      } catch (err) {
-        console.error('Failed to create form:', err);
+      } catch {
         toast.error('Failed to create form');
       }
     }
@@ -181,8 +179,7 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
       }));
 
       toast.success('AI form draft ready. Review and save.');
-    } catch (err) {
-      console.error('Failed to generate form with AI:', err);
+    } catch {
       toast.error('Failed to generate form with AI');
     }
   };
@@ -192,8 +189,7 @@ export default function FormsTab({ workspaceId, pageId }: FormsTabProps) {
     try {
       await deleteForm.mutateAsync(formId);
       toast.success('Form deleted');
-    } catch (err) {
-      console.error('Failed to delete form:', err);
+    } catch {
       toast.error('Failed to delete form');
     }
   };

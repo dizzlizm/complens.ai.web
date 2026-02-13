@@ -10,6 +10,7 @@ import {
 import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe, useCheckDomainAuth, useSetupDomain, useListDomains, useDeleteSavedDomain } from '../lib/hooks';
 import type { DomainSetupResult, DnsRecord } from '../lib/hooks/useEmailWarmup';
 import { useBillingStatus, useCreateCheckout, useCreatePortal } from '../lib/hooks/useBilling';
+import { getApiErrorMessage } from '../lib/api';
 import TwilioConfigCard from '../components/settings/TwilioConfigCard';
 import SegmentConfigCard from '../components/settings/SegmentConfigCard';
 import TeamManagement from '../components/settings/TeamManagement';
@@ -143,7 +144,6 @@ function WorkspaceSettings() {
       setHasChanges(false);
       setTimeout(() => setSaveStatus('idle'), 2000);
     } catch (error) {
-      console.error('Failed to save workspace:', error);
       setSaveStatus('error');
     }
   };
@@ -470,8 +470,8 @@ function StripeIntegrationCard({ workspaceId }: { workspaceId: string }) {
         redirectUri: `${window.location.origin}/settings?stripe_callback=1`,
       });
       window.location.href = result.oauth_url;
-    } catch (error) {
-      console.error('Failed to start Stripe Connect:', error);
+    } catch {
+      // Error handled by mutation state
     }
   };
 
@@ -480,8 +480,8 @@ function StripeIntegrationCard({ workspaceId }: { workspaceId: string }) {
     try {
       await disconnectStripe.mutateAsync({ workspaceId });
       setShowDisconnectConfirm(false);
-    } catch (error) {
-      console.error('Failed to disconnect Stripe:', error);
+    } catch {
+      // Error handled by mutation state
     }
   };
 
@@ -576,7 +576,6 @@ function BillingSettings() {
       const result = await createCheckout.mutateAsync({ price_id: priceId });
       window.location.href = result.url;
     } catch (err) {
-      console.error('Failed to create checkout:', err);
       setLoadingPlan('');
     }
   };
@@ -585,8 +584,8 @@ function BillingSettings() {
     try {
       const result = await createPortal.mutateAsync();
       window.location.href = result.url;
-    } catch (err) {
-      console.error('Failed to open portal:', err);
+    } catch {
+      // Error handled by mutation state
     }
   };
 
@@ -1139,7 +1138,7 @@ function SendingDomainsCard({ workspaceId }: { workspaceId: string | undefined }
               {setupDomain.isError && (
                 <p className="text-sm text-red-600 mt-2 flex items-center gap-1">
                   <AlertCircle className="w-4 h-4" />
-                  {(setupDomain.error as any)?.response?.data?.error || 'Failed to set up domain'}
+                  {getApiErrorMessage(setupDomain.error, 'Failed to set up domain')}
                 </p>
               )}
             </div>

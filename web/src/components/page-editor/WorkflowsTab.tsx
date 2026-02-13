@@ -20,8 +20,7 @@ export default function WorkflowsTab({ workspaceId, pageId, siteId }: WorkflowsT
     try {
       await deleteWorkflow.mutateAsync(workflowId);
       toast.success('Workflow deleted');
-    } catch (err) {
-      console.error('Failed to delete workflow:', err);
+    } catch {
       toast.error('Failed to delete workflow');
     }
   };

@@ -236,7 +236,6 @@ export default function SynthesisPopup({
       setPlanResult(result);
       setStep('plan');
     } catch (error: unknown) {
-      console.error('Plan failed:', error);
       const axiosErr = error as { response?: { status?: number; data?: { message?: string } }; code?: string };
       const status = axiosErr?.response?.status;
       const message = axiosErr?.response?.data?.message;
@@ -303,7 +302,6 @@ export default function SynthesisPopup({
         if (result.workflow_config) setWorkflowConfig(result.workflow_config);
       }
     } catch (error: unknown) {
-      console.error('Generate failed:', error);
       const axiosErr = error as { response?: { status?: number; data?: { message?: string } }; code?: string };
       const status = axiosErr?.response?.status;
 
@@ -354,8 +352,8 @@ export default function SynthesisPopup({
             ...block,
             config: { ...block.config, backgroundType: 'image', backgroundImage: result.url },
           };
-        } catch (e) {
-          console.warn('Failed to generate hero image, skipping:', e);
+        } catch {
+          // Hero image generation failed, skipping
         }
       }
 
@@ -376,8 +374,7 @@ export default function SynthesisPopup({
                 height: 512,
               });
               updatedItems.push({ ...item, avatar: result.url });
-            } catch (e) {
-              console.warn('Failed to generate avatar, skipping:', e);
+            } catch {
               updatedItems.push(item);
             }
           } else {
@@ -406,8 +403,8 @@ export default function SynthesisPopup({
             ...block,
             config: { ...block.config, url: result.url },
           };
-        } catch (e) {
-          console.warn('Failed to generate image, skipping:', e);
+        } catch {
+          // Image generation failed, skipping
         }
       }
     }

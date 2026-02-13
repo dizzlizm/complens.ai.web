@@ -1139,8 +1139,8 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
         }
         onUpdate(node.id, { config: mergedConfig });
       }
-    } catch (err) {
-      console.error('Autofill failed:', err);
+    } catch {
+      // Error state handled by autofill mutation
     }
   }, [node, workspaceId, autofill, getNodes, getEdges, onUpdate]);
 

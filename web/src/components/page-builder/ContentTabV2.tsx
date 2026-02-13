@@ -233,8 +233,7 @@ export default function ContentTabV2({
         onOgImageUrlChange?.(result.url);
         toast.success('Social sharing image generated!');
       }
-    } catch (err) {
-      console.error('Failed to generate OG image:', err);
+    } catch {
       toast.error('Failed to generate image. Please try again.');
     }
   }, [workspaceId, businessProfile, pageName, metaTitle, metaDescription, primaryColor, secondaryColor, accentColor, generateImage, onOgImageUrlChange, toast]);
@@ -480,8 +479,7 @@ export default function ContentTabV2({
                   ? 'Form created!'
                   : 'Workflow created!'
             );
-          } catch (error) {
-            console.error('Failed to create form/workflow:', error);
+          } catch {
             toast.error('Content applied, but failed to create form/workflow. You can create them manually.');
           }
         }

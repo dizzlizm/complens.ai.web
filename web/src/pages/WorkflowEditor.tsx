@@ -334,7 +334,6 @@ export default function WorkflowEditor() {
         toast.success(currentStatus === 'draft' ? 'Workflow saved and activated!' : 'Workflow saved!');
       }
     } catch (error) {
-      console.error('Failed to save workflow:', error);
       toast.error(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsSaving(false);

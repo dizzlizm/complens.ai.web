@@ -93,8 +93,7 @@ Maintain the same JSON structure but update the text content according to the in
               ...block,
               config: result || block.config,
             };
-          } catch (err) {
-            console.error(`Failed to improve block ${block.id}:`, err);
+          } catch {
             return block; // Return unchanged on error
           }
         })
@@ -102,8 +101,8 @@ Maintain the same JSON structure but update the text content according to the in
 
       onUpdate(updatedBlocks);
       onClearSelection();
-    } catch (error) {
-      console.error('Multi-block AI update failed:', error);
+    } catch {
+      // Multi-block AI update failed
     } finally {
       setIsProcessing(false);
       setCurrentAction(null);

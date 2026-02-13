@@ -106,7 +106,6 @@ export default function Workflows() {
       const label = newStatus === 'active' ? 'activated' : 'paused';
       toast.success(`Workflow ${label}`);
     } catch (error) {
-      console.error('Failed to toggle workflow status:', error);
       toast.error('Failed to update workflow status');
     } finally {
       setTogglingId(null);
@@ -125,7 +124,6 @@ export default function Workflows() {
       await deleteWorkflow.mutateAsync(workflowId);
       toast.success('Workflow deleted successfully');
     } catch (error) {
-      console.error('Failed to delete workflow:', error);
       toast.error('Failed to delete workflow');
     } finally {
       setDeletingId(null);

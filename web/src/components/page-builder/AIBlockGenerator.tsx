@@ -112,8 +112,7 @@ export default function AIBlockGenerator({
           setStep('preview');
           return;
         }
-      } catch (error) {
-        console.error('AI generation failed, falling back to local:', error);
+      } catch {
         addMessage('⚠️ AI service unavailable, using smart templates...');
       }
     }
@@ -162,8 +161,7 @@ export default function AIBlockGenerator({
       setPreviewBlocks(prev => prev.map((b, i) =>
         i === blockIndex ? { ...b, config: result, isGenerating: false } : b
       ));
-    } catch (error) {
-      console.error('Block refinement failed:', error);
+    } catch {
       setPreviewBlocks(prev => prev.map((b, i) =>
         i === blockIndex ? { ...b, isGenerating: false, error: 'Refinement failed' } : b
       ));

@@ -19,6 +19,8 @@ import {
   SynthesisPageBlock,
 } from '../../lib/hooks/useAI';
 import { useCurrentWorkspace } from '../../lib/hooks/useWorkspaces';
+import axios from 'axios';
+import { getApiErrorMessage } from '../../lib/api';
 import { useSite } from '../../lib/hooks/useSites';
 
 // Derive subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
@@ -394,7 +396,6 @@ export default function AgenticPageBuilder({
       );
 
     } catch (err) {
-      console.error('Content generation failed:', err);
       await addAssistantMessage(
         '⚠️ Something went wrong generating your content. Let me try again - can you describe your business in a bit more detail?',
         undefined,
@@ -428,7 +429,6 @@ export default function AgenticPageBuilder({
       );
 
     } catch (err) {
-      console.error('Content refinement failed:', err);
       await addAssistantMessage(
         '⚠️ Failed to update content. Let me try that again - what would you like to change?',
         undefined,
@@ -665,7 +665,6 @@ export default function AgenticPageBuilder({
       );
 
     } catch (err) {
-      console.error('Synthesis build failed:', err);
       await addAssistantMessage(
         `⚠️ Synthesis failed. Error: ${err instanceof Error ? err.message : 'Unknown error'}. Falling back to standard build...`,
         undefined,
@@ -724,8 +723,7 @@ export default function AgenticPageBuilder({
         setHeroImageUrl(imageResult.url);
         addSystemMessage('✅ Hero image ready!');
       }
-    } catch (err) {
-      console.error('Hero image generation failed:', err);
+    } catch {
       addSystemMessage('⚠️ Using gradient background');
     }
 
@@ -750,8 +748,8 @@ export default function AgenticPageBuilder({
           if (avatarResult?.url) {
             avatarUrls.push(avatarResult.url);
           }
-        } catch (err) {
-          console.error(`Avatar ${i} generation failed:`, err);
+        } catch {
+          // Avatar generation failed, continue
         }
         setBuildProgress(25 + ((i + 1) / Math.min(testimonialConcepts.length, 3)) * 20);
       }
@@ -843,12 +841,10 @@ export default function AgenticPageBuilder({
       );
 
     } catch (err) {
-      console.error('Create complete page failed:', err);
-
       // Check if this is a slug conflict error
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const errorResponse = (err as any)?.response?.data;
-      const errorCode = errorResponse?.error_code;
+      const errorCode = axios.isAxiosError(err)
+        ? (err.response?.data as Record<string, unknown>)?.error_code
+        : undefined;
 
       if (errorCode === 'SLUG_EXISTS') {
         // Save state for potential retry with replace_existing
@@ -871,8 +867,9 @@ export default function AgenticPageBuilder({
           600
         );
       } else {
+        const errorMessage = getApiErrorMessage(err, 'Unknown error');
         await addAssistantMessage(
-          `⚠️ Something went wrong creating your page. Error: ${err instanceof Error ? err.message : 'Unknown error'}. Please try again.`,
+          `⚠️ Something went wrong creating your page. Error: ${errorMessage}. Please try again.`,
           undefined,
           undefined,
           600
@@ -948,7 +945,6 @@ export default function AgenticPageBuilder({
       );
 
     } catch (err) {
-      console.error('Replace page failed:', err);
       await addAssistantMessage(
         `⚠️ Failed to replace the page. Error: ${err instanceof Error ? err.message : 'Unknown error'}. Please try again.`,
         undefined,

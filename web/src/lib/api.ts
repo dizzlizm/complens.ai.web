@@ -56,4 +56,23 @@ api.interceptors.response.use(
   }
 );
 
+/**
+ * Extract a user-facing error message from an API error response.
+ * Replaces unsafe `(err as any)?.response?.data?.error` casts.
+ */
+export function getApiErrorMessage(error: unknown, fallback: string = 'An error occurred'): string {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data;
+    if (typeof data === 'object' && data !== null) {
+      return (data as Record<string, unknown>).error as string
+        || (data as Record<string, unknown>).message as string
+        || fallback;
+    }
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return fallback;
+}
+
 export default api;

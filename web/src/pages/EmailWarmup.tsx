@@ -13,6 +13,7 @@ import {
   useVerifySender, useCheckSender,
 } from '../lib/hooks';
 import type { WarmupDomain } from '../lib/hooks/useEmailWarmup';
+import { getApiErrorMessage } from '../lib/api';
 import { useContacts } from '../lib/hooks/useContacts';
 
 // Email provider detection for seed list coverage indicator
@@ -364,8 +365,8 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
       await updateWorkspace.mutateAsync(payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    } catch (err) {
-      console.error('Failed to save:', err);
+    } catch {
+      // Error handled by mutation state
     }
     setSaving(false);
   };
@@ -477,7 +478,7 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
               )}
               {checkSender.isError && (
                 <p className="text-xs text-red-600 mt-2">
-                  {(checkSender.error as any)?.response?.data?.error || 'Failed to check verification status'}
+                  {getApiErrorMessage(checkSender.error, 'Failed to check verification status')}
                 </p>
               )}
             </div>
@@ -486,7 +487,7 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
           {/* Verify error */}
           {verifySender.isError && replyVerificationStatus === 'idle' && (
             <p className="text-xs text-red-600 mt-1">
-              {(verifySender.error as any)?.response?.data?.error || 'Failed to send verification email'}
+              {getApiErrorMessage(verifySender.error, 'Failed to send verification email')}
             </p>
           )}
 
@@ -813,7 +814,7 @@ function EmailWarmupSection({ workspaceId, siteId }: {
           {startWarmup.isError && (
             <p className="text-sm text-red-600 mt-2 flex items-center gap-1">
               <AlertCircle className="w-4 h-4" />
-              {(startWarmup.error as any)?.response?.data?.error || 'Failed to start warm-up'}
+              {getApiErrorMessage(startWarmup.error, 'Failed to start warm-up')}
             </p>
           )}
           <p className="text-xs text-gray-500 mt-2">
@@ -1539,7 +1540,7 @@ function WarmupDomainCard({
                         </button>
                         {confirmFromEmail.isError && (
                           <p className="text-xs text-red-600">
-                            {(confirmFromEmail.error as any)?.response?.data?.error || 'Failed to check status'}
+                            {getApiErrorMessage(confirmFromEmail.error, 'Failed to check status')}
                           </p>
                         )}
                         {confirmFromEmail.isSuccess && !fromEmailVerified && (
@@ -1567,7 +1568,7 @@ function WarmupDomainCard({
                     )}
                     {verifyFromEmail.isError && !verificationSent && (
                       <p className="text-xs text-red-600 mt-1">
-                        {(verifyFromEmail.error as any)?.response?.data?.error || 'Failed to send verification'}
+                        {getApiErrorMessage(verifyFromEmail.error, 'Failed to send verification')}
                       </p>
                     )}
                   </div>
@@ -1611,7 +1612,7 @@ function WarmupDomainCard({
               )}
               {sendTestEmail.isError && (
                 <p className="text-xs text-red-600 flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> {(sendTestEmail.error as any)?.response?.data?.error || 'Failed to send test email'}
+                  <AlertCircle className="w-3 h-3" /> {getApiErrorMessage(sendTestEmail.error, 'Failed to send test email')}
                 </p>
               )}
 

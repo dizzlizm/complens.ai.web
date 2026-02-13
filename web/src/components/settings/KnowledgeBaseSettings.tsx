@@ -59,8 +59,8 @@ export default function KnowledgeBaseSettings({ workspaceId, siteId }: Knowledge
           await confirmUpload.mutateAsync(result.id);
         }
       }
-    } catch (err) {
-      console.error('Upload failed:', err);
+    } catch {
+      // Error state handled by mutation
     } finally {
       setUploading(false);
     }

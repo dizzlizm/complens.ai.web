@@ -68,8 +68,8 @@ export default function BlockAIToolbar({
 
       onConfigChange(improved);
       setShowOptions(false);
-    } catch (err) {
-      console.error('Failed to improve block:', err);
+    } catch {
+      // Block improvement failed
     }
   };
 
@@ -101,8 +101,8 @@ export default function BlockAIToolbar({
 
       setShowImagePrompt(false);
       setImagePrompt('');
-    } catch (err) {
-      console.error('Failed to generate image:', err);
+    } catch {
+      // Image generation failed
     }
   };
 

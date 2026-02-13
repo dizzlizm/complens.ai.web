@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSites, useDeleteSite } from '../lib/hooks/useSites';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import { useDomains, useCreateDomain, useDeleteDomain, getDomainStatusInfo } from '../lib/hooks/useDomains';
+import { getApiErrorMessage } from '../lib/api';
 import Modal from '../components/ui/Modal';
 import { useToast } from '../components/Toast';
 import {
@@ -225,7 +226,7 @@ export default function Sites() {
                       {createDomain.isError && connectingSiteId === site.id && (
                         <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
                           <AlertCircle className="w-3 h-3" />
-                          {(createDomain.error as any)?.response?.data?.error || 'Failed to set up domain'}
+                          {getApiErrorMessage(createDomain.error, 'Failed to set up domain')}
                         </p>
                       )}
                     </div>

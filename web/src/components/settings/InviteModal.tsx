@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Loader2, UserPlus, AlertTriangle, Check } from 'lucide-react';
 import { useInviteMember } from '../../lib/hooks/useTeam';
+import { getApiErrorMessage } from '../../lib/api';
 
 interface InviteModalProps {
   workspaceId: string;
@@ -83,7 +84,7 @@ export default function InviteModal({ workspaceId, onClose }: InviteModalProps) 
           {inviteMember.isError && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-sm text-red-700">
-                {(inviteMember.error as any)?.response?.data?.message || 'Failed to send invitation'}
+                {getApiErrorMessage(inviteMember.error, 'Failed to send invitation')}
               </p>
             </div>
           )}

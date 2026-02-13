@@ -65,8 +65,8 @@ export default function PublicForm({
       if (result.redirect_url) {
         window.location.href = result.redirect_url;
       }
-    } catch (err) {
-      console.error('Form submission failed:', err);
+    } catch {
+      // Error state handled by submitMutation.isError
     }
   };
 

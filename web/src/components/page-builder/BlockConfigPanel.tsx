@@ -983,8 +983,8 @@ export function ImageConfigFields({
         const url = `https://source.unsplash.com/1200x800/?${searchTerm}`;
         onChange({ url, alt: prompt });
       }
-    } catch (err) {
-      console.error('Image generation failed:', err);
+    } catch {
+      // Image generation failed
     } finally {
       setIsGenerating(false);
       setPrompt('');

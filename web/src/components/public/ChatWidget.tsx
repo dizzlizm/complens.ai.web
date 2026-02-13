@@ -122,8 +122,7 @@ export default function ChatWidget({
       }
     };
 
-    ws.current.onerror = (error) => {
-      console.error('WebSocket error:', error);
+    ws.current.onerror = () => {
       // onclose will fire after onerror, which handles reconnection
     };
   }, [pageId, workspaceId, config.initial_message]);
