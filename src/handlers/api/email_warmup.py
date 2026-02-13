@@ -645,17 +645,17 @@ def check_sender(workspace_id: str, event: dict) -> dict:
     verified = ses_status == "Success"
 
     if verified:
-        # Persist to workspace from_email so other features can use it
+        # Always persist verified email to workspace so other features use it
         try:
             from complens.repositories.workspace import WorkspaceRepository
             ws_repo = WorkspaceRepository()
             workspace = ws_repo.get_by_id(workspace_id)
-            if workspace and not workspace.from_email:
+            if workspace:
                 workspace.from_email = email
                 ws_repo.update_workspace(workspace, check_version=False)
-                logger.info("Auto-set workspace from_email on verification", workspace_id=workspace_id, from_email=email)
+                logger.info("Workspace from_email set on verification", workspace_id=workspace_id, from_email=email)
         except Exception:
-            logger.warning("Failed to auto-set from_email after verification", workspace_id=workspace_id, exc_info=True)
+            logger.warning("Failed to set from_email after verification", workspace_id=workspace_id, exc_info=True)
 
     logger.info(
         "SES sender verification checked",

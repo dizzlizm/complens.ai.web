@@ -3,6 +3,7 @@
 import json
 from typing import Any
 
+import boto3
 import structlog
 from pydantic import ValidationError as PydanticValidationError
 
@@ -191,8 +192,19 @@ def update_workspace(repo: WorkspaceRepository, workspace_id: str, event: dict) 
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
-    # Apply updates
+    # If from_email is changing, verify it's approved in SES first
     update_data = request.model_dump(exclude_unset=True)
+    new_from_email = update_data.get("from_email")
+    if new_from_email and new_from_email != workspace.from_email:
+        if not _is_ses_verified(new_from_email):
+            return error(
+                "From email must be verified before saving. "
+                "Use the Email Settings page to verify this address first.",
+                400,
+                error_code="FROM_EMAIL_NOT_VERIFIED",
+            )
+
+    # Apply updates
     for field, value in update_data.items():
         if value is not None:
             setattr(workspace, field, value)
@@ -218,6 +230,37 @@ def delete_workspace(repo: WorkspaceRepository, auth, workspace_id: str) -> dict
     logger.info("Workspace deleted", workspace_id=workspace_id)
 
     return success({"deleted": True, "id": workspace_id})
+
+
+def _is_ses_verified(email: str) -> bool:
+    """Check if an email address (or its domain) is verified in SES.
+
+    Args:
+        email: Full email address to check.
+
+    Returns:
+        True if the address or its domain is verified.
+    """
+    try:
+        ses = boto3.client("ses")
+        domain = email.split("@", 1)[1] if "@" in email else ""
+
+        # Check both the specific email and the domain
+        identities = [email]
+        if domain:
+            identities.append(domain)
+
+        response = ses.get_identity_verification_attributes(Identities=identities)
+        attrs = response.get("VerificationAttributes", {})
+
+        for identity in identities:
+            if attrs.get(identity, {}).get("VerificationStatus") == "Success":
+                return True
+
+        return False
+    except Exception:
+        logger.warning("SES verification check failed", email=email, exc_info=True)
+        return False
 
 
 # ============================================================================

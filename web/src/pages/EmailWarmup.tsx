@@ -337,13 +337,22 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
     }
   };
 
+  // Only include from_email if verified or unchanged
+  const fromEmailIsVerified = verificationStatus === 'verified';
+  const fromEmailChanged = fromEmail !== (workspace?.from_email || '');
+  const canSaveFromEmail = !fromEmailChanged || fromEmailIsVerified;
+
   const handleSave = async () => {
     setSaving(true);
     try {
-      await updateWorkspace.mutateAsync({
-        from_email: fromEmail || undefined,
+      const payload: Record<string, unknown> = {
         settings: { ...workspace?.settings, from_name: fromName, reply_to: replyTo },
-      });
+      };
+      // Only include from_email if it's verified or unchanged
+      if (canSaveFromEmail && fromEmail) {
+        payload.from_email = fromEmail;
+      }
+      await updateWorkspace.mutateAsync(payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -447,8 +456,21 @@ function EmailSettingsTab({ workspaceId }: { workspaceId: string | undefined }) 
             value={replyTo}
             onChange={(e) => setReplyTo(e.target.value)}
           />
-          <p className="text-xs text-gray-500 mt-1">Where replies will be directed (optional)</p>
+          <p className="text-xs text-gray-500 mt-1">Must be a real mailbox that can receive mail — bounced replies hurt sender reputation</p>
         </div>
+
+        {/* Unverified from-email warning */}
+        {fromEmailChanged && !fromEmailIsVerified && fromEmail && (
+          <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <div className="text-sm text-amber-800">
+              <p className="font-medium">From email not verified</p>
+              <p className="text-amber-700">
+                You must verify <strong>{fromEmail}</strong> before it can be saved. Click "Verify Address" above and follow the instructions.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Save */}
         <div className="flex items-center gap-3 pt-2">
