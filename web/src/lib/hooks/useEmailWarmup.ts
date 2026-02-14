@@ -32,6 +32,10 @@ export interface WarmupDomain {
   from_email_verified: boolean;
   reply_to: string | null;
   reply_to_verified: boolean;
+  preferred_tones: string[];
+  preferred_content_types: string[];
+  email_length: string;
+  target_daily_volume: number;
   today?: {
     send_count: number;
     bounce_count: number;
@@ -58,6 +62,10 @@ export interface StartWarmupRequest {
   from_name?: string;
   from_email_local?: string;
   reply_to?: string;
+  preferred_tones?: string[];
+  preferred_content_types?: string[];
+  email_length?: string;
+  target_daily_volume?: number;
 }
 
 export interface UpdateSeedListRequest {
@@ -73,6 +81,16 @@ export interface UpdateWarmupSettingsRequest {
   max_bounce_rate?: number;
   max_complaint_rate?: number;
   schedule?: number[];
+  preferred_tones?: string[];
+  preferred_content_types?: string[];
+  email_length?: string;
+}
+
+export interface EmailPreview {
+  subject: string;
+  body_text: string;
+  body_html: string;
+  content_type: string;
 }
 
 export interface WarmupLogEntry {
@@ -157,13 +175,15 @@ export interface DomainHealthResult {
   errors: string[];
 }
 
-// List all warm-up domains for a workspace
-export function useWarmups(workspaceId: string | undefined) {
+// List all warm-up domains for a workspace (optionally filtered by site)
+export function useWarmups(workspaceId: string | undefined, siteId?: string) {
   return useQuery({
-    queryKey: ['warmups', workspaceId],
+    queryKey: ['warmups', workspaceId, siteId],
     queryFn: async () => {
+      const params = siteId ? { site_id: siteId } : undefined;
       const { data } = await api.get<WarmupListResponse>(
-        `/workspaces/${workspaceId}/email-warmup`
+        `/workspaces/${workspaceId}/email-warmup`,
+        { params }
       );
       return data;
     },
@@ -513,6 +533,29 @@ export function useCheckReplyTo(workspaceId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['warmups', workspaceId] });
+    },
+  });
+}
+
+// Generate a preview warmup email without sending
+export function usePreviewEmail(workspaceId: string) {
+  return useMutation({
+    mutationFn: async ({
+      domain,
+      preferred_tones,
+      preferred_content_types,
+      email_length,
+    }: {
+      domain: string;
+      preferred_tones?: string[];
+      preferred_content_types?: string[];
+      email_length?: string;
+    }) => {
+      const { data } = await api.post<EmailPreview>(
+        `/workspaces/${workspaceId}/email-warmup/${domain}/preview-email`,
+        { preferred_tones, preferred_content_types, email_length }
+      );
+      return data;
     },
   });
 }

@@ -75,7 +75,8 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
     ) -> list[WarmupDomain]:
         """List warm-up domains for a specific site.
 
-        Queries by workspace then filters by site_id.
+        Uses a DynamoDB filter expression on site_id so results are correct
+        even when the workspace has more warmups than ``limit``.
 
         Args:
             workspace_id: Workspace ID.
@@ -86,8 +87,16 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
         Returns:
             List of WarmupDomain records for the site.
         """
-        warmups, _ = self.list_by_workspace(workspace_id, status=status, limit=limit)
-        return [w for w in warmups if w.site_id == site_id]
+        sk_prefix = f"{status}#" if status else None
+        warmups, _ = self.query(
+            pk=f"WS#{workspace_id}#WARMUPS",
+            sk_begins_with=sk_prefix,
+            index_name="GSI1",
+            limit=limit,
+            filter_expression="site_id = :site_id",
+            expression_values={":site_id": site_id},
+        )
+        return warmups
 
     def list_active(self, limit: int = 500) -> list[WarmupDomain]:
         """List all active warm-up domains across all workspaces.

@@ -19,6 +19,7 @@ from complens.models.warmup_domain import (
     DEFAULT_WARMUP_SCHEDULE,
     WarmupDomain,
     WarmupStatus,
+    generate_schedule,
 )
 from complens.repositories.warmup_domain import WarmupDomainRepository
 
@@ -249,6 +250,10 @@ class WarmupService:
         auto_warmup_enabled: bool = False,
         from_name: str | None = None,
         reply_to: str | None = None,
+        preferred_tones: list[str] | None = None,
+        preferred_content_types: list[str] | None = None,
+        email_length: str | None = None,
+        target_daily_volume: int | None = None,
     ) -> WarmupDomain:
         """Start a warm-up for a domain.
 
@@ -334,13 +339,21 @@ class WarmupService:
         except Exception:
             logger.debug("Could not resolve site_id for warmup domain", domain=domain)
 
+        # Determine schedule: explicit > generate from target > default
+        if schedule:
+            resolved_schedule = schedule
+        elif target_daily_volume:
+            resolved_schedule = generate_schedule(target_daily_volume)
+        else:
+            resolved_schedule = list(DEFAULT_WARMUP_SCHEDULE)
+
         warmup = WarmupDomain(
             workspace_id=workspace_id,
             site_id=site_id,
             domain=domain,
             status=WarmupStatus.ACTIVE,
             warmup_day=0,
-            schedule=schedule or list(DEFAULT_WARMUP_SCHEDULE),
+            schedule=resolved_schedule,
             started_at=datetime.now(timezone.utc).isoformat(),
             max_bounce_rate=max_bounce_rate,
             max_complaint_rate=max_complaint_rate,
@@ -351,6 +364,10 @@ class WarmupService:
             from_name=from_name,
             reply_to=reply_to,
             reply_to_verified=True if reply_to else False,
+            preferred_tones=preferred_tones or [],
+            preferred_content_types=preferred_content_types or [],
+            email_length=email_length or "medium",
+            target_daily_volume=target_daily_volume or 500,
         )
 
         warmup = self.repo.create_warmup(warmup)

@@ -1,10 +1,12 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useCurrentWorkspace, useListDomains } from '../lib/hooks';
 import { Loader2, Mail, Globe, Check, Clock, AlertTriangle, ArrowRight } from 'lucide-react';
 import EmailIdentity from '../components/email/EmailIdentity';
+import WarmupManager from '../components/email/WarmupManager';
 
 export default function SiteEmail() {
   const navigate = useNavigate();
+  const { siteId } = useParams<{ siteId: string }>();
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
 
   if (isLoadingWorkspace) {
@@ -20,10 +22,10 @@ export default function SiteEmail() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
           <Mail className="w-7 h-7 text-primary-600" />
-          Email
+          Email Campaigns
         </h1>
         <p className="mt-1 text-gray-500">
-          Configure sender identity for this site's emails. Domain verification is managed in global settings.
+          Configure sender identity and email campaigns for this site.
         </p>
       </div>
 
@@ -33,6 +35,12 @@ export default function SiteEmail() {
       />
 
       <DomainStatusCard workspaceId={workspaceId} />
+
+      <WarmupManager
+        workspaceId={workspaceId}
+        siteId={siteId}
+        onNavigateToDomains={() => navigate('/settings?section=domains')}
+      />
     </div>
   );
 }

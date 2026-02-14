@@ -3063,6 +3063,12 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/email-warmup/{domain}/send-test
             Method: POST
+        PreviewEmail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/preview-email
+            Method: POST
         DeleteDomain:
           Type: Api
           Properties:

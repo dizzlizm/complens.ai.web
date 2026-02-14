@@ -27,6 +27,39 @@ DEFAULT_WARMUP_SCHEDULE = [
 ]
 
 
+def generate_schedule(target_daily_volume: int, days: int = 42) -> list[int]:
+    """Generate a warmup schedule that ramps from 10/day to the target volume.
+
+    Uses geometric progression over the given number of days so the ramp
+    curve feels natural (slow start, accelerating growth).
+
+    Args:
+        target_daily_volume: Final daily sending volume to reach.
+        days: Number of warmup days (default 42 = 6 weeks).
+
+    Returns:
+        List of daily sending limits.
+    """
+    import math
+
+    start = 10
+    if target_daily_volume <= start:
+        return [target_daily_volume] * days
+
+    # Geometric ratio: start * ratio^(days-1) = target
+    ratio = (target_daily_volume / start) ** (1.0 / (days - 1))
+
+    schedule = []
+    for day in range(days):
+        value = int(round(start * (ratio ** day)))
+        value = min(value, target_daily_volume)
+        schedule.append(value)
+
+    # Ensure final day hits target exactly
+    schedule[-1] = target_daily_volume
+    return schedule
+
+
 class WarmupStatus(str, Enum):
     """Warm-up domain status."""
 
@@ -93,6 +126,12 @@ class WarmupDomain(BaseModel):
     reply_to: str | None = Field(None, description="Reply-to email address for warmup emails")
     reply_to_verified: bool = Field(default=False, description="Whether reply_to mailbox has been verified")
     reply_to_verify_token: str | None = Field(None, description="Verification token, cleared after use")
+
+    # Campaign preferences
+    preferred_tones: list[str] = Field(default_factory=list, description="Preferred email tones (e.g. professional, friendly)")
+    preferred_content_types: list[str] = Field(default_factory=list, description="Preferred content types (e.g. newsletter, product_update)")
+    email_length: str = Field(default="medium", description="Email length preference: short, medium, or long")
+    target_daily_volume: int = Field(default=500, description="Target daily sending volume at end of warmup")
 
     # Send window (UTC hours)
     send_window_start: int = Field(default=9, ge=0, le=23, description="Send window start hour (UTC)")
@@ -197,6 +236,10 @@ class StartWarmupRequest(PydanticBaseModel):
         description="Local part of from-address (e.g. 'marketing')",
     )
     reply_to: str | None = Field(None, description="Reply-to email address (must be verified before start)")
+    preferred_tones: list[str] | None = None
+    preferred_content_types: list[str] | None = None
+    email_length: str | None = None
+    target_daily_volume: int | None = Field(None, ge=50, le=10000)
 
     @model_validator(mode="after")
     def validate_send_window(self) -> "StartWarmupRequest":
@@ -234,6 +277,9 @@ class UpdateWarmupSettingsRequest(PydanticBaseModel):
     max_bounce_rate: float | None = Field(None, ge=0.1, le=50.0)
     max_complaint_rate: float | None = Field(None, ge=0.01, le=5.0)
     schedule: list[int] | None = Field(None, description="Remaining schedule from current day onward")
+    preferred_tones: list[str] | None = None
+    preferred_content_types: list[str] | None = None
+    email_length: str | None = None
 
     @model_validator(mode="after")
     def validate_send_window(self) -> "UpdateWarmupSettingsRequest":
@@ -276,6 +322,10 @@ class WarmupStatusResponse(PydanticBaseModel):
     from_email_verified: bool = False
     reply_to: str | None = None
     reply_to_verified: bool = False
+    preferred_tones: list[str] = Field(default_factory=list)
+    preferred_content_types: list[str] = Field(default_factory=list)
+    email_length: str = "medium"
+    target_daily_volume: int = 500
 
     @classmethod
     def from_warmup_domain(cls, wd: "WarmupDomain") -> "WarmupStatusResponse":
@@ -317,6 +367,10 @@ class WarmupStatusResponse(PydanticBaseModel):
             from_email_verified=wd.from_email_verified,
             reply_to=wd.reply_to,
             reply_to_verified=wd.reply_to_verified,
+            preferred_tones=wd.preferred_tones,
+            preferred_content_types=wd.preferred_content_types,
+            email_length=wd.email_length,
+            target_daily_volume=wd.target_daily_volume,
         )
 
 

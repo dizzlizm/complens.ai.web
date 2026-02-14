@@ -47,6 +47,12 @@ LENGTHS = [
     "long (4-6 paragraphs)",
 ]
 
+LENGTH_MAP: dict[str, str] = {
+    "short": "short (2-3 paragraphs)",
+    "medium": "medium (3-4 paragraphs)",
+    "long": "long (4-6 paragraphs)",
+}
+
 
 class WarmupEmailGenerator:
     """Generates AI-powered warmup emails with varied content types and tones."""
@@ -58,6 +64,9 @@ class WarmupEmailGenerator:
         recipient_email: str,
         exclude_subjects: list[str] | None = None,
         site_id: str | None = None,
+        preferred_tones: list[str] | None = None,
+        preferred_content_types: list[str] | None = None,
+        email_length: str | None = None,
     ) -> dict:
         """Generate a warmup email using AI.
 
@@ -73,13 +82,16 @@ class WarmupEmailGenerator:
             exclude_subjects: Previously used subjects to avoid repetition.
             site_id: Optional site ID (from WarmupDomain). Resolved from
                 DomainSetup if not provided.
+            preferred_tones: User-selected tone preferences. Falls back to random.
+            preferred_content_types: User-selected content type preferences. Falls back to random.
+            email_length: Email length preference (short/medium/long). Falls back to random.
 
         Returns:
             Dict with subject, body_text, body_html, content_type.
         """
-        content_type = random.choice(CONTENT_TYPES)
-        tone = random.choice(TONES)
-        length = random.choice(LENGTHS)
+        content_type = random.choice(preferred_content_types) if preferred_content_types else random.choice(CONTENT_TYPES)
+        tone = random.choice(preferred_tones) if preferred_tones else random.choice(TONES)
+        length = LENGTH_MAP.get(email_length or "", "") or random.choice(LENGTHS)
 
         # Use provided site_id, or resolve from domain
         if not site_id:

@@ -60,6 +60,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return verify_from_email(service, workspace_id, domain, event)
         elif path.endswith("/confirm-from-email") and http_method == "POST" and domain:
             return confirm_from_email(service, workspace_id, domain, event)
+        elif path.endswith("/preview-email") and http_method == "POST" and domain:
+            return preview_email(service, workspace_id, domain, event)
         elif path.endswith("/send-test") and http_method == "POST" and domain:
             return send_test_email(service, workspace_id, domain, event)
         elif path.endswith("/setup-domain") and http_method == "POST":
@@ -174,6 +176,10 @@ def start_warmup(service: WarmupService, workspace_id: str, event: dict) -> dict
         auto_warmup_enabled=request.auto_warmup_enabled,
         from_name=request.from_name,
         reply_to=request.reply_to,
+        preferred_tones=request.preferred_tones,
+        preferred_content_types=request.preferred_content_types,
+        email_length=request.email_length,
+        target_daily_volume=request.target_daily_volume,
     )
 
     logger.info(
@@ -348,6 +354,12 @@ def update_warmup_settings(
     if request.schedule is not None:
         # Splice new values from warmup_day onward
         warmup.schedule = warmup.schedule[:warmup.warmup_day] + request.schedule
+    if request.preferred_tones is not None:
+        warmup.preferred_tones = request.preferred_tones
+    if request.preferred_content_types is not None:
+        warmup.preferred_content_types = request.preferred_content_types
+    if request.email_length is not None:
+        warmup.email_length = request.email_length
 
     warmup = service.repo.update_warmup(warmup)
 
@@ -456,6 +468,10 @@ def send_test_email(
         workspace_id=workspace_id,
         domain=domain,
         recipient_email=recipient,
+        site_id=warmup.site_id,
+        preferred_tones=warmup.preferred_tones or None,
+        preferred_content_types=warmup.preferred_content_types or None,
+        email_length=warmup.email_length,
     )
 
     from_name = warmup.from_name or domain
@@ -488,6 +504,61 @@ def send_test_email(
         "content_type": email_data.get("content_type"),
         "recipient": recipient,
         "message_id": result.get("message_id"),
+    })
+
+
+def preview_email(
+    service: WarmupService, workspace_id: str, domain: str, event: dict,
+) -> dict:
+    """Generate a preview warmup email without sending.
+
+    Uses the domain's configured preferences (or overrides from the request body)
+    to produce a sample email so the user can see what AI will generate.
+
+    Args:
+        service: WarmupService.
+        workspace_id: Workspace ID.
+        domain: Email sending domain.
+        event: API Gateway event.
+
+    Returns:
+        API response with preview email content.
+    """
+    warmup = service.get_status(domain)
+    if not warmup or warmup.workspace_id != workspace_id:
+        return not_found("warmup_domain", domain)
+
+    body = json.loads(event.get("body") or "{}")
+
+    # Allow overrides for live preview while configuring
+    preferred_tones = body.get("preferred_tones", warmup.preferred_tones) or None
+    preferred_content_types = body.get("preferred_content_types", warmup.preferred_content_types) or None
+    email_length = body.get("email_length", warmup.email_length) or None
+
+    from complens.services.warmup_email_generator import WarmupEmailGenerator
+
+    generator = WarmupEmailGenerator()
+    email_data = generator.generate_email(
+        workspace_id=workspace_id,
+        domain=domain,
+        recipient_email="preview@example.com",
+        site_id=warmup.site_id,
+        preferred_tones=preferred_tones,
+        preferred_content_types=preferred_content_types,
+        email_length=email_length,
+    )
+
+    logger.info(
+        "Preview email generated",
+        domain=domain,
+        content_type=email_data.get("content_type"),
+    )
+
+    return success({
+        "subject": email_data["subject"],
+        "body_text": email_data.get("body_text"),
+        "body_html": email_data.get("body_html"),
+        "content_type": email_data.get("content_type"),
     })
 
 

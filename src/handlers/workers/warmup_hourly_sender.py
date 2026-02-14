@@ -97,6 +97,9 @@ def handler(event: dict[str, Any], context: Any) -> dict:
                 recipient_email=first_recipient,
                 exclude_subjects=exclude_subjects,
                 site_id=warmup.site_id,
+                preferred_tones=warmup.preferred_tones or None,
+                preferred_content_types=warmup.preferred_content_types or None,
+                email_length=warmup.email_length,
             )
         except Exception:
             logger.exception(

@@ -3,14 +3,14 @@ import { Link } from 'react-router-dom';
 import {
   Loader2, Check, AlertCircle, Globe, Plus, ChevronRight, ChevronDown, Mail, Send,
   Pause, Play, Trash2, AlertTriangle, TrendingUp, X, Eye, RefreshCw, SlidersHorizontal, Shield,
-  BookOpen, Users, Search, Clock,
+  BookOpen, Users, Search, Clock, Sparkles,
 } from 'lucide-react';
 import {
   useCurrentWorkspace, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup,
   useCancelWarmup, getWarmupStatusInfo, useUpdateSeedList, useSendWarmupTestEmail,
   useUpdateWarmupSettings, useWarmupLog, useDomainHealth, getHealthStatusInfo,
   useListDomains, useVerifyFromEmail, useConfirmFromEmail,
-  useVerifyReplyTo, useCheckReplyTo,
+  useVerifyReplyTo, useCheckReplyTo, usePreviewEmail, useSite,
 } from '../../lib/hooks';
 import type { WarmupDomain } from '../../lib/hooks/useEmailWarmup';
 import { getApiErrorMessage } from '../../lib/api';
@@ -224,9 +224,11 @@ function ContactImportPicker({
 
 export default function WarmupManager({
   workspaceId,
+  siteId,
   onNavigateToDomains,
 }: {
   workspaceId: string | undefined;
+  siteId?: string;
   onNavigateToDomains?: () => void;
 }) {
   const { workspace } = useCurrentWorkspace();
@@ -234,13 +236,14 @@ export default function WarmupManager({
   const tzOffset = getTimezoneOffsetHours(timezone);
   const hourOptions = buildHourOptions(timezone);
 
-  const { data: warmupsData, isLoading } = useWarmups(workspaceId);
+  const { data: warmupsData, isLoading } = useWarmups(workspaceId, siteId);
   const startWarmup = useStartWarmup(workspaceId || '');
   const pauseWarmup = usePauseWarmup(workspaceId || '');
   const resumeWarmup = useResumeWarmup(workspaceId || '');
   const cancelWarmup = useCancelWarmup(workspaceId || '');
 
   const { data: savedDomainsData } = useListDomains(workspaceId);
+  const { data: siteData } = useSite(workspaceId, siteId);
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [newDomain, setNewDomain] = useState('');
@@ -258,6 +261,7 @@ export default function WarmupManager({
   const [initReplyTo, setInitReplyTo] = useState('');
   const [replyToVerifySent, setReplyToVerifySent] = useState(false);
   const [replyToVerified, setReplyToVerified] = useState(false);
+  const [initTargetVolume, setInitTargetVolume] = useState(500);
 
   const verifyReplyTo = useVerifyReplyTo(workspaceId || '');
   const checkReplyTo = useCheckReplyTo(workspaceId || '');
@@ -283,9 +287,11 @@ export default function WarmupManager({
   const warmups = warmupsData?.items || [];
 
   // Only show verified domains that aren't already warming up
+  // When scoped to a site, further filter to only that site's domain
   const warmupDomainSet = new Set(warmups.map(w => w.domain));
   const verifiedDomains = (savedDomainsData?.items || []).filter(
     d => d.ready && !warmupDomainSet.has(d.domain)
+      && (!siteData?.domain_name || d.domain === siteData.domain_name)
   );
 
   // Auto-select domain when there's only one verified domain available
@@ -309,6 +315,7 @@ export default function WarmupManager({
         max_bounce_rate: initMaxBounce,
         max_complaint_rate: initMaxComplaint,
         reply_to: replyToVerified ? initReplyTo : undefined,
+        target_daily_volume: initTargetVolume,
       });
       setNewDomain('');
       setInitSeedList([]);
@@ -319,6 +326,7 @@ export default function WarmupManager({
       setInitReplyTo('');
       setReplyToVerifySent(false);
       setReplyToVerified(false);
+      setInitTargetVolume(500);
       setShowAddForm(false);
       setStartedSuccess(true);
       setTimeout(() => setStartedSuccess(false), 3000);
@@ -420,6 +428,25 @@ export default function WarmupManager({
                 ))}
               </select>
             </div>
+          </div>
+
+          {/* Target daily volume */}
+          <div className="mt-3">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Target Daily Volume</label>
+            <select
+              className="input text-sm"
+              value={initTargetVolume}
+              onChange={(e) => setInitTargetVolume(Number(e.target.value))}
+            >
+              <option value={100}>100/day (Low volume)</option>
+              <option value={500}>500/day (Standard)</option>
+              <option value={1000}>1,000/day (Growth)</option>
+              <option value={5000}>5,000/day (High volume)</option>
+              <option value={10000}>10,000/day (Enterprise)</option>
+            </select>
+            <p className="text-xs text-gray-400 mt-1">
+              Schedule will ramp from 10/day to this target over 6 weeks
+            </p>
           </div>
 
           {/* Reply-to verification */}
@@ -647,7 +674,7 @@ export default function WarmupManager({
               Start Warm-up
             </button>
             <button
-              onClick={() => { setShowAddForm(false); setNewDomain(''); setInitSeedList([]); setInitAutoWarmup(false); setInitFromName(''); setInitMaxBounce(5.0); setInitMaxComplaint(0.1); setInitReplyTo(''); setReplyToVerifySent(false); setReplyToVerified(false); }}
+              onClick={() => { setShowAddForm(false); setNewDomain(''); setInitSeedList([]); setInitAutoWarmup(false); setInitFromName(''); setInitMaxBounce(5.0); setInitMaxComplaint(0.1); setInitReplyTo(''); setReplyToVerifySent(false); setReplyToVerified(false); setInitTargetVolume(500); }}
               className="btn btn-secondary"
             >
               Cancel
@@ -712,6 +739,244 @@ export default function WarmupManager({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const TONE_OPTIONS = ['Professional', 'Friendly', 'Enthusiastic', 'Thoughtful', 'Casual'];
+const CONTENT_TYPE_OPTIONS = [
+  'Newsletter', 'Product Update', 'Team News', 'Industry Insights',
+  'Tips & How-to', 'Milestones', 'Event Invite', 'Weekly Digest',
+];
+// Map display labels to backend keys
+const CONTENT_TYPE_KEY_MAP: Record<string, string> = {
+  'Newsletter': 'newsletter',
+  'Product Update': 'product_update',
+  'Team News': 'team_announcement',
+  'Industry Insights': 'industry_insight',
+  'Tips & How-to': 'customer_tip',
+  'Milestones': 'company_milestone',
+  'Event Invite': 'event_invitation',
+  'Weekly Digest': 'weekly_digest',
+};
+const CONTENT_TYPE_LABEL_MAP: Record<string, string> = Object.fromEntries(
+  Object.entries(CONTENT_TYPE_KEY_MAP).map(([label, key]) => [key, label])
+);
+
+function ContentStylePanel({
+  warmup,
+  workspaceId,
+}: {
+  warmup: WarmupDomain;
+  workspaceId: string;
+}) {
+  const updateSettings = useUpdateWarmupSettings(workspaceId);
+  const previewEmail = usePreviewEmail(workspaceId);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+
+  // Convert stored keys to display labels for initial state
+  const [selectedTones, setSelectedTones] = useState<string[]>(
+    (warmup.preferred_tones || []).map(t => t.charAt(0).toUpperCase() + t.slice(1))
+  );
+  const [selectedContentTypes, setSelectedContentTypes] = useState<string[]>(
+    (warmup.preferred_content_types || []).map(k => CONTENT_TYPE_LABEL_MAP[k] || k)
+  );
+  const [emailLength, setEmailLength] = useState(warmup.email_length || 'medium');
+  const [preview, setPreview] = useState<{
+    subject: string;
+    body_html: string;
+    content_type: string;
+  } | null>(null);
+
+  const toggleTone = (tone: string) => {
+    setSelectedTones(prev =>
+      prev.includes(tone) ? prev.filter(t => t !== tone) : [...prev, tone]
+    );
+  };
+
+  const toggleContentType = (ct: string) => {
+    setSelectedContentTypes(prev =>
+      prev.includes(ct) ? prev.filter(c => c !== ct) : [...prev, ct]
+    );
+  };
+
+  const toneKeys = selectedTones.map(t => t.toLowerCase());
+  const contentTypeKeys = selectedContentTypes.map(ct => CONTENT_TYPE_KEY_MAP[ct] || ct.toLowerCase());
+
+  const handleSave = async () => {
+    try {
+      await updateSettings.mutateAsync({
+        domain: warmup.domain,
+        preferred_tones: toneKeys,
+        preferred_content_types: contentTypeKeys,
+        email_length: emailLength,
+      });
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 2000);
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
+  const handlePreview = async () => {
+    try {
+      const result = await previewEmail.mutateAsync({
+        domain: warmup.domain,
+        preferred_tones: toneKeys.length > 0 ? toneKeys : undefined,
+        preferred_content_types: contentTypeKeys.length > 0 ? contentTypeKeys : undefined,
+        email_length: emailLength,
+      });
+      setPreview(result);
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
+  return (
+    <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+      <div className="flex items-center gap-3 mb-3">
+        <BookOpen className="w-5 h-5 text-violet-600" />
+        <h4 className="text-sm font-medium text-gray-700">Email Tone & Style</h4>
+      </div>
+
+      {/* Tone multi-select */}
+      <div className="mb-4">
+        <label className="block text-xs font-medium text-gray-600 mb-2">Tone</label>
+        <div className="flex flex-wrap gap-1.5">
+          {TONE_OPTIONS.map(tone => (
+            <button
+              key={tone}
+              onClick={() => toggleTone(tone)}
+              className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                selectedTones.includes(tone)
+                  ? 'bg-violet-100 border-violet-300 text-violet-700 font-medium'
+                  : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+              }`}
+            >
+              {tone}
+            </button>
+          ))}
+        </div>
+        {selectedTones.length === 0 && (
+          <p className="text-xs text-gray-400 mt-1">No preference — AI will vary randomly</p>
+        )}
+      </div>
+
+      {/* Content type multi-select */}
+      <div className="mb-4">
+        <label className="block text-xs font-medium text-gray-600 mb-2">Content Types</label>
+        <div className="flex flex-wrap gap-1.5">
+          {CONTENT_TYPE_OPTIONS.map(ct => (
+            <button
+              key={ct}
+              onClick={() => toggleContentType(ct)}
+              className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                selectedContentTypes.includes(ct)
+                  ? 'bg-blue-100 border-blue-300 text-blue-700 font-medium'
+                  : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+              }`}
+            >
+              {ct}
+            </button>
+          ))}
+        </div>
+        {selectedContentTypes.length === 0 && (
+          <p className="text-xs text-gray-400 mt-1">No preference — AI will vary randomly</p>
+        )}
+      </div>
+
+      {/* Email length */}
+      <div className="mb-4">
+        <label className="block text-xs font-medium text-gray-600 mb-2">Email Length</label>
+        <div className="flex gap-2">
+          {(['short', 'medium', 'long'] as const).map(len => (
+            <button
+              key={len}
+              onClick={() => setEmailLength(len)}
+              className={`text-xs px-4 py-1.5 rounded-md border transition-colors ${
+                emailLength === len
+                  ? 'bg-gray-800 border-gray-800 text-white font-medium'
+                  : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+              }`}
+            >
+              {len.charAt(0).toUpperCase() + len.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-2 mb-3">
+        <button
+          onClick={handleSave}
+          disabled={updateSettings.isPending}
+          className="btn btn-primary btn-sm inline-flex items-center gap-1"
+        >
+          {updateSettings.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+          Save Preferences
+        </button>
+        <button
+          onClick={handlePreview}
+          disabled={previewEmail.isPending}
+          className="btn btn-secondary btn-sm inline-flex items-center gap-1"
+        >
+          {previewEmail.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+          Preview Email
+        </button>
+        {settingsSaved && (
+          <span className="text-xs text-green-600 flex items-center gap-1">
+            <Check className="w-3 h-3" /> Saved
+          </span>
+        )}
+        {updateSettings.isError && (
+          <span className="text-xs text-red-600">Failed to save</span>
+        )}
+      </div>
+
+      {/* Preview card */}
+      {preview && (
+        <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
+          <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+              <span className="text-sm font-medium text-gray-800 truncate">{preview.subject}</span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">
+                {CONTENT_TYPE_LABEL_MAP[preview.content_type] || preview.content_type}
+              </span>
+              <button
+                onClick={handlePreview}
+                disabled={previewEmail.isPending}
+                className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+              >
+                <RefreshCw className={`w-3 h-3 ${previewEmail.isPending ? 'animate-spin' : ''}`} />
+                Regenerate
+              </button>
+            </div>
+          </div>
+          <div
+            className="p-3 max-h-64 overflow-y-auto text-sm text-gray-700 prose prose-sm max-w-none"
+            dangerouslySetInnerHTML={{ __html: preview.body_html }}
+          />
+        </div>
+      )}
+
+      {previewEmail.isError && (
+        <p className="text-xs text-red-600 mt-2 flex items-center gap-1">
+          <AlertCircle className="w-3 h-3" /> Failed to generate preview
+        </p>
+      )}
+
+      {/* KB link */}
+      <div className="mt-3 pt-3 border-t border-gray-200">
+        <p className="text-xs text-gray-500">
+          Warmup emails also reference your knowledge base content.{' '}
+          <Link to="/sites" className="text-primary-600 hover:text-primary-700">
+            Manage AI & Knowledge Base
+          </Link>
+        </p>
+      </div>
     </div>
   );
 }
@@ -1577,24 +1842,9 @@ function WarmupDomainCard({
             </div>
           )}
 
-          {/* Content Library Panel */}
+          {/* Content / Tone & Style Panel */}
           {activePanel === 'content' && (
-            <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
-              <div className="flex items-center gap-3 mb-2">
-                <BookOpen className="w-5 h-5 text-violet-600" />
-                <h4 className="text-sm font-medium text-gray-700">Content Library</h4>
-              </div>
-              <p className="text-sm text-gray-600 mb-3">
-                Warmup emails reference your knowledge base content to sound authentic. Manage documents in your site's AI & Knowledge Base settings.
-              </p>
-              <Link
-                to="/sites"
-                className="inline-flex items-center gap-2 text-sm font-medium text-primary-600 hover:text-primary-700"
-              >
-                <BookOpen className="w-4 h-4" />
-                Go to AI & Knowledge Base
-              </Link>
-            </div>
+            <ContentStylePanel warmup={warmup} workspaceId={workspaceId} />
           )}
 
           {/* Warmup Log Panel */}
