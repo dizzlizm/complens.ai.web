@@ -6,7 +6,7 @@ import { useForms, usePageForms } from '../../lib/hooks/useForms';
 import { usePages, usePage } from '../../lib/hooks/usePages';
 import { useWorkflows } from '../../lib/hooks/useWorkflows';
 import { useContacts } from '../../lib/hooks/useContacts';
-import { useListDomains } from '../../lib/hooks/useEmailWarmup';
+import { useListDomains, useWarmups } from '../../lib/hooks/useEmailWarmup';
 import EmailPreview from '../workflow-builder/EmailPreview';
 
 interface NodeData {
@@ -52,7 +52,7 @@ interface FieldConfig {
   type: 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'dynamic_select' | 'multi_select' | 'tag_input' | 'conditions';
   placeholder?: string;
   options?: { value: string; label: string }[];
-  dataSource?: 'forms' | 'pages' | 'workflows' | 'tags' | 'contact_fields' | 'domains';
+  dataSource?: 'forms' | 'pages' | 'workflows' | 'tags' | 'contact_fields' | 'domains' | 'verified_senders' | 'verified_reply_to';
   helperText?: string;
   defaultValue?: unknown;
 }
@@ -319,7 +319,8 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
       { key: 'email_to', label: 'To', type: 'text', placeholder: '{{contact.email}}', helperText: 'Recipient email address' },
       { key: 'email_subject', label: 'Subject', type: 'text', placeholder: 'Thanks for reaching out!' },
       { key: 'email_body', label: 'Body', type: 'textarea', placeholder: 'Hi {{contact.first_name}},\n\nThanks for your message!\n\nBest regards' },
-      { key: 'email_from', label: 'From Email', type: 'dynamic_select', dataSource: 'domains', helperText: 'Sender email address (uses workspace default if not set)' },
+      { key: 'email_from', label: 'From Email', type: 'dynamic_select', dataSource: 'verified_senders', helperText: 'Sender email address (uses workspace default if not set)' },
+      { key: 'email_reply_to', label: 'Reply-To', type: 'dynamic_select', dataSource: 'verified_reply_to', helperText: 'Reply-to address (only verified emails shown)' },
     ],
   },
   action_send_sms: {
@@ -1032,6 +1033,7 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, siteId, onC
   const { data: workflows, isLoading: isLoadingWorkflows } = useWorkflows(workspaceId || '', siteId);
   const { data: contactsData, isLoading: isLoadingContacts } = useContacts(workspaceId || '', { limit: 100 });
   const { data: domainsData, isLoading: isLoadingDomains } = useListDomains(workspaceId);
+  const { data: warmupsData } = useWarmups(workspaceId);
 
   // Extract unique tags from contacts
   const allTags = useMemo(() => {
@@ -1086,24 +1088,65 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, siteId, onC
           options: CONTACT_FIELDS,
           isLoading: false,
         };
-      case 'domains': {
-        const domainOptions = domainsData?.items
-          ?.filter(d => d.ready)
-          .flatMap(d => [
-            { value: `noreply@${d.domain}`, label: `noreply@${d.domain}` },
-            { value: `hello@${d.domain}`, label: `hello@${d.domain}` },
-            { value: `info@${d.domain}`, label: `info@${d.domain}` },
-          ]) || [];
+      case 'domains':
+      case 'verified_senders': {
+        // Build from-email options from verified warmup domains
+        const senderOptions: { value: string; label: string }[] = [];
+        const warmups = warmupsData?.items || [];
+        for (const w of warmups) {
+          // Show verified custom from-email first
+          if (w.from_email_local && w.from_email_verified) {
+            senderOptions.push({
+              value: `${w.from_email_local}@${w.domain}`,
+              label: `${w.from_email_local}@${w.domain}`,
+            });
+          }
+          // Always include noreply@ for verified/ready domains
+          const domainSetup = domainsData?.items?.find(d => d.domain === w.domain && d.ready);
+          if (domainSetup) {
+            senderOptions.push({
+              value: `noreply@${w.domain}`,
+              label: `noreply@${w.domain}`,
+            });
+          }
+        }
+        // Also add noreply@ for any verified domains that don't have warmup records
+        const warmupDomains = new Set(warmups.map(w => w.domain));
+        const extraDomains = domainsData?.items?.filter(d => d.ready && !warmupDomains.has(d.domain)) || [];
+        for (const d of extraDomains) {
+          senderOptions.push({
+            value: `noreply@${d.domain}`,
+            label: `noreply@${d.domain}`,
+          });
+        }
         return {
-          options: domainOptions,
+          options: senderOptions,
           isLoading: isLoadingDomains,
-          contextNote: domainOptions.length > 0 ? 'Showing verified domains' : undefined,
+          contextNote: senderOptions.length > 0 ? 'Only verified sender addresses' : undefined,
+        };
+      }
+      case 'verified_reply_to': {
+        // Only show verified reply-to addresses from warmup domains
+        const replyOptions: { value: string; label: string }[] = [];
+        const allWarmups = warmupsData?.items || [];
+        for (const w of allWarmups) {
+          if (w.reply_to && w.reply_to_verified) {
+            replyOptions.push({
+              value: w.reply_to,
+              label: w.reply_to,
+            });
+          }
+        }
+        return {
+          options: replyOptions,
+          isLoading: false,
+          contextNote: replyOptions.length > 0 ? 'Only verified reply-to addresses' : 'No verified reply-to addresses — verify in Email settings',
         };
       }
       default:
         return { options: [], isLoading: false };
     }
-  }, [forms, pages, workflows, allTags, isLoadingForms, isLoadingPages, isLoadingWorkflows, isLoadingContacts, isPageContext, currentPage, pageId, domainsData, isLoadingDomains]);
+  }, [forms, pages, workflows, allTags, isLoadingForms, isLoadingPages, isLoadingWorkflows, isLoadingContacts, isPageContext, currentPage, pageId, domainsData, isLoadingDomains, warmupsData]);
 
   // Initialize local state when node changes
   useEffect(() => {

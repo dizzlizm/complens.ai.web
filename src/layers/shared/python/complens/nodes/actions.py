@@ -177,6 +177,14 @@ class SendEmailAction(BaseNode):
             or context.workspace_settings.get("from_email")
         )
 
+        # Get reply-to: node config > workspace setting
+        reply_to = self._get_config_value("email_reply_to")
+        if not reply_to:
+            ws_reply_to = context.workspace_settings.get("reply_to")
+            if ws_reply_to:
+                reply_to = ws_reply_to
+        reply_to_list = [reply_to] if reply_to else None
+
         if not body_text and not body_html and not template_name:
             return NodeResult.failed(error="Email body or template is required")
 
@@ -222,6 +230,7 @@ class SendEmailAction(BaseNode):
                     template_name=template_name,
                     template_data=rendered_data,
                     from_email=from_email,
+                    reply_to=reply_to_list,
                 )
             else:
                 # Send regular email
@@ -231,6 +240,7 @@ class SendEmailAction(BaseNode):
                     body_text=body_text,
                     body_html=body_html,
                     from_email=from_email,
+                    reply_to=reply_to_list,
                 )
 
             return NodeResult.completed(
