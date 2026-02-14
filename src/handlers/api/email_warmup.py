@@ -9,7 +9,7 @@ import boto3
 import structlog
 from pydantic import ValidationError as PydanticValidationError
 
-from complens.models.warmup_domain import DomainHealthResponse, StartWarmupRequest, UpdateSeedListRequest, UpdateWarmupSettingsRequest, WarmupStatusResponse
+from complens.models.warmup_domain import DomainHealthResponse, StartWarmupRequest, UpdateSeedListRequest, UpdateWarmupSettingsRequest, VerifyReplyToRequest, WarmupStatusResponse
 from complens.repositories.warmup_domain import WarmupDomainRepository
 from complens.services.email_service import EmailService
 from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
@@ -48,7 +48,11 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         repo = WarmupDomainRepository()
         service = WarmupService(repo=repo)
 
-        if path.endswith("/verify-sender") and http_method == "POST" and not domain:
+        if path.endswith("/verify-reply-to") and http_method == "POST" and domain:
+            return verify_reply_to(service, workspace_id, domain, event)
+        elif path.endswith("/check-reply-to") and http_method == "POST" and domain:
+            return check_reply_to(service, workspace_id, domain)
+        elif path.endswith("/verify-sender") and http_method == "POST" and not domain:
             return verify_sender(workspace_id, event)
         elif path.endswith("/check-sender") and http_method == "POST" and not domain:
             return check_sender(workspace_id, event)
@@ -121,6 +125,9 @@ def list_warmups(repo: WarmupDomainRepository, workspace_id: str) -> dict:
 
     items = []
     for w in warmups:
+        # Skip PENDING records (created during reply-to verification, not yet started)
+        if w.status in ("pending", "PENDING"):
+            continue
         item = WarmupStatusResponse.from_warmup_domain(w).model_dump(mode="json")
         if w.status in ("active", "paused"):
             counter = repo.get_daily_counter(w.domain, today)
@@ -159,6 +166,7 @@ def start_warmup(service: WarmupService, workspace_id: str, event: dict) -> dict
         seed_list=request.seed_list,
         auto_warmup_enabled=request.auto_warmup_enabled,
         from_name=request.from_name,
+        reply_to=request.reply_to,
     )
 
     logger.info(
@@ -380,9 +388,28 @@ def get_warmup_log(
         return not_found("warmup_domain", domain)
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    emails = repo.get_recent_warmup_emails(domain, today, limit=50)
 
-    return success({"items": emails})
+    # Filter by started_at to only show emails from the current warmup instance
+    started_date = warmup.started_at[:10] if warmup.started_at else None
+    emails = repo.get_recent_warmup_emails(
+        domain, today, limit=50, since_date=started_date,
+    )
+
+    counter = repo.get_daily_counter(domain, today)
+
+    return success({
+        "items": emails,
+        "today": {
+            "send_count": counter["send_count"] if counter else 0,
+            "daily_limit": warmup.daily_limit,
+        },
+        "warmup": {
+            "auto_warmup_enabled": warmup.auto_warmup_enabled,
+            "seed_list_count": len(warmup.seed_list),
+            "send_window_start": warmup.send_window_start,
+            "send_window_end": warmup.send_window_end,
+        },
+    })
 
 
 def send_test_email(
@@ -428,6 +455,8 @@ def send_test_email(
     local_part = warmup.from_email_local if (warmup.from_email_local and warmup.from_email_verified) else "noreply"
     from_email = f"{from_name} <{local_part}@{domain}>"
 
+    reply_to_list = [warmup.reply_to] if warmup.reply_to and warmup.reply_to_verified else None
+
     email_service = EmailService()
     result = email_service.send_email(
         to=recipient,
@@ -435,6 +464,7 @@ def send_test_email(
         body_text=email_data.get("body_text"),
         body_html=email_data.get("body_html"),
         from_email=from_email,
+        reply_to=reply_to_list,
         _skip_warmup_check=True,
     )
 
@@ -451,6 +481,123 @@ def send_test_email(
         "content_type": email_data.get("content_type"),
         "recipient": recipient,
         "message_id": result.get("message_id"),
+    })
+
+
+def verify_reply_to(
+    service: WarmupService,
+    workspace_id: str,
+    domain: str,
+    event: dict,
+) -> dict:
+    """Send a verification email to a reply-to address.
+
+    Generates a unique token, stores it on the WarmupDomain record,
+    and sends a real email to the reply-to address with a verification link.
+    This proves the mailbox is live and can receive mail.
+
+    If no WarmupDomain record exists yet (user hasn't started warmup),
+    creates one in PENDING state to hold the verification data.
+
+    Args:
+        service: WarmupService.
+        workspace_id: Workspace ID.
+        domain: Email sending domain.
+        event: API Gateway event.
+
+    Returns:
+        API response confirming verification email was sent.
+    """
+    body = json.loads(event.get("body", "{}"))
+    request = VerifyReplyToRequest.model_validate(body)
+
+    from uuid import uuid4
+    from complens.models.warmup_domain import WarmupDomain, WarmupStatus
+
+    token = uuid4().hex
+    repo = WarmupDomainRepository()
+
+    warmup = service.get_status(domain)
+    if warmup and warmup.workspace_id != workspace_id:
+        return not_found("warmup_domain", domain)
+
+    if warmup:
+        # Update existing record
+        warmup.reply_to = request.reply_to
+        warmup.reply_to_verified = False
+        warmup.reply_to_verify_token = token
+        warmup.update_timestamp()
+        repo.update(warmup)
+    else:
+        # Create a PENDING record to hold verification state
+        warmup = WarmupDomain(
+            workspace_id=workspace_id,
+            domain=domain,
+            status=WarmupStatus.PENDING,
+            reply_to=request.reply_to,
+            reply_to_verified=False,
+            reply_to_verify_token=token,
+        )
+        repo.create_warmup(warmup)
+
+    # Send verification email
+    domain_name = os.environ.get("DOMAIN_NAME", "dev.complens.ai")
+    verify_url = f"https://api.{domain_name}/public/verify-reply-to/{domain}/{token}"
+
+    email_service = EmailService()
+    email_service.send_email(
+        to=request.reply_to,
+        subject=f"Verify your reply-to address for {domain}",
+        body_html=(
+            f"<h2>Verify your reply-to address</h2>"
+            f"<p>Click the link below to verify that <strong>{request.reply_to}</strong> "
+            f"can receive replies for warmup emails sent from <strong>{domain}</strong>.</p>"
+            f'<p><a href="{verify_url}" style="display:inline-block;padding:12px 24px;'
+            f'background:#4f46e5;color:#fff;text-decoration:none;border-radius:6px;'
+            f'font-weight:600;">Verify Reply-To Address</a></p>'
+            f"<p style=\"color:#6b7280;font-size:13px;\">Or copy this URL: {verify_url}</p>"
+            f"<p style=\"color:#6b7280;font-size:13px;\">If you didn't request this, ignore this email.</p>"
+        ),
+        body_text=(
+            f"Verify your reply-to address\n\n"
+            f"Click this link to verify that {request.reply_to} can receive replies "
+            f"for warmup emails sent from {domain}:\n\n{verify_url}\n\n"
+            f"If you didn't request this, ignore this email."
+        ),
+        _skip_warmup_check=True,
+    )
+
+    logger.info(
+        "Reply-to verification email sent",
+        domain=domain,
+        reply_to=request.reply_to,
+    )
+
+    return success({"sent_to": request.reply_to})
+
+
+def check_reply_to(
+    service: WarmupService,
+    workspace_id: str,
+    domain: str,
+) -> dict:
+    """Check reply-to verification status for a domain.
+
+    Args:
+        service: WarmupService.
+        workspace_id: Workspace ID.
+        domain: Email sending domain.
+
+    Returns:
+        API response with verification status.
+    """
+    warmup = service.get_status(domain)
+    if not warmup or warmup.workspace_id != workspace_id:
+        return success({"verified": False, "reply_to": None})
+
+    return success({
+        "verified": warmup.reply_to_verified,
+        "reply_to": warmup.reply_to,
     })
 
 

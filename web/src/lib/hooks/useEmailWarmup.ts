@@ -30,6 +30,8 @@ export interface WarmupDomain {
   from_name: string | null;
   from_email_local: string | null;
   from_email_verified: boolean;
+  reply_to: string | null;
+  reply_to_verified: boolean;
   today?: {
     send_count: number;
     bounce_count: number;
@@ -55,6 +57,7 @@ export interface StartWarmupRequest {
   auto_warmup_enabled?: boolean;
   from_name?: string;
   from_email_local?: string;
+  reply_to?: string;
 }
 
 export interface UpdateSeedListRequest {
@@ -82,6 +85,16 @@ export interface WarmupLogEntry {
 
 export interface WarmupLogResponse {
   items: WarmupLogEntry[];
+  today?: {
+    send_count: number;
+    daily_limit: number;
+  };
+  warmup?: {
+    auto_warmup_enabled: boolean;
+    seed_list_count: number;
+    send_window_start: number;
+    send_window_end: number;
+  };
 }
 
 export interface DomainAuthStatus {
@@ -464,6 +477,42 @@ export function useCheckSender(workspaceId: string) {
         { email }
       );
       return data;
+    },
+  });
+}
+
+// Send reply-to verification email
+export function useVerifyReplyTo(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ domain, reply_to }: { domain: string; reply_to: string }) => {
+      const { data } = await api.post<{ sent_to: string }>(
+        `/workspaces/${workspaceId}/email-warmup/${domain}/verify-reply-to`,
+        { reply_to }
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['warmups', workspaceId] });
+    },
+  });
+}
+
+// Check reply-to verification status
+export function useCheckReplyTo(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ domain }: { domain: string }) => {
+      const { data } = await api.post<{ verified: boolean; reply_to: string }>(
+        `/workspaces/${workspaceId}/email-warmup/${domain}/check-reply-to`,
+        {}
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['warmups', workspaceId] });
     },
   });
 }

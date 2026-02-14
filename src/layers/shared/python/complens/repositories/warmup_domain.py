@@ -441,6 +441,7 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
 
     def get_recent_warmup_emails(
         self, domain: str, date_str: str, limit: int = 20,
+        since_date: str | None = None,
     ) -> list[dict[str, Any]]:
         """Query recent warmup emails for a domain.
 
@@ -448,17 +449,30 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
             domain: Email sending domain.
             date_str: Date string (YYYY-MM-DD) to query from (inclusive, backward).
             limit: Maximum items to return.
+            since_date: Optional lower-bound date (YYYY-MM-DD) to filter out
+                emails from previous warmup instances.
 
         Returns:
             List of warmup email records.
         """
         try:
-            response = self.table.query(
-                KeyConditionExpression="PK = :pk AND begins_with(SK, :prefix)",
-                ExpressionAttributeValues={
+            if since_date:
+                key_expr = "PK = :pk AND SK BETWEEN :sk_start AND :sk_end"
+                expr_values = {
+                    ":pk": f"WARMUP#{domain}",
+                    ":sk_start": f"EMAIL#{since_date}",
+                    ":sk_end": "EMAIL#~",
+                }
+            else:
+                key_expr = "PK = :pk AND begins_with(SK, :prefix)"
+                expr_values = {
                     ":pk": f"WARMUP#{domain}",
                     ":prefix": "EMAIL#",
-                },
+                }
+
+            response = self.table.query(
+                KeyConditionExpression=key_expr,
+                ExpressionAttributeValues=expr_values,
                 ScanIndexForward=False,
                 Limit=limit,
             )
