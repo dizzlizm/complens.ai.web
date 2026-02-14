@@ -49,7 +49,13 @@ class Site(BaseModel):
         return f"SITE#{self.id}"
 
     def get_gsi1_keys(self) -> dict[str, str]:
-        """Get GSI1 keys for listing sites by workspace."""
+        """Get GSI1 keys for domain-based site lookup.
+
+        Returns empty dict for sites without a domain since DynamoDB
+        does not allow empty string values in GSI key attributes.
+        """
+        if not self.domain_name:
+            return {}
         return {
             "GSI1PK": f"WS#{self.workspace_id}#SITES",
             "GSI1SK": self.domain_name,
