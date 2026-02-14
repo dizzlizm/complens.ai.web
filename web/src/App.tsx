@@ -26,7 +26,6 @@ import PageEditor from './pages/PageEditor';
 // Forms removed - now managed inside Page Editor
 import Conversations from './pages/Conversations';
 import Settings from './pages/Settings';
-import EmailWarmup from './pages/EmailWarmup';
 import SiteAISettings from './pages/SiteAISettings';
 import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
@@ -92,7 +91,7 @@ function App() {
               <Route path="pages/:id" element={<PageEditor />} />
               <Route path="workflows" element={<Workflows />} />
               <Route path="workflows/:id" element={<WorkflowEditor />} />
-              <Route path="email-warmup" element={<EmailWarmup />} />
+              <Route path="email-warmup" element={<Navigate to="/settings?section=email" replace />} />
               <Route path="ai" element={<SiteAISettings />} />
             </Route>
 
@@ -101,7 +100,7 @@ function App() {
             <Route path="/pages/:id" element={<PageEditor />} />
             <Route path="/workflows" element={<Workflows />} />
             <Route path="/workflows/:id" element={<WorkflowEditor />} />
-            <Route path="/email-warmup" element={<EmailWarmup />} />
+            <Route path="/email-warmup" element={<Navigate to="/settings?section=email" replace />} />
           </Route>
 
           {/* Accept invitation (handles both auth states internally) */}

@@ -16,7 +16,7 @@ from complens.models.domain import (
 )
 from complens.repositories.domain import DomainRepository
 from complens.repositories.site import SiteRepository
-from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
+from complens.services.feature_gate import FeatureGateError, enforce_limit, get_workspace_plan, require_feature
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError
 from complens.utils.responses import (
@@ -29,9 +29,6 @@ from complens.utils.responses import (
 )
 
 logger = structlog.get_logger()
-
-# Limit domains per workspace (can be adjusted per plan)
-MAX_DOMAINS_PER_WORKSPACE = int(os.environ.get("MAX_DOMAINS_PER_WORKSPACE", "1"))
 
 
 def handler(event: dict[str, Any], context: Any) -> dict:
@@ -81,8 +78,14 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
 def list_domains(workspace_id: str) -> dict:
     """List all domains for a workspace."""
+    from complens.services.billing_service import get_dynamic_plan_limits
+
     repo = DomainRepository()
     domains = repo.list_by_workspace(workspace_id)
+
+    plan = get_workspace_plan(workspace_id)
+    limits = get_dynamic_plan_limits(plan)
+    domain_limit = limits.get("domains", 0)
 
     return success({
         "items": [
@@ -99,7 +102,7 @@ def list_domains(workspace_id: str) -> dict:
             ).model_dump(mode="json", exclude_none=True)
             for d in domains
         ],
-        "limit": MAX_DOMAINS_PER_WORKSPACE,
+        "limit": domain_limit,
         "used": len([d for d in domains if d.status not in [DomainStatus.FAILED]]),
     })
 
@@ -161,13 +164,9 @@ def create_domain(workspace_id: str, event: dict) -> dict:
     if not site:
         return not_found("Site", request.site_id)
 
-    # Check domain limit
+    # Check domain limit based on workspace plan
     active_count = domain_repo.count_active_domains(workspace_id)
-    if active_count >= MAX_DOMAINS_PER_WORKSPACE:
-        return error(
-            f"Domain limit reached. Maximum {MAX_DOMAINS_PER_WORKSPACE} custom domain(s) allowed.",
-            400,
-        )
+    enforce_limit(plan, "domains", active_count)
 
     # Check if domain already exists
     existing = domain_repo.get_by_domain(workspace_id, request.domain)
@@ -262,6 +261,16 @@ def create_domain(workspace_id: str, event: dict) -> dict:
         state_machine_arn = os.environ.get("DOMAIN_PROVISIONING_STATE_MACHINE_ARN")
 
         if state_machine_arn:
+            # Build raw API Gateway origin URL for CloudFront distributions.
+            # Extract API ID from the API Gateway request context (avoids a
+            # circular CloudFormation dependency from adding !Ref RestApi
+            # to the DomainProvisionerFunction env vars).
+            request_context = event.get("requestContext", {})
+            rest_api_id = request_context.get("apiId", "")
+            region = os.environ.get("AWS_REGION", "us-east-1")
+            stage = request_context.get("stage", os.environ.get("STAGE", "dev"))
+            api_origin = f"{rest_api_id}.execute-api.{region}.amazonaws.com"
+
             sfn.start_execution(
                 stateMachineArn=state_machine_arn,
                 name=f"domain-{workspace_id}-{request.domain.replace('.', '-')}",
@@ -270,6 +279,8 @@ def create_domain(workspace_id: str, event: dict) -> dict:
                     "domain": request.domain,
                     "site_id": request.site_id,
                     "certificate_arn": certificate_arn,
+                    "api_origin": api_origin,
+                    "stage": stage,
                 }),
             )
             logger.info("Domain provisioning started", domain=request.domain)

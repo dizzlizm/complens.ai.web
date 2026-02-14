@@ -36,7 +36,7 @@ class DomainSetup(BaseModel):
     _sk_prefix: ClassVar[str] = "DOMAIN#"
 
     workspace_id: str = Field(..., description="Parent workspace ID")
-    site_id: str = Field(..., description="Site this domain belongs to")
+    site_id: str = Field(default="", description="Site this domain belongs to")
     domain: str = Field(..., description="Custom domain (e.g., landing.example.com)")
 
     # Status tracking
@@ -105,7 +105,7 @@ class DomainStatusResponse(PydanticBaseModel):
     """Domain status response for UI."""
 
     domain: str
-    site_id: str  # Which site this domain belongs to
+    site_id: str = ""  # Which site this domain belongs to
     status: DomainStatus
     status_message: str | None = None
 

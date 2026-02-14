@@ -64,8 +64,13 @@ def enforce_limit(plan: str, resource: str, current_count: int) -> None:
     if check_limit(plan, resource, current_count):
         return
 
-    # Find minimum upgrade plan that would allow this
-    for upgrade_plan in ("pro", "business"):
+    # Find minimum upgrade plan *above* the current plan that would allow this
+    plan_hierarchy = ["free", "pro", "business"]
+    current_tier = plan_hierarchy.index(plan) if plan in plan_hierarchy else -1
+
+    for upgrade_plan in plan_hierarchy:
+        if plan_hierarchy.index(upgrade_plan) <= current_tier:
+            continue  # Skip current and lower plans
         upgrade_limits = get_dynamic_plan_limits(upgrade_plan)
         upgrade_limit = upgrade_limits.get(resource, 0)
         if upgrade_limit == -1 or current_count < upgrade_limit:

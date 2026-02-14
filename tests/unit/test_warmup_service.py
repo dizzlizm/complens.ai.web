@@ -253,6 +253,7 @@ class TestWarmupServiceLifecycle:
         from complens.models.warmup_domain import WarmupDomain
 
         repo = MagicMock()
+        repo.get_by_domain.return_value = None
         repo.create_warmup.side_effect = lambda w: w
         service = self._make_service(repo)
 
@@ -268,6 +269,7 @@ class TestWarmupServiceLifecycle:
     def test_start_warmup_custom_schedule(self):
         """Test starting warm-up with custom schedule."""
         repo = MagicMock()
+        repo.get_by_domain.return_value = None
         repo.create_warmup.side_effect = lambda w: w
         service = self._make_service(repo)
 
@@ -279,6 +281,7 @@ class TestWarmupServiceLifecycle:
     def test_start_warmup_with_seed_list(self):
         """Test starting warm-up with seed list and auto-warmup."""
         repo = MagicMock()
+        repo.get_by_domain.return_value = None
         repo.create_warmup.side_effect = lambda w: w
         service = self._make_service(repo)
 
@@ -667,6 +670,7 @@ class TestWarmupServiceStartWithAuth:
         mock_email_cls.return_value = mock_email
 
         repo = MagicMock()
+        repo.get_by_domain.return_value = None
         repo.create_warmup.side_effect = lambda w: w
         service = self._make_service(repo)
 
@@ -686,6 +690,7 @@ class TestWarmupServiceStartWithAuth:
         mock_email_cls.return_value = mock_email
 
         repo = MagicMock()
+        repo.get_by_domain.return_value = None
         repo.create_warmup.side_effect = lambda w: w
         service = self._make_service(repo)
 
@@ -702,6 +707,7 @@ class TestWarmupServiceStartWithAuth:
         mock_email_cls.return_value = mock_email
 
         repo = MagicMock()
+        repo.get_by_domain.return_value = None
         repo.create_warmup.side_effect = lambda w: w
         service = self._make_service(repo)
 

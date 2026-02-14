@@ -12,8 +12,6 @@ from complens.repositories.domain import DomainRepository
 
 logger = structlog.get_logger()
 
-# API Gateway origin for CloudFront
-API_GATEWAY_DOMAIN = os.environ.get("API_GATEWAY_DOMAIN", "")
 STAGE = os.environ.get("STAGE", "dev")
 
 
@@ -50,7 +48,9 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return check_certificate_status(workspace_id, domain, certificate_arn)
         elif task == "create_distribution":
             return create_cloudfront_distribution(
-                workspace_id, domain, site_id, certificate_arn
+                workspace_id, domain, site_id, certificate_arn,
+                api_origin=event.get("api_origin", ""),
+                stage=event.get("stage", STAGE),
             )
         elif task == "check_distribution":
             return check_distribution_status(workspace_id, domain)
@@ -143,6 +143,9 @@ def create_cloudfront_distribution(
     domain: str,
     site_id: str,
     certificate_arn: str,
+    *,
+    api_origin: str = "",
+    stage: str = "",
 ) -> dict:
     """Create CloudFront distribution for the custom domain.
 
@@ -167,8 +170,9 @@ def create_cloudfront_distribution(
 
     try:
         # Create CloudFront distribution
-        # Origin: API Gateway public domain endpoint
-        api_origin = API_GATEWAY_DOMAIN or f"api.dev.complens.ai"
+        # Origin: raw API Gateway execute-api URL (matches PagesDistribution)
+        # Passed via Step Functions input to avoid circular CloudFormation dependency
+        origin_stage = stage or STAGE
 
         # Build default cache behavior — with CloudFront Function if available
         default_cache_behavior = {
@@ -210,7 +214,7 @@ def create_cloudfront_distribution(
                         {
                             "Id": "api-gateway",
                             "DomainName": api_origin.replace("https://", ""),
-                            "OriginPath": "/public/domain",
+                            "OriginPath": f"/{origin_stage}/public/domain",
                             "CustomOriginConfig": {
                                 "HTTPPort": 80,
                                 "HTTPSPort": 443,

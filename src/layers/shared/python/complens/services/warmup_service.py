@@ -248,6 +248,7 @@ class WarmupService:
         seed_list: list[str] | None = None,
         auto_warmup_enabled: bool = False,
         from_name: str | None = None,
+        reply_to: str | None = None,
     ) -> WarmupDomain:
         """Start a warm-up for a domain.
 
@@ -299,6 +300,29 @@ class WarmupService:
                 raise
             logger.warning("Domain auth check failed, proceeding with warmup", domain=domain, error=str(e))
 
+        # Check for existing record (may be PENDING from reply-to verification)
+        existing = self.repo.get_by_domain(domain)
+
+        # If reply_to specified, verify it was confirmed on the existing record
+        if reply_to:
+            if not existing or existing.reply_to != reply_to or not existing.reply_to_verified:
+                from complens.utils.exceptions import ValidationError
+                raise ValidationError(
+                    "Reply-to address must be verified before starting warm-up",
+                    errors=[{"field": "reply_to", "msg": f"'{reply_to}' is not verified"}],
+                )
+
+        # If a PENDING record exists (created during reply-to verification),
+        # delete it so we can create the full ACTIVE record.
+        # Non-pending records mean a warmup is already running.
+        if existing:
+            status_val = existing.status.value if hasattr(existing.status, "value") else existing.status
+            if status_val == "pending":
+                self.repo.delete_warmup(domain)
+            else:
+                from complens.utils.exceptions import ConflictError
+                raise ConflictError(f"Warmup already exists for domain '{domain}'")
+
         warmup = WarmupDomain(
             workspace_id=workspace_id,
             domain=domain,
@@ -313,6 +337,8 @@ class WarmupService:
             seed_list=seed_list or [],
             auto_warmup_enabled=auto_warmup_enabled,
             from_name=from_name,
+            reply_to=reply_to,
+            reply_to_verified=True if reply_to else False,
         )
 
         warmup = self.repo.create_warmup(warmup)

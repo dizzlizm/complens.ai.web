@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { X, Zap, Play, GitBranch, Sparkles, Loader2, ChevronDown, Variable, Plus, Trash2, FileText, Eye, Settings, Wand2, Copy, Check } from 'lucide-react';
-import { type Node, useReactFlow } from '@xyflow/react';
+import { type Node } from '@xyflow/react';
 import { useAutofillNode } from '../../lib/hooks/useAI';
 import { useForms, usePageForms } from '../../lib/hooks/useForms';
 import { usePages, usePage } from '../../lib/hooks/usePages';
@@ -21,6 +21,8 @@ interface NodeConfigPanelProps {
   pageId?: string; // When provided, filters forms/pages to this page's context
   onClose: () => void;
   onUpdate: (nodeId: string, data: Partial<NodeData>) => void;
+  getNodes?: () => Node[];
+  getEdges?: () => { source: string; target: string }[];
 }
 
 // Debounce hook for smoother editing
@@ -996,7 +998,7 @@ function getNodeColor(type: string) {
   }
 }
 
-export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, onUpdate }: NodeConfigPanelProps) {
+export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, onUpdate, getNodes, getEdges }: NodeConfigPanelProps) {
   const [localLabel, setLocalLabel] = useState('');
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
   const [activeTab, setActiveTab] = useState<'config' | 'preview'>('config');
@@ -1114,7 +1116,6 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
     150
   );
 
-  const { getNodes, getEdges } = useReactFlow();
   const autofill = useAutofillNode(workspaceId || '');
 
   const handleAutofill = useCallback(async () => {
@@ -1126,8 +1127,8 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
         node_id: node.id,
         node_type: nodeType,
         current_config: currentConfig,
-        nodes: getNodes().map(n => ({ id: n.id, type: n.type, data: n.data })),
-        edges: getEdges().map(e => ({ source: e.source, target: e.target })),
+        nodes: getNodes?.().map(n => ({ id: n.id, type: n.type, data: n.data })) || [],
+        edges: getEdges?.().map(e => ({ source: e.source, target: e.target })) || [],
       });
       if (suggestedConfig && Object.keys(suggestedConfig).length > 0) {
         const mergedConfig = { ...currentConfig };

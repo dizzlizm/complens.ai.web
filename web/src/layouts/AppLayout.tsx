@@ -8,7 +8,6 @@ import {
   Users,
   DollarSign,
   FileText,
-  Mail,
   Settings,
   User,
   LogOut,
@@ -40,7 +39,6 @@ function getSiteNavigation(siteId: string) {
   return [
     { name: 'Pages', href: `/sites/${siteId}/pages`, icon: FileText },
     { name: 'Workflows', href: `/sites/${siteId}/workflows`, icon: GitBranch },
-    { name: 'Email', href: `/sites/${siteId}/email-warmup`, icon: Mail },
     { name: 'AI & Knowledge Base', href: `/sites/${siteId}/ai`, icon: BookOpen },
   ];
 }

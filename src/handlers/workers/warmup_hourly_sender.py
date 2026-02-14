@@ -107,6 +107,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         from_name = warmup.from_name or warmup.domain
         local_part = warmup.from_email_local if (warmup.from_email_local and warmup.from_email_verified) else "noreply"
         from_email = f"{from_name} <{local_part}@{warmup.domain}>"
+        reply_to_list = [warmup.reply_to] if warmup.reply_to and warmup.reply_to_verified else None
 
         sent_for_domain = 0
         for i in range(emails_this_hour):
@@ -119,6 +120,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
                     body_text=email_content.get("body_text"),
                     body_html=email_content.get("body_html"),
                     from_email=from_email,
+                    reply_to=reply_to_list,
                     tags={"warmup": "true", "domain": warmup.domain},
                     _skip_warmup_check=True,
                 )

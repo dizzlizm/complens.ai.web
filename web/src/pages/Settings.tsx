@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import {
   Bell, Shield, CreditCard, Users, Building, Globe, Zap, Loader2, Check, AlertCircle,
@@ -16,6 +16,8 @@ import SegmentConfigCard from '../components/settings/SegmentConfigCard';
 import TeamManagement from '../components/settings/TeamManagement';
 import PricingTable from '../components/settings/PricingTable';
 import { TimezoneSelect } from '../components/ui';
+import EmailIdentity from '../components/email/EmailIdentity';
+import WarmupManager from '../components/email/WarmupManager';
 
 const settingsSections = [
   {
@@ -63,7 +65,9 @@ const settingsSections = [
 ];
 
 export default function Settings() {
-  const [activeSection, setActiveSection] = useState('workspace');
+  const [searchParams] = useSearchParams();
+  const initialSection = searchParams.get('section') === 'email' ? 'email' : 'workspace';
+  const [activeSection, setActiveSection] = useState(initialSection);
 
   return (
     <div className="space-y-6">
@@ -923,15 +927,47 @@ function SecuritySettings() {
 
 function EmailDomainSettings() {
   const { workspaceId } = useCurrentWorkspace();
+  const [emailSubTab, setEmailSubTab] = useState<'identity' | 'domains' | 'warmup'>('identity');
+
+  const subTabs = [
+    { id: 'identity' as const, label: 'Identity' },
+    { id: 'domains' as const, label: 'Domains' },
+    { id: 'warmup' as const, label: 'Warmup' },
+  ];
 
   return (
     <div className="space-y-6">
-      <SendingDomainsCard workspaceId={workspaceId} />
+      {/* Sub-tab bar */}
+      <div className="flex border-b border-gray-200">
+        {subTabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setEmailSubTab(tab.id)}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
+              emailSubTab === tab.id
+                ? 'border-primary-600 text-primary-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {emailSubTab === 'identity' && (
+        <EmailIdentity workspaceId={workspaceId} onNavigateToDomains={() => setEmailSubTab('domains')} />
+      )}
+      {emailSubTab === 'domains' && (
+        <SendingDomainsCard workspaceId={workspaceId} onNavigateToWarmup={() => setEmailSubTab('warmup')} />
+      )}
+      {emailSubTab === 'warmup' && (
+        <WarmupManager workspaceId={workspaceId} onNavigateToDomains={() => setEmailSubTab('domains')} />
+      )}
     </div>
   );
 }
 
-function SendingDomainsCard({ workspaceId }: { workspaceId: string | undefined }) {
+function SendingDomainsCard({ workspaceId, onNavigateToWarmup }: { workspaceId: string | undefined; onNavigateToWarmup?: () => void }) {
   const [showAddWizard, setShowAddWizard] = useState(false);
   const [domainInput, setDomainInput] = useState('');
   const [setupResult, setSetupResult] = useState<DomainSetupResult | null>(null);
@@ -1234,14 +1270,14 @@ function SendingDomainsCard({ workspaceId }: { workspaceId: string | undefined }
                       )}
                       {renderDnsRecords(domain)}
                       <div className="flex items-center gap-2 mt-4 pt-3 border-t border-gray-100">
-                        {domain.ready && (
-                          <Link
-                            to="/email-warmup"
+                        {domain.ready && onNavigateToWarmup && (
+                          <button
+                            onClick={onNavigateToWarmup}
                             className="text-xs px-3 py-1.5 rounded-md bg-primary-100 text-primary-700 hover:bg-primary-200 transition-colors inline-flex items-center gap-1"
                           >
                             <TrendingUp className="w-3 h-3" />
                             Start Warm-up
-                          </Link>
+                          </button>
                         )}
                         <button
                           onClick={() => {

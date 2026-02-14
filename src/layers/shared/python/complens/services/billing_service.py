@@ -17,6 +17,7 @@ DEFAULT_PLAN_LIMITS = {
         "workflows": 3,
         "runs_per_month": 100,
         "team_members": 1,
+        "domains": 0,
         "custom_domain": False,
         "knowledge_base": False,
         "email_warmup": False,
@@ -29,6 +30,7 @@ DEFAULT_PLAN_LIMITS = {
         "workflows": 50,
         "runs_per_month": 10000,
         "team_members": 5,
+        "domains": 5,
         "custom_domain": True,
         "knowledge_base": True,
         "email_warmup": True,
@@ -41,6 +43,7 @@ DEFAULT_PLAN_LIMITS = {
         "workflows": -1,
         "runs_per_month": -1,
         "team_members": -1,
+        "domains": -1,  # unlimited
         "custom_domain": True,
         "knowledge_base": True,
         "email_warmup": True,
@@ -95,16 +98,20 @@ def get_dynamic_plan_limits(plan: str) -> dict:
     Returns:
         Dict of limits and boolean features merged together.
     """
+    # Start with defaults so missing keys in DynamoDB don't silently become 0
+    defaults = DEFAULT_PLAN_LIMITS.get(plan, DEFAULT_PLAN_LIMITS["free"])
+
     configs = get_plan_configs()
     config = configs.get(plan)
 
     if config:
-        # Merge limits and features into a single dict (matches old PLAN_LIMITS format)
-        merged = dict(config.limits)
+        # Merge limits and features on top of defaults
+        merged = dict(defaults)
+        merged.update(config.limits)
         merged.update(config.features)
         return merged
 
-    return DEFAULT_PLAN_LIMITS.get(plan, DEFAULT_PLAN_LIMITS["free"])
+    return defaults
 
 
 def get_plan_config(plan: str):

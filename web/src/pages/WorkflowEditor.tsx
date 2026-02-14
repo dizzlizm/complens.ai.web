@@ -609,6 +609,8 @@ export default function WorkflowEditor() {
             pageId={pageId}
             onClose={() => setSelectedNodeId(null)}
             onUpdate={handleNodeUpdate}
+            getNodes={() => canvasRef.current?.getNodes() || []}
+            getEdges={() => canvasRef.current?.getEdges()?.map(e => ({ source: e.source, target: e.target })) || []}
           />
         )}
       </div>

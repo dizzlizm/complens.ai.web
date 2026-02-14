@@ -123,7 +123,9 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return handle_options_preflight(event)
 
         # Route to appropriate handler
-        if "/public/chat-config/" in path and http_method == "GET":
+        if "/public/verify-reply-to/" in path and http_method == "GET":
+            return verify_reply_to_callback(path_params.get("domain"), path_params.get("token"))
+        elif "/public/chat-config/" in path and http_method == "GET":
             return get_chat_config(page_id, workspace_id, event)
         elif "/public/submit/page/" in path and http_method == "POST":
             return submit_page_form(page_id, event)
@@ -634,6 +636,99 @@ def get_public_plans() -> dict:
             for p in plans
         ],
     })
+
+
+def verify_reply_to_callback(domain: str | None, token: str | None) -> dict:
+    """Verify a reply-to email address via callback link.
+
+    This is the public endpoint that users click from their verification email.
+    Looks up the WarmupDomain by domain, verifies the token matches, and marks
+    the reply-to address as verified.
+
+    Args:
+        domain: The warmup domain name.
+        token: The verification token from the email link.
+
+    Returns:
+        HTML response confirming verification or showing an error.
+    """
+    if not domain or not token:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": _verify_html_page("Invalid Request", "Missing domain or token.", is_error=True),
+        }
+
+    from complens.repositories.warmup_domain import WarmupDomainRepository
+
+    repo = WarmupDomainRepository()
+    warmup = repo.get_by_domain(domain)
+
+    if not warmup:
+        return {
+            "statusCode": 404,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": _verify_html_page("Not Found", f"No warmup record found for domain '{domain}'.", is_error=True),
+        }
+
+    if not warmup.reply_to_verify_token or warmup.reply_to_verify_token != token:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": _verify_html_page(
+                "Invalid or Expired Link",
+                "This verification link is invalid or has already been used.",
+                is_error=True,
+            ),
+        }
+
+    # Mark as verified and clear token
+    warmup.reply_to_verified = True
+    warmup.reply_to_verify_token = None
+    warmup.update_timestamp()
+    repo.update(warmup)
+
+    logger.info(
+        "Reply-to address verified",
+        domain=domain,
+        reply_to=warmup.reply_to,
+    )
+
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "text/html; charset=utf-8"},
+        "body": _verify_html_page(
+            "Reply-To Address Verified!",
+            f"<strong>{warmup.reply_to}</strong> has been verified for <strong>{domain}</strong>. "
+            f"You can close this tab and continue setting up your warm-up.",
+        ),
+    }
+
+
+def _verify_html_page(title: str, message: str, is_error: bool = False) -> str:
+    """Render a simple HTML page for the verification callback."""
+    color = "#dc2626" if is_error else "#16a34a"
+    icon = "&#10060;" if is_error else "&#9989;"
+    return f"""<!DOCTYPE html>
+<html><head>
+<title>{title}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body {{ font-family: system-ui, -apple-system, sans-serif; display: flex; align-items: center;
+  justify-content: center; min-height: 100vh; margin: 0; background: #f9fafb; color: #111827; }}
+.card {{ background: #fff; border-radius: 12px; padding: 40px; max-width: 480px;
+  text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+.icon {{ font-size: 48px; margin-bottom: 16px; }}
+h1 {{ font-size: 22px; color: {color}; margin: 0 0 12px; }}
+p {{ color: #4b5563; line-height: 1.6; margin: 0; }}
+</style>
+</head><body>
+<div class="card">
+<div class="icon">{icon}</div>
+<h1>{title}</h1>
+<p>{message}</p>
+</div>
+</body></html>"""
 
 
 def track_page_view(event: dict) -> dict:

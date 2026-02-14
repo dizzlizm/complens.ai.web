@@ -88,6 +88,11 @@ class WarmupDomain(BaseModel):
     from_email_verified: bool = Field(default=False, description="Whether from_email_local has been verified")
     from_email_verify_code: str | None = Field(None, description="Pending verification code")
 
+    # Reply-to mailbox verification
+    reply_to: str | None = Field(None, description="Reply-to email address for warmup emails")
+    reply_to_verified: bool = Field(default=False, description="Whether reply_to mailbox has been verified")
+    reply_to_verify_token: str | None = Field(None, description="Verification token, cleared after use")
+
     # Send window (UTC hours)
     send_window_start: int = Field(default=9, ge=0, le=23, description="Send window start hour (UTC)")
     send_window_end: int = Field(default=19, ge=0, le=23, description="Send window end hour (UTC)")
@@ -156,6 +161,21 @@ class WarmupDomain(BaseModel):
         return None
 
 
+class VerifyReplyToRequest(PydanticBaseModel):
+    """Request model for verifying a reply-to mailbox."""
+
+    reply_to: str = Field(..., description="Reply-to email address to verify")
+
+    @field_validator("reply_to")
+    @classmethod
+    def validate_reply_to(cls, v: str) -> str:
+        """Validate reply-to email format."""
+        v = v.strip().lower()
+        if "@" not in v or "." not in v:
+            raise ValueError("reply_to must be a valid email address")
+        return v
+
+
 class StartWarmupRequest(PydanticBaseModel):
     """Request model for starting a domain warm-up."""
 
@@ -175,6 +195,7 @@ class StartWarmupRequest(PydanticBaseModel):
         None, max_length=64, pattern=r"^[a-zA-Z0-9._%+\-]+$",
         description="Local part of from-address (e.g. 'marketing')",
     )
+    reply_to: str | None = Field(None, description="Reply-to email address (must be verified before start)")
 
     @model_validator(mode="after")
     def validate_send_window(self) -> "StartWarmupRequest":
@@ -251,6 +272,8 @@ class WarmupStatusResponse(PydanticBaseModel):
     from_name: str | None = None
     from_email_local: str | None = None
     from_email_verified: bool = False
+    reply_to: str | None = None
+    reply_to_verified: bool = False
 
     @classmethod
     def from_warmup_domain(cls, wd: "WarmupDomain") -> "WarmupStatusResponse":
@@ -289,6 +312,8 @@ class WarmupStatusResponse(PydanticBaseModel):
             from_name=wd.from_name,
             from_email_local=wd.from_email_local,
             from_email_verified=wd.from_email_verified,
+            reply_to=wd.reply_to,
+            reply_to_verified=wd.reply_to_verified,
         )
 
 

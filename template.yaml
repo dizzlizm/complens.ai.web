@@ -1647,7 +1647,6 @@ Resources:
       Timeout: 60
       Environment:
         Variables:
-          MAX_DOMAINS_PER_WORKSPACE: "1"
           DOMAIN_PROVISIONING_STATE_MACHINE_ARN: !If [CustomDomainEnabled, !Ref DomainProvisioningStateMachine, ""]
       Policies:
         - DynamoDBCrudPolicy:
@@ -1873,6 +1872,14 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /public/track
             Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+        VerifyReplyTo:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/verify-reply-to/{domain}/{token}
+            Method: GET
             Auth:
               Authorizer: NONE
 
@@ -2963,10 +2970,14 @@ Resources:
                 - ses:GetIdentityDkimAttributes
                 - ses:VerifyDomainIdentity
                 - ses:VerifyDomainDkim
+                - ses:SendEmail
+                - ses:SendRawEmail
+                - ses:VerifyEmailIdentity
               Resource: "*"
       Environment:
         Variables:
           DEFERRED_EMAIL_QUEUE_URL: !Ref DeferredEmailQueue
+          DOMAIN_NAME: !Ref DomainName
       Events:
         SetupDomain:
           Type: Api
@@ -3081,6 +3092,18 @@ Resources:
           Properties:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/email-warmup/check-sender
+            Method: POST
+        VerifyReplyTo:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/verify-reply-to
+            Method: POST
+        CheckReplyTo:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/{domain}/check-reply-to
             Method: POST
 
   WarmupDailyProcessorFunction:
