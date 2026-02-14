@@ -84,12 +84,24 @@ class BusinessProfileRepository(BaseRepository[BusinessProfile]):
                 profile.calculate_profile_score()
                 if profile.profile_score > 0:
                     return profile
+            # Page cascades to its site profile
+            if site_id:
+                profile = self.get_by_site(workspace_id, site_id)
+                if profile:
+                    profile.calculate_profile_score()
+                    if profile.profile_score > 0:
+                        return profile
+            # Page also cascades to workspace
+            return self.get_by_workspace(workspace_id)
         if site_id:
+            # Site-level request: return site profile only, no workspace fallback.
+            # Each site owns its own profile; new sites start blank.
             profile = self.get_by_site(workspace_id, site_id)
             if profile:
                 profile.calculate_profile_score()
                 if profile.profile_score > 0:
                     return profile
+            return None
         return self.get_by_workspace(workspace_id)
 
     def create_profile(
