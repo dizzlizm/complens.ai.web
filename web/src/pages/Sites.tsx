@@ -1,33 +1,49 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSites, useDeleteSite } from '../lib/hooks/useSites';
+import { useSites, useCreateSite, useDeleteSite } from '../lib/hooks/useSites';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import Modal from '../components/ui/Modal';
 import { useToast } from '../components/Toast';
 import {
-  Globe, Trash2, ArrowRight, Search,
+  Globe, Trash2, ArrowRight, Search, Plus, Loader2,
 } from 'lucide-react';
 
 export default function Sites() {
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { data: sites, isLoading, error } = useSites(workspaceId);
+  const createSite = useCreateSite(workspaceId || '');
   const deleteSite = useDeleteSite(workspaceId || '');
   const navigate = useNavigate();
   const toast = useToast();
 
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [newSiteName, setNewSiteName] = useState('');
+  const [newSiteDescription, setNewSiteDescription] = useState('');
 
-  // Auto-navigate to the single site's page editor if there's exactly one
-  useEffect(() => {
-    if (!isLoading && sites && sites.length === 1) {
-      const site = sites[0];
+  const handleCreateSite = async () => {
+    if (!newSiteName.trim()) return;
+    try {
+      const site = await createSite.mutateAsync({
+        name: newSiteName.trim(),
+        domain_name: '',
+        description: newSiteDescription.trim() || undefined,
+      });
+      setShowCreate(false);
+      setNewSiteName('');
+      setNewSiteDescription('');
+      toast.success('Site created');
+      // Navigate into the new site
       const target = site.primary_page
         ? `/sites/${site.id}/pages/${site.primary_page.id}`
         : `/sites/${site.id}/pages`;
-      navigate(target, { replace: true });
+      navigate(target);
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || 'Failed to create site';
+      toast.error(msg);
     }
-  }, [isLoading, sites, navigate]);
+  };
 
   const handleDeleteSite = async (siteId: string) => {
     try {
@@ -70,10 +86,17 @@ export default function Sites() {
             Organize your pages, workflows, and content by domain.
           </p>
         </div>
+        <button
+          onClick={() => setShowCreate(true)}
+          className="btn btn-primary inline-flex items-center gap-2"
+        >
+          <Plus className="w-4 h-4" />
+          New Site
+        </button>
       </div>
 
       {/* Search */}
-      {sites && sites.length > 0 && (
+      {sites && sites.length > 1 && (
         <div className="relative mb-6">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
@@ -86,21 +109,30 @@ export default function Sites() {
         </div>
       )}
 
-      {/* Empty state — should rarely appear since backend auto-creates a default site */}
+      {/* Empty state */}
       {(!sites || sites.length === 0) && (
         <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
           <Globe className="w-12 h-12 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">No sites yet</h3>
           <p className="text-gray-500 mb-6 max-w-md mx-auto">
-            Your first site will be created automatically. Try refreshing the page.
+            Create your first site to start building pages, workflows, and email campaigns.
           </p>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="btn btn-primary inline-flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            Create Your First Site
+          </button>
         </div>
       )}
 
       {/* Sites grid */}
       {filteredSites && filteredSites.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredSites.map((site) => (
+          {filteredSites.map((site) => {
+            const primaryDomain = (site.settings?.primary_domain as string) || site.domain_name || '';
+            return (
               <div
                 key={site.id}
                 onClick={() => {
@@ -118,8 +150,8 @@ export default function Sites() {
                     </div>
                     <div>
                       <h3 className="font-semibold text-gray-900">{site.name}</h3>
-                      {site.domain_name && (
-                        <p className="text-sm text-gray-500">{site.domain_name}</p>
+                      {primaryDomain && (
+                        <p className="text-sm text-gray-500">{primaryDomain}</p>
                       )}
                     </div>
                   </div>
@@ -146,8 +178,64 @@ export default function Sites() {
                   <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
                 </div>
               </div>
-          ))}
+            );
+          })}
         </div>
+      )}
+
+      {/* Create Site Modal */}
+      {showCreate && (
+        <Modal isOpen onClose={() => setShowCreate(false)} title="Create New Site">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Site Name</label>
+              <input
+                type="text"
+                className="input w-full"
+                placeholder="e.g. My Marketing Site"
+                value={newSiteName}
+                onChange={(e) => setNewSiteName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCreateSite()}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Description <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                type="text"
+                className="input w-full"
+                placeholder="Brief description of this site"
+                value={newSiteDescription}
+                onChange={(e) => setNewSiteDescription(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCreateSite()}
+              />
+            </div>
+            <p className="text-xs text-gray-500">
+              You can configure the domain, sender identity, and email campaigns after creation in the site's Setup tab.
+            </p>
+          </div>
+          <div className="flex justify-end gap-3 mt-6">
+            <button
+              onClick={() => setShowCreate(false)}
+              className="btn btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleCreateSite}
+              disabled={!newSiteName.trim() || createSite.isPending}
+              className="btn btn-primary inline-flex items-center gap-2"
+            >
+              {createSite.isPending ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Creating...</>
+              ) : (
+                <><Plus className="w-4 h-4" /> Create Site</>
+              )}
+            </button>
+          </div>
+        </Modal>
       )}
 
       {/* Delete Confirmation Modal */}

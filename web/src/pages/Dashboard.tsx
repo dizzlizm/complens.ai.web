@@ -3,14 +3,12 @@ import { Link } from 'react-router-dom';
 import { GitBranch, Users, MessageSquare, CheckCircle, DollarSign, TrendingUp, Trophy } from 'lucide-react';
 import { useCurrentWorkspace, useDeals } from '../lib/hooks';
 import { useAnalytics } from '../lib/hooks/useAnalytics';
-import { useBusinessProfile } from '../lib/hooks/useAI';
 import StatCard from '../components/dashboard/StatCard';
 import AnalyticsChart from '../components/dashboard/AnalyticsChart';
 import PageAnalytics from '../components/dashboard/PageAnalytics';
 import FormAnalytics from '../components/dashboard/FormAnalytics';
 import WelcomeCard from '../components/dashboard/WelcomeCard';
 import RecentActivity from '../components/dashboard/RecentActivity';
-import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 import { LoadingSpinner } from '../components/ui';
 
 const PERIODS = [
@@ -23,25 +21,10 @@ export default function Dashboard() {
   const [period, setPeriod] = useState('30d');
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { data: analytics, isLoading: isLoadingAnalytics } = useAnalytics(workspaceId, period);
-  const { data: profile, isLoading: isLoadingProfile } = useBusinessProfile(workspaceId);
   const { data: dealsData } = useDeals(workspaceId || '');
-  const [wizardDismissed, setWizardDismissed] = useState(
-    () => localStorage.getItem('onboarding_dismissed') === 'true'
-  );
 
   const isLoading = isLoadingWorkspace || isLoadingAnalytics;
   const summary = analytics?.summary;
-
-  // Show onboarding wizard for new users
-  const showWizard = !isLoadingProfile && !profile?.onboarding_completed && !wizardDismissed;
-
-  if (showWizard) {
-    return (
-      <OnboardingWizard
-        onComplete={() => setWizardDismissed(true)}
-      />
-    );
-  }
 
   return (
     <div className="space-y-8">

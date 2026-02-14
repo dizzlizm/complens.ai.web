@@ -90,12 +90,6 @@ def list_sites(
 
     sites, next_key = repo.list_by_workspace(workspace_id, limit, last_key)
 
-    # Auto-create a default site for new workspaces (first page load)
-    if not sites and not last_key:
-        default_site = _ensure_default_site(repo, workspace_id)
-        if default_site:
-            sites = [default_site]
-
     next_cursor = None
     if next_key:
         next_cursor = base64.b64encode(json.dumps(next_key).encode()).decode()
