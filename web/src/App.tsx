@@ -19,7 +19,7 @@ import Workflows from './pages/Workflows';
 import WorkflowEditor from './pages/WorkflowEditor';
 import Contacts from './pages/Contacts';
 import ContactDetail from './pages/ContactDetail';
-import DealPipeline from './pages/DealPipeline';
+import PartnerPipeline from './pages/PartnerPipeline';
 import Sites from './pages/Sites';
 import Pages from './pages/Pages';
 import PageEditor from './pages/PageEditor';
@@ -81,7 +81,7 @@ function App() {
             <Route path="/inbox" element={<Conversations />} />
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/contacts/:id" element={<ContactDetail />} />
-            <Route path="/deals" element={<DealPipeline />} />
+            <Route path="/partners" element={<PartnerPipeline />} />
             <Route path="/sites" element={<Sites />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/profile" element={<Profile />} />

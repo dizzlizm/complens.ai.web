@@ -307,8 +307,8 @@ export default function AdminWorkspaceDetail() {
           <p className="text-lg font-bold text-white">{statsLoading ? '...' : stats?.team_members ?? 0}</p>
         </div>
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-3">
-          <span className="text-xs text-gray-500 uppercase">Deals</span>
-          <p className="text-lg font-bold text-white">{statsLoading ? '...' : stats?.deals ?? 0}</p>
+          <span className="text-xs text-gray-500 uppercase">Partners</span>
+          <p className="text-lg font-bold text-white">{statsLoading ? '...' : stats?.partners ?? 0}</p>
         </div>
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-3">
           <span className="text-xs text-gray-500 uppercase">Conversations</span>

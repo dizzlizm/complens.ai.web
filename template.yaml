@@ -1096,12 +1096,12 @@ Resources:
             Path: /workspaces/{workspace_id}/contacts/export
             Method: GET
 
-  DealsFunction:
+  PartnersFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Handler: deals.handler
+      Handler: partners.handler
       CodeUri: src/handlers/api/
-      Description: Deals pipeline CRUD operations
+      Description: Partners pipeline CRUD operations
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref MainTable
@@ -1110,37 +1110,37 @@ Resources:
           Type: Api
           Properties:
             RestApiId: !Ref RestApi
-            Path: /workspaces/{workspace_id}/deals
+            Path: /workspaces/{workspace_id}/partners
             Method: GET
         Create:
           Type: Api
           Properties:
             RestApiId: !Ref RestApi
-            Path: /workspaces/{workspace_id}/deals
+            Path: /workspaces/{workspace_id}/partners
             Method: POST
         Get:
           Type: Api
           Properties:
             RestApiId: !Ref RestApi
-            Path: /workspaces/{workspace_id}/deals/{deal_id}
+            Path: /workspaces/{workspace_id}/partners/{partner_id}
             Method: GET
         Update:
           Type: Api
           Properties:
             RestApiId: !Ref RestApi
-            Path: /workspaces/{workspace_id}/deals/{deal_id}
+            Path: /workspaces/{workspace_id}/partners/{partner_id}
             Method: PUT
         Delete:
           Type: Api
           Properties:
             RestApiId: !Ref RestApi
-            Path: /workspaces/{workspace_id}/deals/{deal_id}
+            Path: /workspaces/{workspace_id}/partners/{partner_id}
             Method: DELETE
         Move:
           Type: Api
           Properties:
             RestApiId: !Ref RestApi
-            Path: /workspaces/{workspace_id}/deals/{deal_id}/move
+            Path: /workspaces/{workspace_id}/partners/{partner_id}/move
             Method: PUT
         GetPipeline:
           Type: Api

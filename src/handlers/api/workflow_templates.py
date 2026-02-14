@@ -22,19 +22,19 @@ logger = structlog.get_logger()
 # Built-in templates that are always available (not stored in DB)
 BUILTIN_TEMPLATES: list[dict[str, Any]] = [
     {
-        "id": "builtin_new_deal_notification",
-        "name": "New Deal Notification",
-        "description": "Notify the team when a new deal is created in the pipeline.",
-        "category": "deals",
-        "icon": "dollar-sign",
+        "id": "builtin_new_partner_notification",
+        "name": "New Partner Notification",
+        "description": "Notify the team when a new partner is added to the pipeline.",
+        "category": "partners",
+        "icon": "handshake",
         "builtin": True,
         "nodes": [
             {
                 "id": "trigger_1",
                 "type": "trigger",
                 "data": {
-                    "nodeType": "trigger_deal_created",
-                    "label": "Deal Created",
+                    "nodeType": "trigger_partner_added",
+                    "label": "Partner Added",
                     "config": {},
                 },
                 "position": {"x": 250, "y": 50},
@@ -47,8 +47,8 @@ BUILTIN_TEMPLATES: list[dict[str, Any]] = [
                     "label": "Notify Team",
                     "config": {
                         "to": "{{workspace.notification_email}}",
-                        "subject": "New Deal: {{deal.title}}",
-                        "body": "A new deal has been created.\n\nTitle: {{deal.title}}\nValue: ${{deal.value}}\nStage: {{deal.stage}}\nContact: {{deal.contact_name}}",
+                        "subject": "New Partner: {{partner.title}}",
+                        "body": "A new partner has been added.\n\nName: {{partner.title}}\nType: {{partner.partner_type}}\nCommission: {{partner.commission_pct}}%\nIntroduced by: {{partner.introduced_by_name}}\nContact: {{partner.contact_name}}",
                     },
                 },
                 "position": {"x": 250, "y": 200},
@@ -59,10 +59,10 @@ BUILTIN_TEMPLATES: list[dict[str, Any]] = [
         ],
     },
     {
-        "id": "builtin_deal_won_celebration",
-        "name": "Deal Won Celebration",
-        "description": "Send a thank-you email when a deal is won and tag the contact as a customer.",
-        "category": "deals",
+        "id": "builtin_partner_activated",
+        "name": "Partner Activated Welcome",
+        "description": "Send a welcome email when a partner becomes active and tag the contact.",
+        "category": "partners",
         "icon": "trophy",
         "builtin": True,
         "nodes": [
@@ -70,8 +70,8 @@ BUILTIN_TEMPLATES: list[dict[str, Any]] = [
                 "id": "trigger_1",
                 "type": "trigger",
                 "data": {
-                    "nodeType": "trigger_deal_won",
-                    "label": "Deal Won",
+                    "nodeType": "trigger_partner_activated",
+                    "label": "Partner Activated",
                     "config": {},
                 },
                 "position": {"x": 250, "y": 50},
@@ -81,11 +81,11 @@ BUILTIN_TEMPLATES: list[dict[str, Any]] = [
                 "type": "action",
                 "data": {
                     "nodeType": "action_send_email",
-                    "label": "Thank Customer",
+                    "label": "Welcome Partner",
                     "config": {
                         "to": "{{contact.email}}",
-                        "subject": "Welcome aboard! Thank you for choosing us",
-                        "body": "Hi {{contact.first_name}},\n\nThank you for choosing to work with us! We're excited to get started on {{deal.title}}.\n\nOur team will be reaching out shortly to kick things off.\n\nBest regards,\nThe Team",
+                        "subject": "Welcome to our partner program!",
+                        "body": "Hi {{contact.first_name}},\n\nWe're excited to have you as an active partner! Your partnership with {{partner.title}} is now live.\n\nOur team will be in touch with next steps.\n\nBest regards,\nThe Team",
                     },
                 },
                 "position": {"x": 100, "y": 200},
@@ -95,9 +95,9 @@ BUILTIN_TEMPLATES: list[dict[str, Any]] = [
                 "type": "action",
                 "data": {
                     "nodeType": "action_update_contact",
-                    "label": "Tag as Customer",
+                    "label": "Tag as Partner",
                     "config": {
-                        "add_tags": ["customer"],
+                        "add_tags": ["partner", "active-partner"],
                     },
                 },
                 "position": {"x": 400, "y": 200},
@@ -109,9 +109,9 @@ BUILTIN_TEMPLATES: list[dict[str, Any]] = [
         ],
     },
     {
-        "id": "builtin_form_to_deal",
-        "name": "Form to Deal",
-        "description": "Automatically create a deal in the pipeline when a form is submitted.",
+        "id": "builtin_form_to_partner",
+        "name": "Form to Partner",
+        "description": "Automatically add a partner to the pipeline when a partner application form is submitted.",
         "category": "leads",
         "icon": "zap",
         "builtin": True,
@@ -130,12 +130,13 @@ BUILTIN_TEMPLATES: list[dict[str, Any]] = [
                 "id": "action_1",
                 "type": "action",
                 "data": {
-                    "nodeType": "action_create_deal",
-                    "label": "Create Deal",
+                    "nodeType": "action_create_partner",
+                    "label": "Create Partner",
                     "config": {
-                        "deal_title": "{{contact.first_name}} {{contact.last_name}} - New Lead",
-                        "stage": "New Lead",
+                        "partner_title": "{{contact.first_name}} {{contact.last_name}} - New Partner",
+                        "stage": "Prospect",
                         "priority": "medium",
+                        "partner_type": "referral",
                     },
                 },
                 "position": {"x": 250, "y": 200},
@@ -148,8 +149,8 @@ BUILTIN_TEMPLATES: list[dict[str, Any]] = [
                     "label": "Notify Owner",
                     "config": {
                         "to": "{{workspace.notification_email}}",
-                        "subject": "New lead from form: {{contact.first_name}} {{contact.last_name}}",
-                        "body": "A new lead has come in via form submission.\n\nName: {{contact.first_name}} {{contact.last_name}}\nEmail: {{contact.email}}\n\nA deal has been automatically created in your pipeline.",
+                        "subject": "New partner application: {{contact.first_name}} {{contact.last_name}}",
+                        "body": "A new partner application has come in via form submission.\n\nName: {{contact.first_name}} {{contact.last_name}}\nEmail: {{contact.email}}\n\nA partner has been automatically created in your pipeline.",
                     },
                 },
                 "position": {"x": 250, "y": 380},

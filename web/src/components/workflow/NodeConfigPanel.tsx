@@ -85,13 +85,15 @@ const INSERTABLE_VARIABLES = [
     { value: '{{trigger_data.form_data.message}}', label: 'Submitted Message' },
     { value: '{{trigger_data.form_data}}', label: 'All Form Data' },
   ]},
-  { category: 'Deal', items: [
-    { value: '{{deal.title}}', label: 'Deal Title' },
-    { value: '{{deal.value}}', label: 'Deal Value' },
-    { value: '{{deal.stage}}', label: 'Deal Stage' },
-    { value: '{{deal.priority}}', label: 'Deal Priority' },
-    { value: '{{deal.contact_name}}', label: 'Deal Contact' },
-    { value: '{{deal.expected_close_date}}', label: 'Expected Close' },
+  { category: 'Partner', items: [
+    { value: '{{partner.title}}', label: 'Partner Name' },
+    { value: '{{partner.value}}', label: 'Partner Value' },
+    { value: '{{partner.commission_pct}}', label: 'Commission %' },
+    { value: '{{partner.partner_type}}', label: 'Partner Type' },
+    { value: '{{partner.stage}}', label: 'Partner Stage' },
+    { value: '{{partner.priority}}', label: 'Partner Priority' },
+    { value: '{{partner.contact_name}}', label: 'Partner Contact' },
+    { value: '{{partner.introduced_by_name}}', label: 'Introduced By' },
   ]},
   { category: 'Workflow', items: [
     { value: '{{owner.email}}', label: 'Owner Email' },
@@ -271,44 +273,41 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
   trigger_subscription_cancelled: { title: 'Subscription Cancelled', fields: [] },
   trigger_invoice_paid: { title: 'Invoice Paid', fields: [] },
   trigger_payment_refunded: { title: 'Payment Refunded', fields: [] },
-  // Deal triggers
-  trigger_deal_created: {
-    title: 'Deal Created',
+  // Partner triggers
+  trigger_partner_added: {
+    title: 'Partner Added',
     fields: [
       { key: 'stage_filter', label: 'Stage Filter (optional)', type: 'select', options: [
         { value: '', label: 'Any Stage' },
-        { value: 'New Lead', label: 'New Lead' },
-        { value: 'Qualified', label: 'Qualified' },
-        { value: 'Proposal', label: 'Proposal' },
-        { value: 'Negotiation', label: 'Negotiation' },
-      ], helperText: 'Only trigger for deals created in this stage' },
+        { value: 'Prospect', label: 'Prospect' },
+        { value: 'Introduced', label: 'Introduced' },
+        { value: 'Negotiating', label: 'Negotiating' },
+      ], helperText: 'Only trigger for partners added in this stage' },
     ],
   },
-  trigger_deal_stage_changed: {
-    title: 'Deal Stage Changed',
+  trigger_partner_stage_changed: {
+    title: 'Partner Stage Changed',
     fields: [
       { key: 'from_stage', label: 'From Stage (optional)', type: 'select', options: [
         { value: '', label: 'Any Stage' },
-        { value: 'New Lead', label: 'New Lead' },
-        { value: 'Qualified', label: 'Qualified' },
-        { value: 'Proposal', label: 'Proposal' },
-        { value: 'Negotiation', label: 'Negotiation' },
-        { value: 'Won', label: 'Won' },
-        { value: 'Lost', label: 'Lost' },
+        { value: 'Prospect', label: 'Prospect' },
+        { value: 'Introduced', label: 'Introduced' },
+        { value: 'Negotiating', label: 'Negotiating' },
+        { value: 'Active', label: 'Active' },
+        { value: 'Inactive', label: 'Inactive' },
       ], helperText: 'Filter by previous stage' },
       { key: 'to_stage', label: 'To Stage (optional)', type: 'select', options: [
         { value: '', label: 'Any Stage' },
-        { value: 'New Lead', label: 'New Lead' },
-        { value: 'Qualified', label: 'Qualified' },
-        { value: 'Proposal', label: 'Proposal' },
-        { value: 'Negotiation', label: 'Negotiation' },
-        { value: 'Won', label: 'Won' },
-        { value: 'Lost', label: 'Lost' },
+        { value: 'Prospect', label: 'Prospect' },
+        { value: 'Introduced', label: 'Introduced' },
+        { value: 'Negotiating', label: 'Negotiating' },
+        { value: 'Active', label: 'Active' },
+        { value: 'Inactive', label: 'Inactive' },
       ], helperText: 'Filter by new stage' },
     ],
   },
-  trigger_deal_won: { title: 'Deal Won', fields: [] },
-  trigger_deal_lost: { title: 'Deal Lost', fields: [] },
+  trigger_partner_activated: { title: 'Partner Activated', fields: [] },
+  trigger_partner_deactivated: { title: 'Partner Deactivated', fields: [] },
 
   // ==========================================================================
   // ACTIONS
@@ -417,46 +416,52 @@ const nodeConfigs: Record<string, { title: string; fields: FieldConfig[] }> = {
       { key: 'immediately', label: 'Cancel Immediately', type: 'checkbox', helperText: 'If unchecked, cancels at period end' },
     ],
   },
-  // Deal actions
-  action_create_deal: {
-    title: 'Create Deal',
+  // Partner actions
+  action_create_partner: {
+    title: 'Create Partner',
     fields: [
-      { key: 'deal_title', label: 'Deal Title', type: 'text', placeholder: 'Deal for {{contact.first_name}}', helperText: 'Supports template variables' },
-      { key: 'deal_value', label: 'Value ($)', type: 'number', placeholder: '0' },
-      { key: 'deal_stage', label: 'Stage', type: 'select', options: [
-        { value: 'New Lead', label: 'New Lead' },
-        { value: 'Qualified', label: 'Qualified' },
-        { value: 'Proposal', label: 'Proposal' },
-        { value: 'Negotiation', label: 'Negotiation' },
-      ], defaultValue: 'New Lead' },
-      { key: 'deal_priority', label: 'Priority', type: 'select', options: [
+      { key: 'partner_title', label: 'Partner Name', type: 'text', placeholder: 'Partner: {{contact.first_name}}', helperText: 'Supports template variables' },
+      { key: 'partner_value', label: 'Value ($)', type: 'number', placeholder: '0' },
+      { key: 'commission_pct', label: 'Commission %', type: 'number', placeholder: '0' },
+      { key: 'partner_type', label: 'Partner Type', type: 'select', options: [
+        { value: 'referral', label: 'Referral' },
+        { value: 'msp', label: 'MSP' },
+        { value: 'agency', label: 'Agency' },
+        { value: 'affiliate', label: 'Affiliate' },
+        { value: 'other', label: 'Other' },
+      ], defaultValue: 'referral' },
+      { key: 'partner_stage', label: 'Stage', type: 'select', options: [
+        { value: 'Prospect', label: 'Prospect' },
+        { value: 'Introduced', label: 'Introduced' },
+        { value: 'Negotiating', label: 'Negotiating' },
+      ], defaultValue: 'Prospect' },
+      { key: 'partner_priority', label: 'Priority', type: 'select', options: [
         { value: 'low', label: 'Low' },
         { value: 'medium', label: 'Medium' },
         { value: 'high', label: 'High' },
       ], defaultValue: 'medium' },
     ],
   },
-  action_update_deal: {
-    title: 'Update Deal',
+  action_update_partner: {
+    title: 'Update Partner',
     fields: [
-      { key: 'deal_id', label: 'Deal ID', type: 'text', placeholder: '{{trigger_data.deal_id}}', helperText: 'Defaults to deal from trigger' },
-      { key: 'deal_stage', label: 'New Stage (optional)', type: 'select', options: [
+      { key: 'partner_id', label: 'Partner ID', type: 'text', placeholder: '{{trigger_data.partner_id}}', helperText: 'Defaults to partner from trigger' },
+      { key: 'partner_stage', label: 'New Stage (optional)', type: 'select', options: [
         { value: '', label: 'No change' },
-        { value: 'New Lead', label: 'New Lead' },
-        { value: 'Qualified', label: 'Qualified' },
-        { value: 'Proposal', label: 'Proposal' },
-        { value: 'Negotiation', label: 'Negotiation' },
-        { value: 'Won', label: 'Won' },
-        { value: 'Lost', label: 'Lost' },
+        { value: 'Prospect', label: 'Prospect' },
+        { value: 'Introduced', label: 'Introduced' },
+        { value: 'Negotiating', label: 'Negotiating' },
+        { value: 'Active', label: 'Active' },
+        { value: 'Inactive', label: 'Inactive' },
       ] },
-      { key: 'deal_value', label: 'New Value ($, optional)', type: 'number', placeholder: '' },
-      { key: 'deal_priority', label: 'New Priority (optional)', type: 'select', options: [
+      { key: 'partner_value', label: 'New Value ($, optional)', type: 'number', placeholder: '' },
+      { key: 'partner_priority', label: 'New Priority (optional)', type: 'select', options: [
         { value: '', label: 'No change' },
         { value: 'low', label: 'Low' },
         { value: 'medium', label: 'Medium' },
         { value: 'high', label: 'High' },
       ] },
-      { key: 'add_tags', label: 'Add Tags', type: 'tag_input', dataSource: 'tags', helperText: 'Tags to add to the deal' },
+      { key: 'add_tags', label: 'Add Tags', type: 'tag_input', dataSource: 'tags', helperText: 'Tags to add to the partner' },
     ],
   },
 

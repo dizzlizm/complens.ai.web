@@ -536,33 +536,36 @@ class PaymentRefundedTrigger(BaseTrigger):
 
 
 # =============================================================================
-# Deal Triggers
+# Partner Triggers
 # =============================================================================
 
 
-class DealCreatedTrigger(BaseTrigger):
-    """Trigger when a new deal is created."""
+class PartnerAddedTrigger(BaseTrigger):
+    """Trigger when a new partner is added."""
 
-    node_type = "trigger_deal_created"
+    node_type = "trigger_partner_added"
 
     def validate_trigger_data(self, data: dict) -> list[str]:
-        """Validate deal data."""
+        """Validate partner data."""
         errors = []
-        if not data.get("deal_id"):
-            errors.append("deal_id is required")
+        if not data.get("partner_id"):
+            errors.append("partner_id is required")
         return errors
 
     def extract_trigger_output(self, data: dict) -> dict:
-        """Extract deal creation data."""
+        """Extract partner creation data."""
         return {
-            "deal_id": data.get("deal_id"),
+            "partner_id": data.get("partner_id"),
             "title": data.get("title"),
             "value": data.get("value"),
+            "commission_pct": data.get("commission_pct"),
+            "partner_type": data.get("partner_type"),
             "stage": data.get("stage"),
             "priority": data.get("priority"),
             "contact_id": data.get("contact_id"),
             "contact_name": data.get("contact_name"),
-            "expected_close_date": data.get("expected_close_date"),
+            "introduced_by": data.get("introduced_by"),
+            "introduced_by_name": data.get("introduced_by_name"),
         }
 
     async def execute(self, context: NodeContext) -> NodeResult:
@@ -579,43 +582,43 @@ class DealCreatedTrigger(BaseTrigger):
         if not stage_filter:
             return await super().execute(context)
 
-        deal_stage = context.trigger_data.get("stage", "")
-        if deal_stage == stage_filter:
+        partner_stage = context.trigger_data.get("stage", "")
+        if partner_stage == stage_filter:
             return await super().execute(context)
 
         return NodeResult.completed(
-            output={"skipped": True, "reason": f"Stage '{deal_stage}' does not match filter '{stage_filter}'"},
+            output={"skipped": True, "reason": f"Stage '{partner_stage}' does not match filter '{stage_filter}'"},
         )
 
 
-class DealStageChangedTrigger(BaseTrigger):
-    """Trigger when a deal's stage changes.
+class PartnerStageChangedTrigger(BaseTrigger):
+    """Trigger when a partner's stage changes.
 
     Can filter by from_stage and/or to_stage.
     """
 
-    node_type = "trigger_deal_stage_changed"
+    node_type = "trigger_partner_stage_changed"
 
     def validate_trigger_data(self, data: dict) -> list[str]:
-        """Validate deal stage change data."""
+        """Validate partner stage change data."""
         errors = []
-        if not data.get("deal_id"):
-            errors.append("deal_id is required")
+        if not data.get("partner_id"):
+            errors.append("partner_id is required")
         return errors
 
     def extract_trigger_output(self, data: dict) -> dict:
-        """Extract deal stage change data."""
+        """Extract partner stage change data."""
         return {
-            "deal_id": data.get("deal_id"),
+            "partner_id": data.get("partner_id"),
             "title": data.get("title"),
             "value": data.get("value"),
+            "commission_pct": data.get("commission_pct"),
             "from_stage": data.get("from_stage"),
             "to_stage": data.get("to_stage"),
             "stage": data.get("to_stage"),
             "priority": data.get("priority"),
             "contact_id": data.get("contact_id"),
             "contact_name": data.get("contact_name"),
-            "expected_close_date": data.get("expected_close_date"),
         }
 
     async def execute(self, context: NodeContext) -> NodeResult:
@@ -646,56 +649,58 @@ class DealStageChangedTrigger(BaseTrigger):
         return await super().execute(context)
 
 
-class DealWonTrigger(BaseTrigger):
-    """Trigger when a deal is marked as won."""
+class PartnerActivatedTrigger(BaseTrigger):
+    """Trigger when a partner becomes active."""
 
-    node_type = "trigger_deal_won"
+    node_type = "trigger_partner_activated"
 
     def validate_trigger_data(self, data: dict) -> list[str]:
-        """Validate deal won data."""
+        """Validate partner activation data."""
         errors = []
-        if not data.get("deal_id"):
-            errors.append("deal_id is required")
+        if not data.get("partner_id"):
+            errors.append("partner_id is required")
         return errors
 
     def extract_trigger_output(self, data: dict) -> dict:
-        """Extract deal won data."""
+        """Extract partner activation data."""
         return {
-            "deal_id": data.get("deal_id"),
+            "partner_id": data.get("partner_id"),
             "title": data.get("title"),
             "value": data.get("value"),
-            "stage": data.get("stage", "Won"),
+            "commission_pct": data.get("commission_pct"),
+            "partner_type": data.get("partner_type"),
+            "stage": data.get("stage", "Active"),
             "priority": data.get("priority"),
             "contact_id": data.get("contact_id"),
             "contact_name": data.get("contact_name"),
-            "expected_close_date": data.get("expected_close_date"),
         }
 
 
-class DealLostTrigger(BaseTrigger):
-    """Trigger when a deal is marked as lost."""
+class PartnerDeactivatedTrigger(BaseTrigger):
+    """Trigger when a partner becomes inactive."""
 
-    node_type = "trigger_deal_lost"
+    node_type = "trigger_partner_deactivated"
 
     def validate_trigger_data(self, data: dict) -> list[str]:
-        """Validate deal lost data."""
+        """Validate partner deactivation data."""
         errors = []
-        if not data.get("deal_id"):
-            errors.append("deal_id is required")
+        if not data.get("partner_id"):
+            errors.append("partner_id is required")
         return errors
 
     def extract_trigger_output(self, data: dict) -> dict:
-        """Extract deal lost data including lost reason."""
+        """Extract partner deactivation data including reason."""
         return {
-            "deal_id": data.get("deal_id"),
+            "partner_id": data.get("partner_id"),
             "title": data.get("title"),
             "value": data.get("value"),
-            "stage": data.get("stage", "Lost"),
+            "commission_pct": data.get("commission_pct"),
+            "partner_type": data.get("partner_type"),
+            "stage": data.get("stage", "Inactive"),
             "priority": data.get("priority"),
             "contact_id": data.get("contact_id"),
             "contact_name": data.get("contact_name"),
-            "lost_reason": data.get("lost_reason", ""),
-            "expected_close_date": data.get("expected_close_date"),
+            "inactive_reason": data.get("inactive_reason", ""),
         }
 
 
@@ -723,9 +728,9 @@ TRIGGER_NODES = {
     "trigger_subscription_cancelled": SubscriptionCancelledTrigger,
     "trigger_invoice_paid": InvoicePaidTrigger,
     "trigger_payment_refunded": PaymentRefundedTrigger,
-    # Deal triggers
-    "trigger_deal_created": DealCreatedTrigger,
-    "trigger_deal_stage_changed": DealStageChangedTrigger,
-    "trigger_deal_won": DealWonTrigger,
-    "trigger_deal_lost": DealLostTrigger,
+    # Partner triggers
+    "trigger_partner_added": PartnerAddedTrigger,
+    "trigger_partner_stage_changed": PartnerStageChangedTrigger,
+    "trigger_partner_activated": PartnerActivatedTrigger,
+    "trigger_partner_deactivated": PartnerDeactivatedTrigger,
 }

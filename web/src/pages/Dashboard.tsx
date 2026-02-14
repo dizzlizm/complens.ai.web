@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { GitBranch, Users, MessageSquare, CheckCircle, DollarSign, TrendingUp, Trophy } from 'lucide-react';
-import { useCurrentWorkspace, useDeals } from '../lib/hooks';
+import { useCurrentWorkspace, usePartners } from '../lib/hooks';
 import { useAnalytics } from '../lib/hooks/useAnalytics';
 import { useBusinessProfile } from '../lib/hooks/useAI';
 import StatCard from '../components/dashboard/StatCard';
@@ -24,7 +24,7 @@ export default function Dashboard() {
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const { data: analytics, isLoading: isLoadingAnalytics } = useAnalytics(workspaceId, period);
   const { data: profile, isLoading: isLoadingProfile } = useBusinessProfile(workspaceId);
-  const { data: dealsData } = useDeals(workspaceId || '');
+  const { data: partnersData } = usePartners(workspaceId || '');
   const [wizardDismissed, setWizardDismissed] = useState(
     () => localStorage.getItem('onboarding_dismissed') === 'true'
   );
@@ -143,12 +143,12 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Deal Pipeline Summary - only show when there are deals */}
-      {!isLoading && dealsData && dealsData.summary.total_deals > 0 && (
+      {/* Partner Pipeline Summary - only show when there are partners */}
+      {!isLoading && partnersData && partnersData.summary.total_partners > 0 && (
         <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Deal Pipeline</h2>
-            <Link to="/deals" className="text-sm text-primary-600 hover:text-primary-700 font-medium">
+            <h2 className="text-lg font-semibold text-gray-900">Partner Pipeline</h2>
+            <Link to="/partners" className="text-sm text-primary-600 hover:text-primary-700 font-medium">
               View Pipeline
             </Link>
           </div>
@@ -159,7 +159,7 @@ export default function Dashboard() {
               </div>
               <div>
                 <p className="text-xs text-blue-600 font-medium">Pipeline Value</p>
-                <p className="text-lg font-bold text-gray-900">${dealsData.summary.total_value.toLocaleString()}</p>
+                <p className="text-lg font-bold text-gray-900">${partnersData.summary.total_value.toLocaleString()}</p>
               </div>
             </div>
             <div className="bg-indigo-50 rounded-lg p-3 flex items-center gap-3">
@@ -167,9 +167,9 @@ export default function Dashboard() {
                 <TrendingUp className="w-5 h-5 text-indigo-600" />
               </div>
               <div>
-                <p className="text-xs text-indigo-600 font-medium">Active Deals</p>
+                <p className="text-xs text-indigo-600 font-medium">Active Partners</p>
                 <p className="text-lg font-bold text-gray-900">
-                  {dealsData.deals.filter(d => d.stage !== 'Won' && d.stage !== 'Lost').length}
+                  {partnersData.partners.filter(p => p.stage !== 'Active' && p.stage !== 'Inactive').length}
                 </p>
               </div>
             </div>
@@ -178,12 +178,12 @@ export default function Dashboard() {
                 <Trophy className="w-5 h-5 text-green-600" />
               </div>
               <div>
-                <p className="text-xs text-green-600 font-medium">Won</p>
+                <p className="text-xs text-green-600 font-medium">Active</p>
                 <p className="text-lg font-bold text-gray-900">
-                  {dealsData.summary.by_stage['Won']?.count || 0}
-                  {(dealsData.summary.by_stage['Won']?.value ?? 0) > 0 && (
+                  {partnersData.summary.by_stage['Active']?.count || 0}
+                  {(partnersData.summary.by_stage['Active']?.value ?? 0) > 0 && (
                     <span className="text-sm font-normal text-gray-500 ml-1">
-                      (${(dealsData.summary.by_stage['Won']?.value || 0).toLocaleString()})
+                      (${(partnersData.summary.by_stage['Active']?.value || 0).toLocaleString()})
                     </span>
                   )}
                 </p>
@@ -192,12 +192,12 @@ export default function Dashboard() {
           </div>
           {/* Stage breakdown */}
           <div className="space-y-2">
-            {dealsData.stages
-              .filter(stage => (dealsData.summary.by_stage[stage]?.count || 0) > 0)
+            {partnersData.stages
+              .filter(stage => (partnersData.summary.by_stage[stage]?.count || 0) > 0)
               .map(stage => {
-                const stageData = dealsData.summary.by_stage[stage];
-                const pct = dealsData.summary.total_deals > 0
-                  ? Math.round((stageData.count / dealsData.summary.total_deals) * 100)
+                const stageData = partnersData.summary.by_stage[stage];
+                const pct = partnersData.summary.total_partners > 0
+                  ? Math.round((stageData.count / partnersData.summary.total_partners) * 100)
                   : 0;
                 return (
                   <div key={stage} className="flex items-center gap-3">
@@ -205,7 +205,7 @@ export default function Dashboard() {
                     <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
                       <div
                         className={`h-full rounded-full ${
-                          stage === 'Won' ? 'bg-green-500' : stage === 'Lost' ? 'bg-gray-400' : 'bg-primary-500'
+                          stage === 'Active' ? 'bg-green-500' : stage === 'Inactive' ? 'bg-gray-400' : 'bg-primary-500'
                         }`}
                         style={{ width: `${pct}%` }}
                       />
@@ -294,15 +294,15 @@ export default function Dashboard() {
               </div>
             </Link>
             <Link
-              to="/deals"
+              to="/partners"
               className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded-lg transition-colors"
             >
               <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
-                <DollarSign className="w-5 h-5 text-gray-600" />
+                <Users className="w-5 h-5 text-gray-600" />
               </div>
               <div>
-                <p className="font-medium text-gray-900">Deal Pipeline</p>
-                <p className="text-sm text-gray-500">Manage deals</p>
+                <p className="font-medium text-gray-900">Partner Pipeline</p>
+                <p className="text-sm text-gray-500">Manage partners</p>
               </div>
             </Link>
             <Link

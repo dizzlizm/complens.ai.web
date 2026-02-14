@@ -19,7 +19,7 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   Plus,
   Loader2,
-  DollarSign,
+  Users,
   LayoutGrid,
   List,
   Search,
@@ -33,15 +33,15 @@ import {
 } from 'lucide-react';
 import {
   useCurrentWorkspace,
-  useDeals,
-  useCreateDeal,
-  useUpdateDeal,
-  useDeleteDeal,
-  useMoveDeal,
-  useUpdatePipeline,
+  usePartners,
+  useCreatePartner,
+  useUpdatePartner,
+  useDeletePartner,
+  useMovePartner,
+  useUpdatePartnerPipeline,
   useContacts,
-  type Deal,
-  type CreateDealInput,
+  type Partner,
+  type CreatePartnerInput,
 } from '../lib/hooks';
 import Modal, { ModalFooter, ConfirmDialog } from '../components/ui/Modal';
 import { useToast } from '../components/Toast';
@@ -57,6 +57,10 @@ function formatCurrency(value: number): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function formatPercent(value: number): string {
+  return `${value}%`;
 }
 
 function formatDate(dateString?: string): string {
@@ -247,17 +251,17 @@ function InlinePrioritySelect({
 }
 
 // =============================================================================
-// Deal Card (Sortable) with inline editing
+// Partner Card (Sortable) with inline editing
 // =============================================================================
 
-function DealCard({
-  deal,
+function PartnerCard({
+  partner,
   onClick,
   onInlineUpdate,
 }: {
-  deal: Deal;
+  partner: Partner;
   onClick: () => void;
-  onInlineUpdate: (dealId: string, data: Record<string, unknown>) => void;
+  onInlineUpdate: (partnerId: string, data: Record<string, unknown>) => void;
 }) {
   const {
     attributes,
@@ -266,7 +270,7 @@ function DealCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: deal.id });
+  } = useSortable({ id: partner.id });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -291,27 +295,27 @@ function DealCard({
         </button>
         <div className="flex-1 min-w-0">
           <InlineTextEdit
-            value={deal.title}
-            onSave={(title) => onInlineUpdate(deal.id, { title })}
+            value={partner.title}
+            onSave={(title) => onInlineUpdate(partner.id, { title })}
             className="font-medium text-gray-900 text-sm truncate block"
           />
           <div className="mt-0.5">
             <InlineCurrencyEdit
-              value={deal.value}
-              onSave={(value) => onInlineUpdate(deal.id, { value })}
+              value={partner.value}
+              onSave={(value) => onInlineUpdate(partner.id, { value })}
             />
           </div>
-          {deal.contact_name && (
-            <p className="text-xs text-gray-500 mt-1 truncate">{deal.contact_name}</p>
+          {partner.contact_name && (
+            <p className="text-xs text-gray-500 mt-1 truncate">{partner.contact_name}</p>
           )}
           <div className="flex items-center gap-2 mt-2">
             <InlinePrioritySelect
-              value={deal.priority}
-              onSave={(priority) => onInlineUpdate(deal.id, { priority })}
+              value={partner.priority}
+              onSave={(priority) => onInlineUpdate(partner.id, { priority })}
             />
-            {deal.expected_close_date && (
+            {partner.commission_pct != null && partner.commission_pct > 0 && (
               <span className="text-xs text-gray-400">
-                {formatDate(deal.expected_close_date)}
+                {formatPercent(partner.commission_pct)}
               </span>
             )}
           </div>
@@ -322,37 +326,37 @@ function DealCard({
 }
 
 // Overlay card shown during drag — enlarged with more shadow
-function DealCardOverlay({ deal }: { deal: Deal }) {
+function PartnerCardOverlay({ partner }: { partner: Partner }) {
   return (
     <div className="bg-white rounded-lg border-2 border-primary-400 p-4 shadow-2xl w-72 rotate-2">
-      <p className="font-medium text-gray-900 text-sm truncate">{deal.title}</p>
-      {deal.value > 0 && (
+      <p className="font-medium text-gray-900 text-sm truncate">{partner.title}</p>
+      {partner.value > 0 && (
         <p className="text-sm font-semibold text-green-600 mt-1">
-          {formatCurrency(deal.value)}
+          {formatCurrency(partner.value)}
         </p>
       )}
-      {deal.contact_name && (
-        <p className="text-xs text-gray-500 mt-1">{deal.contact_name}</p>
+      {partner.contact_name && (
+        <p className="text-xs text-gray-500 mt-1">{partner.contact_name}</p>
       )}
-      <span className={`text-xs px-1.5 py-0.5 rounded font-medium mt-2 inline-block ${priorityColors[deal.priority]}`}>
-        {deal.priority}
+      <span className={`text-xs px-1.5 py-0.5 rounded font-medium mt-2 inline-block ${priorityColors[partner.priority]}`}>
+        {partner.priority}
       </span>
     </div>
   );
 }
 
 // =============================================================================
-// Inline Add Deal Form (replaces modal for column-level add)
+// Inline Add Partner Form (replaces modal for column-level add)
 // =============================================================================
 
-function InlineAddDeal({
+function InlineAddPartner({
   stage,
   onSubmit,
   onCancel,
   isSubmitting,
 }: {
   stage: string;
-  onSubmit: (data: CreateDealInput) => void;
+  onSubmit: (data: CreatePartnerInput) => void;
   onCancel: () => void;
   isSubmitting: boolean;
 }) {
@@ -387,7 +391,7 @@ function InlineAddDeal({
           if (e.key === 'Escape') onCancel();
         }}
         className="input w-full text-sm"
-        placeholder="Deal title..."
+        placeholder="Partner name..."
       />
       <input
         type="number"
@@ -424,42 +428,42 @@ function InlineAddDeal({
 
 function StageColumn({
   stage,
-  deals,
+  partners,
   summary,
   onCardClick,
   onInlineUpdate,
-  onAddDeal,
-  isAddingDeal,
+  onAddPartner,
+  isAddingPartner,
   isTerminal,
   isDragActive,
 }: {
   stage: string;
-  deals: Deal[];
+  partners: Partner[];
   summary: { count: number; value: number };
-  onCardClick: (deal: Deal) => void;
-  onInlineUpdate: (dealId: string, data: Record<string, unknown>) => void;
-  onAddDeal: (data: CreateDealInput) => void;
-  isAddingDeal: boolean;
-  isTerminal: 'won' | 'lost' | null;
+  onCardClick: (partner: Partner) => void;
+  onInlineUpdate: (partnerId: string, data: Record<string, unknown>) => void;
+  onAddPartner: (data: CreatePartnerInput) => void;
+  isAddingPartner: boolean;
+  isTerminal: 'active' | 'inactive' | null;
   isDragActive: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
   const [showInlineAdd, setShowInlineAdd] = useState(false);
 
-  const sortedDeals = useMemo(
-    () => [...deals].sort((a, b) => a.position - b.position),
-    [deals]
+  const sortedPartners = useMemo(
+    () => [...partners].sort((a, b) => a.position - b.position),
+    [partners]
   );
 
-  const borderClass = isTerminal === 'won'
+  const borderClass = isTerminal === 'active'
     ? 'border-green-400'
-    : isTerminal === 'lost'
+    : isTerminal === 'inactive'
       ? 'border-gray-400'
       : 'border-gray-200';
 
-  const bgClass = isTerminal === 'won'
+  const bgClass = isTerminal === 'active'
     ? 'bg-green-50'
-    : isTerminal === 'lost'
+    : isTerminal === 'inactive'
       ? 'bg-gray-50'
       : 'bg-gray-50';
 
@@ -486,7 +490,7 @@ function StageColumn({
               <button
                 onClick={() => setShowInlineAdd(true)}
                 className="p-0.5 text-gray-400 hover:text-primary-600 hover:bg-white rounded transition-colors"
-                title="Add deal"
+                title="Add partner"
               >
                 <Plus className="w-4 h-4" />
               </button>
@@ -501,14 +505,14 @@ function StageColumn({
       {/* Inline add form at top */}
       {showInlineAdd && (
         <div className="p-2">
-          <InlineAddDeal
+          <InlineAddPartner
             stage={stage}
             onSubmit={(data) => {
-              onAddDeal(data);
+              onAddPartner(data);
               setShowInlineAdd(false);
             }}
             onCancel={() => setShowInlineAdd(false)}
-            isSubmitting={isAddingDeal}
+            isSubmitting={isAddingPartner}
           />
         </div>
       )}
@@ -516,25 +520,25 @@ function StageColumn({
       {/* Cards */}
       <div className="flex-1 p-2 space-y-2 min-h-[100px] overflow-y-auto">
         <SortableContext
-          items={sortedDeals.map((d) => d.id)}
+          items={sortedPartners.map((p) => p.id)}
           strategy={verticalListSortingStrategy}
         >
-          {sortedDeals.map((deal) => (
-            <DealCard
-              key={deal.id}
-              deal={deal}
-              onClick={() => onCardClick(deal)}
+          {sortedPartners.map((partner) => (
+            <PartnerCard
+              key={partner.id}
+              partner={partner}
+              onClick={() => onCardClick(partner)}
               onInlineUpdate={onInlineUpdate}
             />
           ))}
         </SortableContext>
 
-        {sortedDeals.length === 0 && !showInlineAdd && (
+        {sortedPartners.length === 0 && !showInlineAdd && (
           <div className="flex items-center justify-center h-20 text-gray-400 text-xs">
             {isDragActive ? (
               <span className="text-primary-500 font-medium">Drop here</span>
             ) : (
-              'No deals'
+              'No partners'
             )}
           </div>
         )}
@@ -544,48 +548,52 @@ function StageColumn({
 }
 
 // =============================================================================
-// Deal Detail Side Panel (fixed right panel, no backdrop)
+// Partner Detail Side Panel (fixed right panel, no backdrop)
 // =============================================================================
 
-function DealDetailPanel({
-  deal,
+function PartnerDetailPanel({
+  partner,
   stages,
   onClose,
   onSave,
   onDelete,
   isDeleting,
 }: {
-  deal: Deal;
+  partner: Partner;
   stages: string[];
   onClose: () => void;
   onSave: (data: Record<string, unknown>) => void;
   onDelete: () => void;
   isDeleting: boolean;
 }) {
-  const [title, setTitle] = useState(deal.title);
-  const [value, setValue] = useState(deal.value.toString());
-  const [stage, setStage] = useState(deal.stage);
-  const [priority, setPriority] = useState(deal.priority);
-  const [contactName, setContactName] = useState(deal.contact_name || '');
-  const [description, setDescription] = useState(deal.description || '');
-  const [expectedCloseDate, setExpectedCloseDate] = useState(deal.expected_close_date || '');
-  const [lostReason, setLostReason] = useState(deal.lost_reason || '');
+  const [title, setTitle] = useState(partner.title);
+  const [value, setValue] = useState(partner.value.toString());
+  const [stage, setStage] = useState(partner.stage);
+  const [priority, setPriority] = useState(partner.priority);
+  const [contactName, setContactName] = useState(partner.contact_name || '');
+  const [description, setDescription] = useState(partner.description || '');
+  const [commissionPct, setCommissionPct] = useState((partner.commission_pct ?? 0).toString());
+  const [partnerType, setPartnerType] = useState(partner.partner_type || '');
+  const [introducedByName, setIntroducedByName] = useState(partner.introduced_by_name || '');
+  const [lostReason, setLostReason] = useState(partner.lost_reason || '');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [saved, setSaved] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Re-initialize when deal changes
+  // Re-initialize when partner changes
   useEffect(() => {
-    setTitle(deal.title);
-    setValue(deal.value.toString());
-    setStage(deal.stage);
-    setPriority(deal.priority);
-    setContactName(deal.contact_name || '');
-    setDescription(deal.description || '');
-    setExpectedCloseDate(deal.expected_close_date || '');
-    setLostReason(deal.lost_reason || '');
+    setTitle(partner.title);
+    setValue(partner.value.toString());
+    setStage(partner.stage);
+    setPriority(partner.priority);
+    setContactName(partner.contact_name || '');
+    setDescription(partner.description || '');
+    setCommissionPct((partner.commission_pct ?? 0).toString());
+    setPartnerType(partner.partner_type || '');
+    setIntroducedByName(partner.introduced_by_name || '');
+    setLostReason(partner.lost_reason || '');
     setSaved(false);
-  }, [deal.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [partner.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save with debounce
   const debouncedSave = useDebouncedCallback(
@@ -605,11 +613,13 @@ function DealDetailPanel({
       priority,
       contact_name: contactName || undefined,
       description: description || undefined,
-      expected_close_date: expectedCloseDate || undefined,
+      commission_pct: parseFloat(commissionPct) || 0,
+      partner_type: partnerType || undefined,
+      introduced_by_name: introducedByName || undefined,
       lost_reason: lostReason || undefined,
       ...overrides,
     });
-  }, [title, value, stage, priority, contactName, description, expectedCloseDate, lostReason, debouncedSave]);
+  }, [title, value, stage, priority, contactName, description, commissionPct, partnerType, introducedByName, lostReason, debouncedSave]);
 
   // Keyboard: Escape to close, Delete to delete
   useEffect(() => {
@@ -646,7 +656,7 @@ function DealDetailPanel({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
           <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-gray-900">Deal Details</h2>
+            <h2 className="text-base font-semibold text-gray-900">Partner Details</h2>
             {saved && (
               <span className="text-xs text-green-600 flex items-center gap-1 animate-fade-in">
                 <Check className="w-3 h-3" /> Saved
@@ -709,6 +719,36 @@ function DealDetailPanel({
             </select>
           </div>
 
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Commission %</label>
+              <input
+                type="number"
+                value={commissionPct}
+                onChange={(e) => { setCommissionPct(e.target.value); triggerSave({ commission_pct: parseFloat(e.target.value) || 0 }); }}
+                className="input w-full"
+                min="0"
+                max="100"
+                step="1"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Partner Type</label>
+              <select
+                value={partnerType}
+                onChange={(e) => { setPartnerType(e.target.value); triggerSave({ partner_type: e.target.value || undefined }); }}
+                className="input w-full"
+              >
+                <option value="">Select type...</option>
+                <option value="msp">MSP</option>
+                <option value="referral">Referral</option>
+                <option value="agency">Agency</option>
+                <option value="affiliate">Affiliate</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Contact Name</label>
             <input
@@ -721,12 +761,13 @@ function DealDetailPanel({
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Expected Close Date</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Introduced By</label>
             <input
-              type="date"
-              value={expectedCloseDate}
-              onChange={(e) => { setExpectedCloseDate(e.target.value); triggerSave({ expected_close_date: e.target.value || undefined }); }}
+              type="text"
+              value={introducedByName}
+              onChange={(e) => { setIntroducedByName(e.target.value); triggerSave({ introduced_by_name: e.target.value || undefined }); }}
               className="input w-full"
+              placeholder="Who introduced this partner?"
             />
           </div>
 
@@ -740,22 +781,22 @@ function DealDetailPanel({
             />
           </div>
 
-          {stage === 'Lost' && (
+          {stage === 'Inactive' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Lost Reason</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Inactive Reason</label>
               <textarea
                 value={lostReason}
                 onChange={(e) => { setLostReason(e.target.value); triggerSave({ lost_reason: e.target.value || undefined }); }}
                 className="input w-full"
                 rows={2}
-                placeholder="Why was this deal lost?"
+                placeholder="Why is this partner inactive?"
               />
             </div>
           )}
 
           <div className="pt-2 text-xs text-gray-400 space-y-1">
-            <p>Created: {formatDate(deal.created_at)}</p>
-            <p>Updated: {formatDate(deal.updated_at)}</p>
+            <p>Created: {formatDate(partner.created_at)}</p>
+            <p>Updated: {formatDate(partner.updated_at)}</p>
           </div>
         </div>
 
@@ -776,8 +817,8 @@ function DealDetailPanel({
         isOpen={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={onDelete}
-        title="Delete Deal"
-        message={`Are you sure you want to delete "${deal.title}"? This action cannot be undone.`}
+        title="Delete Partner"
+        message={`Are you sure you want to delete "${partner.title}"? This action cannot be undone.`}
         confirmLabel="Delete"
         isDestructive
         isLoading={isDeleting}
@@ -787,10 +828,10 @@ function DealDetailPanel({
 }
 
 // =============================================================================
-// Add Deal Modal (kept for header-level "Add Deal" button)
+// Add Partner Modal (kept for header-level "Add Partner" button)
 // =============================================================================
 
-function AddDealModal({
+function AddPartnerModal({
   isOpen,
   onClose,
   stages,
@@ -801,7 +842,7 @@ function AddDealModal({
   isOpen: boolean;
   onClose: () => void;
   stages: string[];
-  onSubmit: (data: CreateDealInput) => void;
+  onSubmit: (data: CreatePartnerInput) => void;
   isSubmitting: boolean;
   contacts: Array<{ id: string; name: string }>;
 }) {
@@ -811,7 +852,9 @@ function AddDealModal({
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
   const [contactId, setContactId] = useState('');
   const [contactSearch, setContactSearch] = useState('');
-  const [expectedCloseDate, setExpectedCloseDate] = useState('');
+  const [commissionPct, setCommissionPct] = useState('');
+  const [partnerType, setPartnerType] = useState('');
+  const [introducedByName, setIntroducedByName] = useState('');
   const [description, setDescription] = useState('');
   const [showContactDropdown, setShowContactDropdown] = useState(false);
 
@@ -831,7 +874,9 @@ function AddDealModal({
       priority,
       contact_id: contactId || undefined,
       contact_name: selectedContact?.name || undefined,
-      expected_close_date: expectedCloseDate || undefined,
+      commission_pct: parseFloat(commissionPct) || 0,
+      partner_type: partnerType || undefined,
+      introduced_by_name: introducedByName || undefined,
       description: description || undefined,
     });
     // Reset form
@@ -841,12 +886,14 @@ function AddDealModal({
     setPriority('medium');
     setContactId('');
     setContactSearch('');
-    setExpectedCloseDate('');
+    setCommissionPct('');
+    setPartnerType('');
+    setIntroducedByName('');
     setDescription('');
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Add Deal" size="lg">
+    <Modal isOpen={isOpen} onClose={onClose} title="Add Partner" size="lg">
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -857,7 +904,7 @@ function AddDealModal({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             className="input w-full"
-            placeholder="e.g., Enterprise deal with Acme Corp"
+            placeholder="e.g., Acme Marketing Agency"
             autoFocus
           />
         </div>
@@ -903,12 +950,44 @@ function AddDealModal({
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Expected Close</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Commission %</label>
             <input
-              type="date"
-              value={expectedCloseDate}
-              onChange={(e) => setExpectedCloseDate(e.target.value)}
+              type="number"
+              value={commissionPct}
+              onChange={(e) => setCommissionPct(e.target.value)}
               className="input w-full"
+              placeholder="0"
+              min="0"
+              max="100"
+              step="1"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Partner Type</label>
+            <select
+              value={partnerType}
+              onChange={(e) => setPartnerType(e.target.value)}
+              className="input w-full"
+            >
+              <option value="">Select type...</option>
+              <option value="msp">MSP</option>
+              <option value="referral">Referral</option>
+              <option value="agency">Agency</option>
+              <option value="affiliate">Affiliate</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Introduced By</label>
+            <input
+              type="text"
+              value={introducedByName}
+              onChange={(e) => setIntroducedByName(e.target.value)}
+              className="input w-full"
+              placeholder="Name"
             />
           </div>
         </div>
@@ -967,7 +1046,7 @@ function AddDealModal({
             onChange={(e) => setDescription(e.target.value)}
             className="input w-full"
             rows={2}
-            placeholder="Optional notes about this deal"
+            placeholder="Optional notes about this partner"
           />
         </div>
       </div>
@@ -979,7 +1058,7 @@ function AddDealModal({
           className="btn btn-primary"
           disabled={isSubmitting || !title.trim()}
         >
-          {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Deal'}
+          {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Partner'}
         </button>
       </ModalFooter>
     </Modal>
@@ -996,14 +1075,14 @@ function PipelineSettingsModal({
   currentStages,
   onSave,
   isSaving,
-  dealsByStage,
+  partnersByStage,
 }: {
   isOpen: boolean;
   onClose: () => void;
   currentStages: string[];
   onSave: (stages: string[]) => void;
   isSaving: boolean;
-  dealsByStage: Record<string, number>;
+  partnersByStage: Record<string, number>;
 }) {
   const [stages, setStages] = useState<string[]>(currentStages);
   const [newStage, setNewStage] = useState('');
@@ -1011,12 +1090,12 @@ function PipelineSettingsModal({
   const addStage = () => {
     const name = newStage.trim();
     if (name && !stages.includes(name)) {
-      // Insert before terminal stages (Won/Lost)
-      const wonIdx = stages.indexOf('Won');
-      const lostIdx = stages.indexOf('Lost');
+      // Insert before terminal stages (Active/Inactive)
+      const activeIdx = stages.indexOf('Active');
+      const inactiveIdx = stages.indexOf('Inactive');
       const insertIdx = Math.min(
-        wonIdx >= 0 ? wonIdx : stages.length,
-        lostIdx >= 0 ? lostIdx : stages.length
+        activeIdx >= 0 ? activeIdx : stages.length,
+        inactiveIdx >= 0 ? inactiveIdx : stages.length
       );
       const updated = [...stages];
       updated.splice(insertIdx, 0, name);
@@ -1027,7 +1106,7 @@ function PipelineSettingsModal({
 
   const removeStage = (idx: number) => {
     const stageName = stages[idx];
-    if (dealsByStage[stageName] && dealsByStage[stageName] > 0) return;
+    if (partnersByStage[stageName] && partnersByStage[stageName] > 0) return;
     if (stages.length <= 2) return;
     setStages(stages.filter((_, i) => i !== idx));
   };
@@ -1063,15 +1142,15 @@ function PipelineSettingsModal({
             </div>
             <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
               <span className="text-sm font-medium text-gray-700 flex-1">{stage}</span>
-              {dealsByStage[stage] > 0 && (
-                <span className="text-xs text-gray-400">{dealsByStage[stage]} deals</span>
+              {partnersByStage[stage] > 0 && (
+                <span className="text-xs text-gray-400">{partnersByStage[stage]} partners</span>
               )}
             </div>
             <button
               onClick={() => removeStage(idx)}
-              disabled={dealsByStage[stage] > 0 || stages.length <= 2}
+              disabled={partnersByStage[stage] > 0 || stages.length <= 2}
               className="p-1 text-gray-300 hover:text-red-500 disabled:opacity-30 disabled:hover:text-gray-300"
-              title={dealsByStage[stage] > 0 ? 'Cannot remove stage with deals' : 'Remove stage'}
+              title={partnersByStage[stage] > 0 ? 'Cannot remove stage with partners' : 'Remove stage'}
             >
               <X className="w-4 h-4" />
             </button>
@@ -1112,14 +1191,14 @@ function PipelineSettingsModal({
 // =============================================================================
 
 function TableView({
-  deals,
+  partners,
   onRowClick,
   sortField,
   sortDir,
   onSort,
 }: {
-  deals: Deal[];
-  onRowClick: (deal: Deal) => void;
+  partners: Partner[];
+  onRowClick: (partner: Partner) => void;
   sortField: string;
   sortDir: 'asc' | 'desc';
   onSort: (field: string) => void;
@@ -1127,10 +1206,11 @@ function TableView({
   const columns = [
     { key: 'title', label: 'Title' },
     { key: 'value', label: 'Value' },
+    { key: 'commission_pct', label: 'Commission %' },
     { key: 'stage', label: 'Stage' },
     { key: 'contact_name', label: 'Contact' },
+    { key: 'partner_type', label: 'Partner Type' },
     { key: 'priority', label: 'Priority' },
-    { key: 'expected_close_date', label: 'Expected Close' },
     { key: 'created_at', label: 'Created' },
   ];
 
@@ -1157,39 +1237,40 @@ function TableView({
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {deals.map((deal) => (
+            {partners.map((partner) => (
               <tr
-                key={deal.id}
+                key={partner.id}
                 className="hover:bg-gray-50 cursor-pointer"
-                onClick={() => onRowClick(deal)}
+                onClick={() => onRowClick(partner)}
               >
-                <td className="px-4 py-3 text-sm font-medium text-gray-900">{deal.title}</td>
+                <td className="px-4 py-3 text-sm font-medium text-gray-900">{partner.title}</td>
                 <td className="px-4 py-3 text-sm text-green-600 font-medium">
-                  {deal.value > 0 ? formatCurrency(deal.value) : '-'}
+                  {partner.value > 0 ? formatCurrency(partner.value) : '-'}
+                </td>
+                <td className="px-4 py-3 text-sm text-gray-500">
+                  {partner.commission_pct != null && partner.commission_pct > 0 ? formatPercent(partner.commission_pct) : '-'}
                 </td>
                 <td className="px-4 py-3">
                   <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700 font-medium">
-                    {deal.stage}
+                    {partner.stage}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-500">{deal.contact_name || '-'}</td>
+                <td className="px-4 py-3 text-sm text-gray-500">{partner.contact_name || '-'}</td>
+                <td className="px-4 py-3 text-sm text-gray-500">{partner.partner_type || '-'}</td>
                 <td className="px-4 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded font-medium ${priorityColors[deal.priority]}`}>
-                    {deal.priority}
+                  <span className={`text-xs px-2 py-0.5 rounded font-medium ${priorityColors[partner.priority]}`}>
+                    {partner.priority}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-sm text-gray-500">
-                  {formatDate(deal.expected_close_date) || '-'}
-                </td>
-                <td className="px-4 py-3 text-sm text-gray-500">
-                  {formatDate(deal.created_at)}
+                  {formatDate(partner.created_at)}
                 </td>
               </tr>
             ))}
-            {deals.length === 0 && (
+            {partners.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-gray-400">
-                  No deals yet. Create your first deal to get started.
+                <td colSpan={8} className="px-4 py-12 text-center text-gray-400">
+                  No partners yet. Add your first partner to get started.
                 </td>
               </tr>
             )}
@@ -1204,79 +1285,79 @@ function TableView({
 // Main Page
 // =============================================================================
 
-export default function DealPipeline() {
+export default function PartnerPipeline() {
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
   const wsId = workspaceId || '';
-  const { data: pipelineData, isLoading } = useDeals(wsId);
+  const { data: pipelineData, isLoading } = usePartners(wsId);
   const { data: contactsData } = useContacts(wsId, { limit: 100 });
-  const createDeal = useCreateDeal(wsId);
-  const updateDeal = useUpdateDeal(wsId);
-  const deleteDeal = useDeleteDeal(wsId);
-  const moveDeal = useMoveDeal(wsId);
-  const updatePipeline = useUpdatePipeline(wsId);
+  const createPartner = useCreatePartner(wsId);
+  const updatePartner = useUpdatePartner(wsId);
+  const deletePartner = useDeletePartner(wsId);
+  const movePartner = useMovePartner(wsId);
+  const updatePartnerPipeline = useUpdatePartnerPipeline(wsId);
   const toast = useToast();
 
   const [view, setView] = useState<'kanban' | 'table'>('kanban');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isPipelineSettingsOpen, setIsPipelineSettingsOpen] = useState(false);
-  const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
+  const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortField, setSortField] = useState('created_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const stages = pipelineData?.stages || [];
-  const deals = pipelineData?.deals || [];
+  const partners = pipelineData?.partners || [];
   const summary = pipelineData?.summary;
 
-  // Group deals by stage
-  const dealsByStage = useMemo(() => {
-    const grouped: Record<string, Deal[]> = {};
+  // Group partners by stage
+  const partnersByStage = useMemo(() => {
+    const grouped: Record<string, Partner[]> = {};
     for (const stage of stages) {
       grouped[stage] = [];
     }
-    for (const deal of deals) {
-      if (!searchQuery || deal.title.toLowerCase().includes(searchQuery.toLowerCase())) {
-        if (grouped[deal.stage]) {
-          grouped[deal.stage].push(deal);
+    for (const partner of partners) {
+      if (!searchQuery || partner.title.toLowerCase().includes(searchQuery.toLowerCase())) {
+        if (grouped[partner.stage]) {
+          grouped[partner.stage].push(partner);
         }
       }
     }
     return grouped;
-  }, [stages, deals, searchQuery]);
+  }, [stages, partners, searchQuery]);
 
-  // Deals count by stage for pipeline settings
-  const dealCountByStage = useMemo(() => {
+  // Partners count by stage for pipeline settings
+  const partnerCountByStage = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const deal of deals) {
-      counts[deal.stage] = (counts[deal.stage] || 0) + 1;
+    for (const partner of partners) {
+      counts[partner.stage] = (counts[partner.stage] || 0) + 1;
     }
     return counts;
-  }, [deals]);
+  }, [partners]);
 
-  // Filtered stage summary: counts/values from filtered deals, not raw API summary
+  // Filtered stage summary: counts/values from filtered partners, not raw API summary
   const filteredStageSummary = useMemo(() => {
     const result: Record<string, { count: number; value: number }> = {};
     for (const stage of stages) {
-      const stageDeals = dealsByStage[stage] || [];
+      const stagePartners = partnersByStage[stage] || [];
       result[stage] = {
-        count: stageDeals.length,
-        value: stageDeals.reduce((sum, d) => sum + d.value, 0),
+        count: stagePartners.length,
+        value: stagePartners.reduce((sum, p) => sum + p.value, 0),
       };
     }
     return result;
-  }, [stages, dealsByStage]);
+  }, [stages, partnersByStage]);
 
-  // Filtered + sorted deals for table view
-  const filteredDeals = useMemo(() => {
-    let result = deals;
+  // Filtered + sorted partners for table view
+  const filteredPartners = useMemo(() => {
+    let result = partners;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       result = result.filter(
-        (d) =>
-          d.title.toLowerCase().includes(q) ||
-          d.contact_name?.toLowerCase().includes(q) ||
-          d.stage.toLowerCase().includes(q)
+        (p) =>
+          p.title.toLowerCase().includes(q) ||
+          p.contact_name?.toLowerCase().includes(q) ||
+          p.stage.toLowerCase().includes(q)
       );
     }
     result = [...result].sort((a, b) => {
@@ -1289,7 +1370,7 @@ export default function DealPipeline() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return result;
-  }, [deals, searchQuery, sortField, sortDir]);
+  }, [partners, searchQuery, sortField, sortDir]);
 
   // Contacts formatted for dropdown
   const contactOptions = useMemo(() => {
@@ -1321,103 +1402,103 @@ export default function DealPipeline() {
 
       if (!over) return;
 
-      const dealId = active.id as string;
-      const deal = deals.find((d) => d.id === dealId);
-      if (!deal) return;
+      const partnerId = active.id as string;
+      const partner = partners.find((p) => p.id === partnerId);
+      if (!partner) return;
 
       // Determine target stage
       let targetStage: string;
-      const overDeal = deals.find((d) => d.id === over.id);
-      if (overDeal) {
-        targetStage = overDeal.stage;
+      const overPartner = partners.find((p) => p.id === over.id);
+      if (overPartner) {
+        targetStage = overPartner.stage;
       } else {
         // Dropped on a stage column
         targetStage = over.id as string;
       }
 
       // Only move if stage changed
-      if (deal.stage !== targetStage) {
-        moveDeal.mutate(
-          { dealId, stage: targetStage, position: 0 },
+      if (partner.stage !== targetStage) {
+        movePartner.mutate(
+          { partnerId, stage: targetStage, position: 0 },
           {
             onError: () => {
-              toast.error('Failed to move deal');
+              toast.error('Failed to move partner');
             },
           }
         );
       }
     },
-    [deals, moveDeal, toast]
+    [partners, movePartner, toast]
   );
 
-  const activeDeal = activeDragId ? deals.find((d) => d.id === activeDragId) : null;
+  const activePartner = activeDragId ? partners.find((p) => p.id === activeDragId) : null;
 
   // Handlers
-  const handleCreateDeal = (data: CreateDealInput) => {
-    createDeal.mutate(data, {
+  const handleCreatePartner = (data: CreatePartnerInput) => {
+    createPartner.mutate(data, {
       onSuccess: () => {
         setIsAddModalOpen(false);
-        toast.success('Deal created');
+        toast.success('Partner created');
       },
       onError: () => {
-        toast.error('Failed to create deal');
+        toast.error('Failed to create partner');
       },
     });
   };
 
-  const handleInlineAddDeal = (data: CreateDealInput) => {
-    createDeal.mutate(data, {
+  const handleInlineAddPartner = (data: CreatePartnerInput) => {
+    createPartner.mutate(data, {
       onSuccess: () => {
-        toast.success('Deal created');
+        toast.success('Partner created');
       },
       onError: () => {
-        toast.error('Failed to create deal');
+        toast.error('Failed to create partner');
       },
     });
   };
 
-  const handleUpdateDeal = (data: Record<string, unknown>) => {
-    if (!selectedDeal) return;
-    updateDeal.mutate(
-      { dealId: selectedDeal.id, ...data } as any,
+  const handleUpdatePartner = (data: Record<string, unknown>) => {
+    if (!selectedPartner) return;
+    updatePartner.mutate(
+      { partnerId: selectedPartner.id, ...data } as any,
       {
-        onSuccess: (updatedDeal) => {
+        onSuccess: (updatedPartner) => {
           // Keep panel open with updated data
-          if (updatedDeal) setSelectedDeal(updatedDeal as Deal);
+          if (updatedPartner) setSelectedPartner(updatedPartner as Partner);
         },
         onError: () => {
-          toast.error('Failed to update deal');
+          toast.error('Failed to update partner');
         },
       }
     );
   };
 
-  const handleInlineUpdate = useCallback((dealId: string, data: Record<string, unknown>) => {
-    updateDeal.mutate(
-      { dealId, ...data } as any,
+  const handleInlineUpdate = useCallback((partnerId: string, data: Record<string, unknown>) => {
+    updatePartner.mutate(
+      { partnerId, ...data } as any,
       {
         onError: () => {
-          toast.error('Failed to update deal');
+          toast.error('Failed to update partner');
         },
       }
     );
-  }, [updateDeal, toast]);
+  }, [updatePartner, toast]);
 
-  const handleDeleteDeal = () => {
-    if (!selectedDeal) return;
-    deleteDeal.mutate(selectedDeal.id, {
+  const handleDeletePartner = () => {
+    if (!selectedPartner) return;
+    deletePartner.mutate(selectedPartner.id, {
       onSuccess: () => {
-        setSelectedDeal(null);
-        toast.success('Deal deleted');
+        setSelectedPartner(null);
+        toast.success('Partner deleted');
       },
       onError: () => {
-        toast.error('Failed to delete deal');
+        toast.error('Failed to delete partner');
       },
     });
   };
 
   const handleSavePipeline = (newStages: string[]) => {
-    updatePipeline.mutate(newStages, {
+    updatePartnerPipeline.mutate(newStages, {
       onSuccess: () => {
         setIsPipelineSettingsOpen(false);
         toast.success('Pipeline updated');
@@ -1445,14 +1526,14 @@ export default function DealPipeline() {
       const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT');
       if (isInput) return;
 
-      if (e.key === 'n' && !selectedDeal && !isAddModalOpen) {
+      if (e.key === 'n' && !selectedPartner && !isAddModalOpen) {
         e.preventDefault();
         setIsAddModalOpen(true);
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [selectedDeal, isAddModalOpen]);
+  }, [selectedPartner, isAddModalOpen]);
 
   if (isLoadingWorkspace || isLoading) {
     return (
@@ -1462,19 +1543,27 @@ export default function DealPipeline() {
     );
   }
 
+  // Compute average commission for summary
+  const avgCommission = useMemo(() => {
+    const partnersWithCommission = partners.filter((p) => p.commission_pct != null && p.commission_pct > 0);
+    if (partnersWithCommission.length === 0) return 0;
+    const total = partnersWithCommission.reduce((sum, p) => sum + (p.commission_pct || 0), 0);
+    return Math.round(total / partnersWithCommission.length);
+  }, [partners]);
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* Main content area */}
-      <div className={`flex-1 flex flex-col min-w-0 overflow-hidden ${selectedDeal ? 'pr-0' : ''}`}>
+      <div className={`flex-1 flex flex-col min-w-0 overflow-hidden ${selectedPartner ? 'pr-0' : ''}`}>
         {/* Header + Summary + Toolbar (non-shrinking) */}
         <div className="flex-shrink-0 space-y-6 p-0">
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Deals</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Partners</h1>
             <p className="text-sm text-gray-500 mt-1">
-              Manage your sales pipeline and track deals
+              Track your referral network and partner relationships
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1490,7 +1579,7 @@ export default function DealPipeline() {
               className="btn btn-primary"
             >
               <Plus className="w-4 h-4 mr-1" />
-              Add Deal
+              Add Partner
             </button>
           </div>
         </div>
@@ -1499,23 +1588,23 @@ export default function DealPipeline() {
         {summary && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
-              <p className="text-xs text-gray-500 uppercase font-medium">Total Deals</p>
-              <p className="text-2xl font-bold text-gray-900 mt-1">{summary.total_deals}</p>
+              <p className="text-xs text-gray-500 uppercase font-medium">Total Partners</p>
+              <p className="text-2xl font-bold text-gray-900 mt-1">{summary.total_partners}</p>
             </div>
             <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
               <p className="text-xs text-gray-500 uppercase font-medium">Pipeline Value</p>
               <p className="text-2xl font-bold text-green-600 mt-1">{formatCurrency(summary.total_value)}</p>
             </div>
             <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
-              <p className="text-xs text-gray-500 uppercase font-medium">Won</p>
+              <p className="text-xs text-gray-500 uppercase font-medium">Active</p>
               <p className="text-2xl font-bold text-green-600 mt-1">
-                {formatCurrency(summary.by_stage?.['Won']?.value || 0)}
+                {summary.by_stage?.['Active']?.count || 0}
               </p>
             </div>
             <div className="bg-white rounded-lg border border-gray-200 px-4 py-3">
-              <p className="text-xs text-gray-500 uppercase font-medium">Active Deals</p>
+              <p className="text-xs text-gray-500 uppercase font-medium">Total Commission</p>
               <p className="text-2xl font-bold text-gray-900 mt-1">
-                {summary.total_deals - (summary.by_stage?.['Won']?.count || 0) - (summary.by_stage?.['Lost']?.count || 0)}
+                {formatPercent(avgCommission)}
               </p>
             </div>
           </div>
@@ -1530,7 +1619,7 @@ export default function DealPipeline() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="input w-full pl-9"
-              placeholder="Search deals..."
+              placeholder="Search partners..."
             />
           </div>
           <div className="flex items-center bg-white border border-gray-200 rounded-lg p-0.5">
@@ -1566,26 +1655,26 @@ export default function DealPipeline() {
                 <StageColumn
                   key={stage}
                   stage={stage}
-                  deals={dealsByStage[stage] || []}
+                  partners={partnersByStage[stage] || []}
                   summary={filteredStageSummary[stage] || { count: 0, value: 0 }}
-                  onCardClick={setSelectedDeal}
+                  onCardClick={setSelectedPartner}
                   onInlineUpdate={handleInlineUpdate}
-                  onAddDeal={handleInlineAddDeal}
-                  isAddingDeal={createDeal.isPending}
-                  isTerminal={stage === 'Won' ? 'won' : stage === 'Lost' ? 'lost' : null}
+                  onAddPartner={handleInlineAddPartner}
+                  isAddingPartner={createPartner.isPending}
+                  isTerminal={stage === 'Active' ? 'active' : stage === 'Inactive' ? 'inactive' : null}
                   isDragActive={!!activeDragId}
                 />
               ))}
             </div>
 
             <DragOverlay>
-              {activeDeal ? <DealCardOverlay deal={activeDeal} /> : null}
+              {activePartner ? <PartnerCardOverlay partner={activePartner} /> : null}
             </DragOverlay>
           </DndContext>
         ) : (
           <TableView
-            deals={filteredDeals}
-            onRowClick={setSelectedDeal}
+            partners={filteredPartners}
+            onRowClick={setSelectedPartner}
             sortField={sortField}
             sortDir={sortDir}
             onSort={handleSort}
@@ -1593,20 +1682,20 @@ export default function DealPipeline() {
         )}
 
         {/* Empty state — only when genuinely empty */}
-        {!isLoading && deals.length === 0 && view === 'kanban' && (
+        {!isLoading && partners.length === 0 && view === 'kanban' && (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center py-16">
-              <DollarSign className="w-12 h-12 text-gray-300 mx-auto" />
-              <h3 className="mt-4 text-lg font-medium text-gray-900">No deals yet</h3>
+              <Users className="w-12 h-12 text-gray-300 mx-auto" />
+              <h3 className="mt-4 text-lg font-medium text-gray-900">No partners yet</h3>
               <p className="mt-2 text-sm text-gray-500">
-                Create your first deal to start tracking your sales pipeline.
+                Add your first partner to start tracking your referral network.
               </p>
               <button
                 onClick={() => setIsAddModalOpen(true)}
                 className="btn btn-primary mt-4"
               >
                 <Plus className="w-4 h-4 mr-1" />
-                Add Deal
+                Add Partner
               </button>
             </div>
           </div>
@@ -1614,24 +1703,24 @@ export default function DealPipeline() {
       </div>
 
       {/* Side panel — no backdrop, board stays interactive */}
-      {selectedDeal && (
-        <DealDetailPanel
-          deal={selectedDeal}
+      {selectedPartner && (
+        <PartnerDetailPanel
+          partner={selectedPartner}
           stages={stages}
-          onClose={() => setSelectedDeal(null)}
-          onSave={handleUpdateDeal}
-          onDelete={handleDeleteDeal}
-          isDeleting={deleteDeal.isPending}
+          onClose={() => setSelectedPartner(null)}
+          onSave={handleUpdatePartner}
+          onDelete={handleDeletePartner}
+          isDeleting={deletePartner.isPending}
         />
       )}
 
       {/* Modals */}
-      <AddDealModal
+      <AddPartnerModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         stages={stages}
-        onSubmit={handleCreateDeal}
-        isSubmitting={createDeal.isPending}
+        onSubmit={handleCreatePartner}
+        isSubmitting={createPartner.isPending}
         contacts={contactOptions}
       />
 
@@ -1641,8 +1730,8 @@ export default function DealPipeline() {
           onClose={() => setIsPipelineSettingsOpen(false)}
           currentStages={stages}
           onSave={handleSavePipeline}
-          isSaving={updatePipeline.isPending}
-          dealsByStage={dealCountByStage}
+          isSaving={updatePartnerPipeline.isPending}
+          partnersByStage={partnerCountByStage}
         />
       )}
     </div>

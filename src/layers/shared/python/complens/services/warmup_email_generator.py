@@ -64,7 +64,7 @@ class WarmupEmailGenerator:
         Enriches the prompt with real business data when available:
         - KB documents (product info, FAQs, features)
         - Published landing page titles/URLs
-        - Deal pipeline summary (total value, recent wins)
+        - Partner pipeline summary (total value, active partners)
 
         Args:
             workspace_id: Workspace ID for business context.
@@ -91,10 +91,10 @@ class WarmupEmailGenerator:
         except Exception:
             logger.debug("Could not load business context, using generic", workspace_id=workspace_id)
 
-        # Gather enrichment context from KB, pages, and deals
+        # Gather enrichment context from KB, pages, and partners
         kb_context = self._get_kb_context(workspace_id, content_type, site_id=site_id)
         page_context = self._get_page_context(workspace_id, site_id=site_id)
-        deal_context = self._get_deal_context(workspace_id)
+        deal_context = self._get_partner_context(workspace_id)
 
         enrichment_parts: list[str] = []
         if kb_context:
@@ -277,38 +277,38 @@ Return JSON with exactly these fields:
             return ""
 
     @staticmethod
-    def _get_deal_context(workspace_id: str) -> str:
+    def _get_partner_context(workspace_id: str) -> str:
         """Get pipeline summary for business milestone type emails.
 
         Args:
             workspace_id: Workspace ID.
 
         Returns:
-            Formatted deal summary string, or empty string if none.
+            Formatted partner summary string, or empty string if none.
         """
         try:
-            from complens.repositories.deal import DealRepository
+            from complens.repositories.partner import PartnerRepository
 
-            deal_repo = DealRepository()
-            deals, _ = deal_repo.list_by_workspace(workspace_id, limit=200)
+            partner_repo = PartnerRepository()
+            partners, _ = partner_repo.list_by_workspace(workspace_id, limit=200)
 
-            if not deals:
+            if not partners:
                 return ""
 
-            total_value = sum(d.value or 0 for d in deals)
-            active_deals = [d for d in deals if d.stage not in ("Won", "Lost")]
-            won_deals = [d for d in deals if d.stage == "Won"]
+            total_value = sum(p.value or 0 for p in partners)
+            active_partners = [p for p in partners if p.stage not in ("Active", "Inactive")]
+            activated_partners = [p for p in partners if p.stage == "Active"]
 
             parts = [f"Total pipeline value: ${total_value:,.0f}"]
-            parts.append(f"Active deals: {len(active_deals)}")
-            if won_deals:
-                won_value = sum(d.value or 0 for d in won_deals)
-                parts.append(f"Won deals: {len(won_deals)} (${won_value:,.0f})")
+            parts.append(f"Partners in pipeline: {len(active_partners)}")
+            if activated_partners:
+                active_value = sum(p.value or 0 for p in activated_partners)
+                parts.append(f"Active partners: {len(activated_partners)} (${active_value:,.0f})")
 
             return "\n".join(parts)
 
         except Exception:
-            logger.debug("Could not load deal context for warmup", workspace_id=workspace_id)
+            logger.debug("Could not load partner context for warmup", workspace_id=workspace_id)
             return ""
 
     @staticmethod

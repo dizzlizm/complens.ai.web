@@ -87,10 +87,10 @@ def process_stream_record(record: dict) -> list[dict]:
         tag_events = _create_tag_events(event_name, new_data, old_data)
         events.extend(tag_events)
 
-    # Check for deal changes
-    if pk.startswith("WS#") and sk.startswith("DEAL#"):
-        deal_events = _create_deal_events(event_name, new_data, old_data)
-        events.extend(deal_events)
+    # Check for partner changes
+    if pk.startswith("WS#") and sk.startswith("PARTNER#"):
+        partner_events = _create_partner_events(event_name, new_data, old_data)
+        events.extend(partner_events)
 
     return events
 
@@ -275,48 +275,51 @@ def _route_tag_events_directly(
         )
 
 
-def _create_deal_events(event_name: str, new_data: dict, old_data: dict) -> list[dict]:
-    """Create EventBridge events for deal changes.
+def _create_partner_events(event_name: str, new_data: dict, old_data: dict) -> list[dict]:
+    """Create EventBridge events for partner changes.
 
     Args:
         event_name: INSERT, MODIFY, REMOVE.
-        new_data: New deal data.
-        old_data: Old deal data.
+        new_data: New partner data.
+        old_data: Old partner data.
 
     Returns:
         List of EventBridge events (empty if routed directly to sharded queue).
     """
     workspace_id = new_data.get("workspace_id")
-    deal_id = new_data.get("id")
+    partner_id = new_data.get("id")
 
-    if not workspace_id or not deal_id:
+    if not workspace_id or not partner_id:
         return []
 
-    deal_payload = {
-        "deal_id": deal_id,
+    partner_payload = {
+        "partner_id": partner_id,
         "title": new_data.get("title"),
         "value": new_data.get("value"),
+        "commission_pct": new_data.get("commission_pct"),
+        "partner_type": new_data.get("partner_type"),
         "stage": new_data.get("stage"),
         "priority": new_data.get("priority"),
         "contact_id": new_data.get("contact_id"),
         "contact_name": new_data.get("contact_name"),
-        "expected_close_date": new_data.get("expected_close_date"),
-        "lost_reason": new_data.get("lost_reason", ""),
+        "introduced_by": new_data.get("introduced_by"),
+        "introduced_by_name": new_data.get("introduced_by_name"),
+        "inactive_reason": new_data.get("inactive_reason", ""),
     }
 
     use_direct_routing = is_flag_enabled(FeatureFlag.USE_SHARDED_QUEUES, workspace_id)
 
     if event_name == "INSERT":
-        logger.info("Deal created event", workspace_id=workspace_id, deal_id=deal_id)
+        logger.info("Partner added event", workspace_id=workspace_id, partner_id=partner_id)
         if use_direct_routing:
-            _route_deal_event_directly(
+            _route_partner_event_directly(
                 workspace_id=workspace_id,
-                trigger_type="trigger_deal_created",
-                deal_payload=deal_payload,
+                trigger_type="trigger_partner_added",
+                partner_payload=partner_payload,
                 contact_id=new_data.get("contact_id"),
             )
             return []
-        return [_make_deal_eb_event(workspace_id, "deal.created", "trigger_deal_created", deal_payload)]
+        return [_make_partner_eb_event(workspace_id, "partner.added", "trigger_partner_added", partner_payload)]
 
     if event_name == "MODIFY":
         events = []
@@ -324,56 +327,56 @@ def _create_deal_events(event_name: str, new_data: dict, old_data: dict) -> list
         old_stage = old_data.get("stage", "")
 
         if new_stage != old_stage:
-            deal_payload["from_stage"] = old_stage
-            deal_payload["to_stage"] = new_stage
+            partner_payload["from_stage"] = old_stage
+            partner_payload["to_stage"] = new_stage
 
             logger.info(
-                "Deal stage changed event",
+                "Partner stage changed event",
                 workspace_id=workspace_id,
-                deal_id=deal_id,
+                partner_id=partner_id,
                 from_stage=old_stage,
                 to_stage=new_stage,
             )
 
             if use_direct_routing:
-                _route_deal_event_directly(
+                _route_partner_event_directly(
                     workspace_id=workspace_id,
-                    trigger_type="trigger_deal_stage_changed",
-                    deal_payload=deal_payload,
+                    trigger_type="trigger_partner_stage_changed",
+                    partner_payload=partner_payload,
                     contact_id=new_data.get("contact_id"),
                 )
             else:
-                events.append(_make_deal_eb_event(
-                    workspace_id, "deal.stage_changed", "trigger_deal_stage_changed", deal_payload
+                events.append(_make_partner_eb_event(
+                    workspace_id, "partner.stage_changed", "trigger_partner_stage_changed", partner_payload
                 ))
 
-            # Check for won/lost transitions
-            if new_stage == "Won":
-                logger.info("Deal won event", workspace_id=workspace_id, deal_id=deal_id)
+            # Check for activated/deactivated transitions
+            if new_stage == "Active":
+                logger.info("Partner activated event", workspace_id=workspace_id, partner_id=partner_id)
                 if use_direct_routing:
-                    _route_deal_event_directly(
+                    _route_partner_event_directly(
                         workspace_id=workspace_id,
-                        trigger_type="trigger_deal_won",
-                        deal_payload=deal_payload,
+                        trigger_type="trigger_partner_activated",
+                        partner_payload=partner_payload,
                         contact_id=new_data.get("contact_id"),
                     )
                 else:
-                    events.append(_make_deal_eb_event(
-                        workspace_id, "deal.won", "trigger_deal_won", deal_payload
+                    events.append(_make_partner_eb_event(
+                        workspace_id, "partner.activated", "trigger_partner_activated", partner_payload
                     ))
 
-            elif new_stage == "Lost":
-                logger.info("Deal lost event", workspace_id=workspace_id, deal_id=deal_id)
+            elif new_stage == "Inactive":
+                logger.info("Partner deactivated event", workspace_id=workspace_id, partner_id=partner_id)
                 if use_direct_routing:
-                    _route_deal_event_directly(
+                    _route_partner_event_directly(
                         workspace_id=workspace_id,
-                        trigger_type="trigger_deal_lost",
-                        deal_payload=deal_payload,
+                        trigger_type="trigger_partner_deactivated",
+                        partner_payload=partner_payload,
                         contact_id=new_data.get("contact_id"),
                     )
                 else:
-                    events.append(_make_deal_eb_event(
-                        workspace_id, "deal.lost", "trigger_deal_lost", deal_payload
+                    events.append(_make_partner_eb_event(
+                        workspace_id, "partner.deactivated", "trigger_partner_deactivated", partner_payload
                     ))
 
         return events
@@ -381,99 +384,99 @@ def _create_deal_events(event_name: str, new_data: dict, old_data: dict) -> list
     return []
 
 
-def _make_deal_eb_event(workspace_id: str, detail_type: str, trigger_type: str, deal_payload: dict) -> dict:
-    """Create an EventBridge event for a deal change.
+def _make_partner_eb_event(workspace_id: str, detail_type: str, trigger_type: str, partner_payload: dict) -> dict:
+    """Create an EventBridge event for a partner change.
 
     Args:
         workspace_id: Workspace ID.
         detail_type: EventBridge detail type.
         trigger_type: Workflow trigger type.
-        deal_payload: Deal data payload.
+        partner_payload: Partner data payload.
 
     Returns:
         EventBridge event dict.
     """
     return {
-        "Source": "complens.deal",
+        "Source": "complens.partner",
         "DetailType": detail_type,
         "Detail": json.dumps({
             "workspace_id": workspace_id,
-            **deal_payload,
+            **partner_payload,
             "trigger_type": trigger_type,
         }),
         "EventBusName": os.environ.get("EVENT_BUS_NAME"),
     }
 
 
-def _route_deal_event_directly(
+def _route_partner_event_directly(
     workspace_id: str,
     trigger_type: str,
-    deal_payload: dict,
+    partner_payload: dict,
     contact_id: str | None,
 ) -> None:
-    """Route a deal event directly to the sharded queue.
+    """Route a partner event directly to the sharded queue.
 
     Args:
         workspace_id: Workspace ID.
         trigger_type: Trigger type.
-        deal_payload: Deal data payload.
+        partner_payload: Partner data payload.
         contact_id: Optional contact ID.
     """
     router = get_workflow_router()
     message = WorkflowTriggerMessage(
         workspace_id=workspace_id,
         trigger_type=trigger_type,
-        trigger_data=deal_payload,
+        trigger_data=partner_payload,
         contact_id=contact_id,
     )
     result = router.route_trigger(message)
 
     logger.info(
-        "Routed deal event directly",
+        "Routed partner event directly",
         workspace_id=workspace_id,
         trigger_type=trigger_type,
-        deal_id=deal_payload.get("deal_id"),
+        partner_id=partner_payload.get("partner_id"),
         method=result.method,
         success=result.success,
     )
 
 
-def trigger_deal_event(
+def trigger_partner_event(
     workspace_id: str,
     trigger_type: str,
-    deal_data: dict,
+    partner_data: dict,
     contact_id: str | None = None,
 ) -> bool:
-    """Trigger a deal workflow event.
+    """Trigger a partner workflow event.
 
     Automatically routes to sharded queue or EventBridge based on feature flags.
 
     Args:
         workspace_id: Workspace ID.
-        trigger_type: One of trigger_deal_created, trigger_deal_stage_changed, etc.
-        deal_data: Deal data payload.
+        trigger_type: One of trigger_partner_added, trigger_partner_stage_changed, etc.
+        partner_data: Partner data payload.
         contact_id: Optional contact ID.
 
     Returns:
         True if trigger was routed successfully.
     """
     if is_flag_enabled(FeatureFlag.USE_SHARDED_QUEUES, workspace_id):
-        _route_deal_event_directly(
+        _route_partner_event_directly(
             workspace_id=workspace_id,
             trigger_type=trigger_type,
-            deal_payload=deal_data,
+            partner_payload=partner_data,
             contact_id=contact_id,
         )
         return True
 
     detail_type_map = {
-        "trigger_deal_created": "deal.created",
-        "trigger_deal_stage_changed": "deal.stage_changed",
-        "trigger_deal_won": "deal.won",
-        "trigger_deal_lost": "deal.lost",
+        "trigger_partner_added": "partner.added",
+        "trigger_partner_stage_changed": "partner.stage_changed",
+        "trigger_partner_activated": "partner.activated",
+        "trigger_partner_deactivated": "partner.deactivated",
     }
-    detail_type = detail_type_map.get(trigger_type, "deal.unknown")
-    event = _make_deal_eb_event(workspace_id, detail_type, trigger_type, deal_data)
+    detail_type = detail_type_map.get(trigger_type, "partner.unknown")
+    event = _make_partner_eb_event(workspace_id, detail_type, trigger_type, partner_data)
     publish_to_eventbridge([event])
     return True
 

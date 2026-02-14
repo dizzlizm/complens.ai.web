@@ -139,11 +139,11 @@ class NodeContext:
                                 return str(form_data[alias])
                 return ""
 
-            # Handle deal fields: {{deal.title}}, {{deal.value}}, {{deal.stage}}
-            if var_path.startswith("deal."):
-                field_name = var_path[5:]  # Remove "deal."
-                deal_data = self.trigger_data
-                return str(deal_data.get(field_name, ""))
+            # Handle partner fields: {{partner.title}}, {{partner.value}}, {{partner.stage}}
+            if var_path.startswith("partner."):
+                field_name = var_path[8:]  # Remove "partner."
+                partner_data = self.trigger_data
+                return str(partner_data.get(field_name, ""))
 
             # Handle trigger data with nested support: {{trigger_data.form_data.message}}
             if var_path.startswith("trigger_data."):

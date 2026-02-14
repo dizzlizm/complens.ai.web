@@ -1,4 +1,4 @@
-"""Deals API handler for CRM pipeline management."""
+"""Partners API handler for referral/channel partner tracking."""
 
 import json
 from typing import Any
@@ -6,14 +6,14 @@ from typing import Any
 import structlog
 from pydantic import ValidationError as PydanticValidationError
 
-from complens.models.deal import (
-    CreateDealRequest,
-    Deal,
-    DEFAULT_PIPELINE_STAGES,
-    MoveDealRequest,
-    UpdateDealRequest,
+from complens.models.partner import (
+    CreatePartnerRequest,
+    Partner,
+    DEFAULT_PARTNER_STAGES,
+    MovePartnerRequest,
+    UpdatePartnerRequest,
 )
-from complens.repositories.deal import DealRepository
+from complens.repositories.partner import PartnerRepository
 from complens.repositories.workspace import WorkspaceRepository
 from complens.utils.auth import get_auth_context, require_workspace_access
 from complens.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
@@ -23,15 +23,15 @@ logger = structlog.get_logger()
 
 
 def handler(event: dict[str, Any], context: Any) -> dict:
-    """Handle deals API requests.
+    """Handle partners API requests.
 
     Routes:
-        GET    /workspaces/{workspace_id}/deals              - List all deals
-        POST   /workspaces/{workspace_id}/deals              - Create deal
-        GET    /workspaces/{workspace_id}/deals/{deal_id}     - Get deal
-        PUT    /workspaces/{workspace_id}/deals/{deal_id}     - Update deal
-        DELETE /workspaces/{workspace_id}/deals/{deal_id}     - Delete deal
-        PUT    /workspaces/{workspace_id}/deals/{deal_id}/move - Move deal to stage
+        GET    /workspaces/{workspace_id}/partners                  - List all partners
+        POST   /workspaces/{workspace_id}/partners                  - Create partner
+        GET    /workspaces/{workspace_id}/partners/{partner_id}     - Get partner
+        PUT    /workspaces/{workspace_id}/partners/{partner_id}     - Update partner
+        DELETE /workspaces/{workspace_id}/partners/{partner_id}     - Delete partner
+        PUT    /workspaces/{workspace_id}/partners/{partner_id}/move - Move partner to stage
         GET    /workspaces/{workspace_id}/pipeline            - Get pipeline config
         PUT    /workspaces/{workspace_id}/pipeline            - Update pipeline config
     """
@@ -40,7 +40,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         path_params = event.get("pathParameters", {}) or {}
         resource = event.get("resource", "")
         workspace_id = path_params.get("workspace_id")
-        deal_id = path_params.get("deal_id")
+        partner_id = path_params.get("partner_id")
 
         # Get auth context and verify access
         auth = get_auth_context(event)
@@ -57,25 +57,25 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             else:
                 return error("Method not allowed", 405)
 
-        repo = DealRepository()
+        repo = PartnerRepository()
 
-        # Move deal route
-        if resource.endswith("/move") and deal_id:
+        # Move partner route
+        if resource.endswith("/move") and partner_id:
             if http_method == "PUT":
-                return move_deal(repo, workspace_id, deal_id, event)
+                return move_partner(repo, workspace_id, partner_id, event)
             return error("Method not allowed", 405)
 
         # Standard CRUD routes
-        if http_method == "GET" and deal_id:
-            return get_deal(repo, workspace_id, deal_id)
+        if http_method == "GET" and partner_id:
+            return get_partner(repo, workspace_id, partner_id)
         elif http_method == "GET":
-            return list_deals(repo, workspace_id, event)
+            return list_partners(repo, workspace_id, event)
         elif http_method == "POST":
-            return create_deal(repo, workspace_id, event)
-        elif http_method == "PUT" and deal_id:
-            return update_deal(repo, workspace_id, deal_id, event)
-        elif http_method == "DELETE" and deal_id:
-            return delete_deal(repo, workspace_id, deal_id)
+            return create_partner(repo, workspace_id, event)
+        elif http_method == "PUT" and partner_id:
+            return update_partner(repo, workspace_id, partner_id, event)
+        elif http_method == "DELETE" and partner_id:
+            return delete_partner(repo, workspace_id, partner_id)
         else:
             return error("Method not allowed", 405)
 
@@ -88,41 +88,41 @@ def handler(event: dict[str, Any], context: Any) -> dict:
     except ValueError as e:
         return error(str(e), 400)
     except Exception as e:
-        logger.exception("Deals handler error", error=str(e))
+        logger.exception("Partners handler error", error=str(e))
         return error("Internal server error", 500)
 
 
 # =============================================================================
-# Deals CRUD
+# Partners CRUD
 # =============================================================================
 
 
-def list_deals(
-    repo: DealRepository,
+def list_partners(
+    repo: PartnerRepository,
     workspace_id: str,
     event: dict | None = None,
 ) -> dict:
-    """List deals for Kanban board or filtered by contact.
+    """List partners for Kanban board or filtered by contact.
 
-    Returns all deals plus pipeline stages and summary stats.
-    Supports ?contact_id=X to filter deals linked to a specific contact.
+    Returns all partners plus pipeline stages and summary stats.
+    Supports ?contact_id=X to filter partners linked to a specific contact.
     """
     # Check for contact_id filter
     query_params = (event or {}).get("queryStringParameters", {}) or {}
     contact_id = query_params.get("contact_id")
 
-    all_deals: list[Deal] = []
+    all_partners: list[Partner] = []
 
     if contact_id:
         # Use GSI2 for efficient contact-scoped query
-        deals, _ = repo.list_by_contact(contact_id, limit=50)
-        all_deals = deals
+        partners, _ = repo.list_by_contact(contact_id, limit=50)
+        all_partners = partners
     else:
-        # Get all deals (paginate if needed)
+        # Get all partners (paginate if needed)
         last_key = None
         while True:
-            deals, next_key = repo.list_by_workspace(workspace_id, limit=200, last_key=last_key)
-            all_deals.extend(deals)
+            partners, next_key = repo.list_by_workspace(workspace_id, limit=200, last_key=last_key)
+            all_partners.extend(partners)
             if not next_key:
                 break
             last_key = next_key
@@ -130,53 +130,53 @@ def list_deals(
     # Get pipeline stages from workspace settings
     ws_repo = WorkspaceRepository()
     workspace = ws_repo.get_by_id(workspace_id)
-    stages = DEFAULT_PIPELINE_STAGES
+    stages = DEFAULT_PARTNER_STAGES
     if workspace and workspace.settings.get("pipeline_stages"):
         stages = workspace.settings["pipeline_stages"]
 
     # Build summary
-    total_value = sum(d.value for d in all_deals)
+    total_value = sum(p.value for p in all_partners)
     by_stage: dict[str, dict[str, Any]] = {}
     for stage in stages:
-        stage_deals = [d for d in all_deals if d.stage == stage]
+        stage_partners = [p for p in all_partners if p.stage == stage]
         by_stage[stage] = {
-            "count": len(stage_deals),
-            "value": sum(d.value for d in stage_deals),
+            "count": len(stage_partners),
+            "value": sum(p.value for p in stage_partners),
         }
 
     return success({
         "stages": stages,
-        "deals": [d.model_dump(mode="json") for d in all_deals],
+        "partners": [p.model_dump(mode="json") for p in all_partners],
         "summary": {
-            "total_deals": len(all_deals),
+            "total_partners": len(all_partners),
             "total_value": total_value,
             "by_stage": by_stage,
         },
     })
 
 
-def get_deal(
-    repo: DealRepository,
+def get_partner(
+    repo: PartnerRepository,
     workspace_id: str,
-    deal_id: str,
+    partner_id: str,
 ) -> dict:
-    """Get a single deal by ID."""
-    deal = repo.get_by_id(workspace_id, deal_id)
-    if not deal:
-        return not_found("Deal", deal_id)
+    """Get a single partner by ID."""
+    partner = repo.get_by_id(workspace_id, partner_id)
+    if not partner:
+        return not_found("Partner", partner_id)
 
-    return success(deal.model_dump(mode="json"))
+    return success(partner.model_dump(mode="json"))
 
 
-def create_deal(
-    repo: DealRepository,
+def create_partner(
+    repo: PartnerRepository,
     workspace_id: str,
     event: dict,
 ) -> dict:
-    """Create a new deal."""
+    """Create a new partner."""
     try:
         body = json.loads(event.get("body", "{}"))
-        request = CreateDealRequest.model_validate(body)
+        request = CreatePartnerRequest.model_validate(body)
     except PydanticValidationError as e:
         return validation_error([
             {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
@@ -185,32 +185,32 @@ def create_deal(
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
-    deal = Deal(
+    partner = Partner(
         workspace_id=workspace_id,
         **request.model_dump(),
     )
 
-    deal = repo.create_deal(deal)
+    partner = repo.create_partner(partner)
 
-    logger.info("Deal created", deal_id=deal.id, workspace_id=workspace_id)
+    logger.info("Partner created", partner_id=partner.id, workspace_id=workspace_id)
 
-    return created(deal.model_dump(mode="json"))
+    return created(partner.model_dump(mode="json"))
 
 
-def update_deal(
-    repo: DealRepository,
+def update_partner(
+    repo: PartnerRepository,
     workspace_id: str,
-    deal_id: str,
+    partner_id: str,
     event: dict,
 ) -> dict:
-    """Update an existing deal."""
-    deal = repo.get_by_id(workspace_id, deal_id)
-    if not deal:
-        return not_found("Deal", deal_id)
+    """Update an existing partner."""
+    partner = repo.get_by_id(workspace_id, partner_id)
+    if not partner:
+        return not_found("Partner", partner_id)
 
     try:
         body = json.loads(event.get("body", "{}"))
-        request = UpdateDealRequest.model_validate(body)
+        request = UpdatePartnerRequest.model_validate(body)
     except PydanticValidationError as e:
         return validation_error([
             {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
@@ -223,45 +223,45 @@ def update_deal(
     update_data = request.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         if value is not None:
-            setattr(deal, field, value)
+            setattr(partner, field, value)
 
-    deal = repo.update_deal(deal)
+    partner = repo.update_partner(partner)
 
-    logger.info("Deal updated", deal_id=deal_id, workspace_id=workspace_id)
+    logger.info("Partner updated", partner_id=partner_id, workspace_id=workspace_id)
 
-    return success(deal.model_dump(mode="json"))
+    return success(partner.model_dump(mode="json"))
 
 
-def delete_deal(
-    repo: DealRepository,
+def delete_partner(
+    repo: PartnerRepository,
     workspace_id: str,
-    deal_id: str,
+    partner_id: str,
 ) -> dict:
-    """Delete a deal."""
-    deleted = repo.delete_deal(workspace_id, deal_id)
+    """Delete a partner."""
+    deleted = repo.delete_partner(workspace_id, partner_id)
 
     if not deleted:
-        return not_found("Deal", deal_id)
+        return not_found("Partner", partner_id)
 
-    logger.info("Deal deleted", deal_id=deal_id, workspace_id=workspace_id)
+    logger.info("Partner deleted", partner_id=partner_id, workspace_id=workspace_id)
 
-    return success({"deleted": True, "id": deal_id})
+    return success({"deleted": True, "id": partner_id})
 
 
-def move_deal(
-    repo: DealRepository,
+def move_partner(
+    repo: PartnerRepository,
     workspace_id: str,
-    deal_id: str,
+    partner_id: str,
     event: dict,
 ) -> dict:
-    """Move a deal to a new stage with position."""
-    deal = repo.get_by_id(workspace_id, deal_id)
-    if not deal:
-        return not_found("Deal", deal_id)
+    """Move a partner to a new stage with position."""
+    partner = repo.get_by_id(workspace_id, partner_id)
+    if not partner:
+        return not_found("Partner", partner_id)
 
     try:
         body = json.loads(event.get("body", "{}"))
-        request = MoveDealRequest.model_validate(body)
+        request = MovePartnerRequest.model_validate(body)
     except PydanticValidationError as e:
         return validation_error([
             {"field": ".".join(str(x) for x in err["loc"]), "message": err["msg"]}
@@ -270,20 +270,20 @@ def move_deal(
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
-    deal.stage = request.stage
-    deal.position = request.position
+    partner.stage = request.stage
+    partner.position = request.position
 
-    deal = repo.update_deal(deal)
+    partner = repo.update_partner(partner)
 
     logger.info(
-        "Deal moved",
-        deal_id=deal_id,
+        "Partner moved",
+        partner_id=partner_id,
         workspace_id=workspace_id,
         new_stage=request.stage,
         position=request.position,
     )
 
-    return success(deal.model_dump(mode="json"))
+    return success(partner.model_dump(mode="json"))
 
 
 # =============================================================================
@@ -300,7 +300,7 @@ def get_pipeline_config(
     if not workspace:
         return not_found("Workspace", workspace_id)
 
-    stages = workspace.settings.get("pipeline_stages", DEFAULT_PIPELINE_STAGES)
+    stages = workspace.settings.get("pipeline_stages", DEFAULT_PARTNER_STAGES)
 
     return success({"stages": stages})
 

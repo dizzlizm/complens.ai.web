@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   GitBranch,
   Users,
-  DollarSign,
   FileText,
   Settings,
   User,
@@ -30,7 +29,7 @@ const globalNavigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Contacts', href: '/contacts', icon: Users },
   { name: 'Inbox', href: '/inbox', icon: MessageSquare },
-  { name: 'Deals', href: '/deals', icon: DollarSign },
+  { name: 'Partners', href: '/partners', icon: Users },
   { name: 'Sites', href: '/sites', icon: Globe },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];

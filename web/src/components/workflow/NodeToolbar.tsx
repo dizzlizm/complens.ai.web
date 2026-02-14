@@ -18,11 +18,11 @@ const triggers: NodeDefinition[] = [
   { type: 'trigger', nodeType: 'trigger_tag_added', label: 'Tag Added', icon: <Tag className="w-4 h-4" />, description: 'When a tag is added to contact' },
   { type: 'trigger', nodeType: 'trigger_webhook', label: 'Webhook', icon: <Webhook className="w-4 h-4" />, description: 'External webhook trigger' },
   { type: 'trigger', nodeType: 'trigger_schedule', label: 'Schedule', icon: <Clock className="w-4 h-4" />, description: 'Run on a schedule' },
-  // Deal triggers
-  { type: 'trigger', nodeType: 'trigger_deal_created', label: 'Deal Created', icon: <DollarSign className="w-4 h-4" />, description: 'When a new deal is created' },
-  { type: 'trigger', nodeType: 'trigger_deal_stage_changed', label: 'Deal Stage Changed', icon: <TrendingUp className="w-4 h-4" />, description: 'When deal moves to a new stage' },
-  { type: 'trigger', nodeType: 'trigger_deal_won', label: 'Deal Won', icon: <Trophy className="w-4 h-4" />, description: 'When a deal is marked won' },
-  { type: 'trigger', nodeType: 'trigger_deal_lost', label: 'Deal Lost', icon: <XCircle className="w-4 h-4" />, description: 'When a deal is marked lost' },
+  // Partner triggers
+  { type: 'trigger', nodeType: 'trigger_partner_added', label: 'Partner Added', icon: <DollarSign className="w-4 h-4" />, description: 'When a new partner is added' },
+  { type: 'trigger', nodeType: 'trigger_partner_stage_changed', label: 'Partner Stage Changed', icon: <TrendingUp className="w-4 h-4" />, description: 'When partner moves to a new stage' },
+  { type: 'trigger', nodeType: 'trigger_partner_activated', label: 'Partner Activated', icon: <Trophy className="w-4 h-4" />, description: 'When a partner becomes active' },
+  { type: 'trigger', nodeType: 'trigger_partner_deactivated', label: 'Partner Deactivated', icon: <XCircle className="w-4 h-4" />, description: 'When a partner becomes inactive' },
 ];
 
 const actions: NodeDefinition[] = [
@@ -31,8 +31,8 @@ const actions: NodeDefinition[] = [
   { type: 'action', nodeType: 'action_wait', label: 'Wait', icon: <Clock className="w-4 h-4" />, description: 'Wait for a duration' },
   { type: 'action', nodeType: 'action_webhook', label: 'Call Webhook', icon: <Webhook className="w-4 h-4" />, description: 'Call external API' },
   { type: 'action', nodeType: 'action_update_contact', label: 'Update Contact', icon: <Tag className="w-4 h-4" />, description: 'Update contact fields' },
-  { type: 'action', nodeType: 'action_create_deal', label: 'Create Deal', icon: <DollarSign className="w-4 h-4" />, description: 'Create a new deal in pipeline' },
-  { type: 'action', nodeType: 'action_update_deal', label: 'Update Deal', icon: <TrendingUp className="w-4 h-4" />, description: 'Update an existing deal' },
+  { type: 'action', nodeType: 'action_create_partner', label: 'Create Partner', icon: <DollarSign className="w-4 h-4" />, description: 'Create a new partner in pipeline' },
+  { type: 'action', nodeType: 'action_update_partner', label: 'Update Partner', icon: <TrendingUp className="w-4 h-4" />, description: 'Update an existing partner' },
   { type: 'action', nodeType: 'action_run_workflow', label: 'Run Workflow', icon: <PlayCircle className="w-4 h-4" />, description: 'Trigger another workflow' },
   { type: 'ai', nodeType: 'ai_respond', label: 'AI Respond', icon: <Sparkles className="w-4 h-4" />, description: 'AI generates and sends a reply' },
   { type: 'ai', nodeType: 'ai_generate', label: 'AI Generate', icon: <Sparkles className="w-4 h-4" />, description: 'AI creates content (email, text)' },

@@ -11,7 +11,7 @@ class Site(BaseModel):
     """Site entity - represents an internet domain as an organizational unit.
 
     Sites group pages, workflows, knowledge base documents, and AI profiles
-    under a single domain (e.g., example.com). Contacts and Deals remain
+    under a single domain (e.g., example.com). Contacts and Partners remain
     workspace-global.
 
     Key Pattern:

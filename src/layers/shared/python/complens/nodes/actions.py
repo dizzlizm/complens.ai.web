@@ -1083,33 +1083,33 @@ class StripeCancelSubscriptionAction(BaseNode):
 
 
 # =============================================================================
-# Deal Actions
+# Partner Actions
 # =============================================================================
 
 
-class CreateDealAction(BaseNode):
-    """Create a new deal in the pipeline."""
+class CreatePartnerAction(BaseNode):
+    """Create a new partner in the pipeline."""
 
-    node_type = "action_create_deal"
+    node_type = "action_create_partner"
 
     async def execute(self, context: NodeContext) -> NodeResult:
-        """Create a deal with configured fields.
+        """Create a partner with configured fields.
 
         Args:
             context: Execution context.
 
         Returns:
-            NodeResult with created deal details.
+            NodeResult with created partner details.
         """
-        from complens.repositories.deal import DealRepository
+        from complens.repositories.partner import PartnerRepository
 
-        title_template = self._get_config_value("deal_title", "")
+        title_template = self._get_config_value("partner_title", "")
         title = context.render_template(title_template)
 
         if not title:
-            return NodeResult.failed(error="Deal title is required")
+            return NodeResult.failed(error="Partner title is required")
 
-        value = self._get_config_value("deal_value", 0)
+        value = self._get_config_value("partner_value", 0)
         if isinstance(value, str):
             value_str = context.render_template(value)
             try:
@@ -1117,8 +1117,10 @@ class CreateDealAction(BaseNode):
             except ValueError:
                 value = 0
 
-        stage = self._get_config_value("deal_stage", "Lead")
-        priority = self._get_config_value("deal_priority", "medium")
+        stage = self._get_config_value("partner_stage", "Prospect")
+        priority = self._get_config_value("partner_priority", "medium")
+        partner_type = self._get_config_value("partner_type", "referral")
+        commission_pct = self._get_config_value("commission_pct", 0)
 
         # Auto-link contact if available
         contact_id = None
@@ -1128,7 +1130,7 @@ class CreateDealAction(BaseNode):
             contact_name = context.contact.full_name
 
         self.logger.info(
-            "Creating deal",
+            "Creating partner",
             title=title,
             value=value,
             stage=stage,
@@ -1136,51 +1138,54 @@ class CreateDealAction(BaseNode):
         )
 
         try:
-            from complens.models.deal import Deal
+            from complens.models.partner import Partner
 
-            deal_repo = DealRepository()
-            deal = Deal(
+            partner_repo = PartnerRepository()
+            partner = Partner(
                 workspace_id=context.workspace_id,
                 title=title,
                 value=value,
                 stage=stage,
                 priority=priority,
+                partner_type=partner_type,
+                commission_pct=commission_pct,
                 contact_id=contact_id,
                 contact_name=contact_name,
             )
-            deal = deal_repo.create_deal(deal)
+            partner = partner_repo.create_partner(partner)
 
             return NodeResult.completed(
                 output={
-                    "deal_id": deal.id,
-                    "title": deal.title,
-                    "value": deal.value,
-                    "stage": deal.stage,
-                    "priority": deal.priority,
+                    "partner_id": partner.id,
+                    "title": partner.title,
+                    "value": partner.value,
+                    "commission_pct": partner.commission_pct,
+                    "stage": partner.stage,
+                    "priority": partner.priority,
                     "contact_id": contact_id,
                 },
-                variables={"last_deal_id": deal.id},
+                variables={"last_partner_id": partner.id},
             )
 
         except Exception as e:
-            self.logger.error("Failed to create deal", error=str(e))
+            self.logger.error("Failed to create partner", error=str(e))
             return NodeResult.failed(
-                error=f"Failed to create deal: {e}",
+                error=f"Failed to create partner: {e}",
                 error_details={"title": title},
             )
 
     def get_required_config(self) -> list[str]:
         """Get required configuration."""
-        return ["deal_title"]
+        return ["partner_title"]
 
 
-class UpdateDealAction(BaseNode):
-    """Update an existing deal."""
+class UpdatePartnerAction(BaseNode):
+    """Update an existing partner."""
 
-    node_type = "action_update_deal"
+    node_type = "action_update_partner"
 
     async def execute(self, context: NodeContext) -> NodeResult:
-        """Update deal with configured changes.
+        """Update partner with configured changes.
 
         Args:
             context: Execution context.
@@ -1188,40 +1193,40 @@ class UpdateDealAction(BaseNode):
         Returns:
             NodeResult with update status.
         """
-        from complens.repositories.deal import DealRepository
+        from complens.repositories.partner import PartnerRepository
 
-        # Get deal ID - default to trigger data deal_id
-        deal_id_template = self._get_config_value(
-            "deal_id", "{{trigger_data.deal_id}}"
+        # Get partner ID - default to trigger data partner_id
+        partner_id_template = self._get_config_value(
+            "partner_id", "{{trigger_data.partner_id}}"
         )
-        deal_id = context.render_template(deal_id_template)
+        partner_id = context.render_template(partner_id_template)
 
-        if not deal_id:
-            return NodeResult.failed(error="Deal ID is required")
+        if not partner_id:
+            return NodeResult.failed(error="Partner ID is required")
 
-        deal_repo = DealRepository()
+        partner_repo = PartnerRepository()
 
         try:
-            deal = deal_repo.get_by_id(context.workspace_id, deal_id)
+            partner = partner_repo.get_by_id(context.workspace_id, partner_id)
         except Exception:
-            deal = None
+            partner = None
 
-        if not deal:
+        if not partner:
             return NodeResult.failed(
-                error=f"Deal not found: {deal_id}",
-                error_details={"deal_id": deal_id},
+                error=f"Partner not found: {partner_id}",
+                error_details={"partner_id": partner_id},
             )
 
         changes_made = []
 
         # Update stage
-        new_stage = self._get_config_value("deal_stage")
+        new_stage = self._get_config_value("partner_stage")
         if new_stage:
-            deal.stage = new_stage
+            partner.stage = new_stage
             changes_made.append(f"stage={new_stage}")
 
         # Update value
-        new_value = self._get_config_value("deal_value")
+        new_value = self._get_config_value("partner_value")
         if new_value is not None:
             if isinstance(new_value, str):
                 new_value = context.render_template(new_value)
@@ -1230,57 +1235,57 @@ class UpdateDealAction(BaseNode):
                 except ValueError:
                     new_value = None
             if new_value is not None:
-                deal.value = new_value
+                partner.value = new_value
                 changes_made.append(f"value={new_value}")
 
         # Update priority
-        new_priority = self._get_config_value("deal_priority")
+        new_priority = self._get_config_value("partner_priority")
         if new_priority:
-            deal.priority = new_priority
+            partner.priority = new_priority
             changes_made.append(f"priority={new_priority}")
 
         # Add tags
         add_tags = self._get_config_value("add_tags", [])
         for tag in add_tags:
             tag = context.render_template(tag)
-            if tag not in (deal.tags or []):
-                if not deal.tags:
-                    deal.tags = []
-                deal.tags.append(tag)
+            if tag not in (partner.tags or []):
+                if not partner.tags:
+                    partner.tags = []
+                partner.tags.append(tag)
                 changes_made.append(f"+tag:{tag}")
 
         # Update custom fields
         custom_fields = self._get_config_value("custom_fields", {})
         for field_name, value_template in custom_fields.items():
             value = context.render_template(str(value_template))
-            if not deal.custom_fields:
-                deal.custom_fields = {}
-            deal.custom_fields[field_name] = value
+            if not partner.custom_fields:
+                partner.custom_fields = {}
+            partner.custom_fields[field_name] = value
             changes_made.append(f"custom.{field_name}={value}")
 
         if not changes_made:
             return NodeResult.completed(
-                output={"deal_id": deal_id, "changes": [], "skipped": True}
+                output={"partner_id": partner_id, "changes": [], "skipped": True}
             )
 
         self.logger.info(
-            "Updating deal",
-            deal_id=deal_id,
+            "Updating partner",
+            partner_id=partner_id,
             changes=changes_made,
         )
 
         try:
-            deal_repo.update_deal(deal)
+            partner_repo.update_partner(partner)
         except Exception as e:
-            self.logger.error("Failed to update deal", error=str(e))
+            self.logger.error("Failed to update partner", error=str(e))
             return NodeResult.failed(
-                error=f"Failed to update deal: {e}",
-                error_details={"deal_id": deal_id, "changes": changes_made},
+                error=f"Failed to update partner: {e}",
+                error_details={"partner_id": partner_id, "changes": changes_made},
             )
 
         return NodeResult.completed(
             output={
-                "deal_id": deal_id,
+                "partner_id": partner_id,
                 "changes": changes_made,
             }
         )
@@ -1299,7 +1304,7 @@ ACTION_NODES = {
     "action_stripe_checkout": StripeCheckoutAction,
     "action_stripe_subscription": StripeSubscriptionAction,
     "action_stripe_cancel_subscription": StripeCancelSubscriptionAction,
-    # Deal actions
-    "action_create_deal": CreateDealAction,
-    "action_update_deal": UpdateDealAction,
+    # Partner actions
+    "action_create_partner": CreatePartnerAction,
+    "action_update_partner": UpdatePartnerAction,
 }
