@@ -126,6 +126,7 @@ export interface ImproveBlockInput {
   };
   instruction?: string;
   page_id?: string;  // Page-specific profile
+  site_id?: string;
 }
 
 // Block generation types
@@ -135,6 +136,7 @@ export interface GenerateBlocksInput {
   include_form?: boolean;
   include_chat?: boolean;
   page_id?: string;  // Page-specific profile
+  site_id?: string;
 }
 
 // Image generation types
@@ -161,6 +163,7 @@ export interface SuggestNextStepInput {
   nodes: Array<{ id: string; type: string; label: string; config?: Record<string, unknown> }>;
   edges: Array<{ source: string; target: string }>;
   source_node_id: string;
+  site_id?: string;
 }
 
 export interface WorkflowStepSuggestion {
@@ -173,6 +176,7 @@ export interface WorkflowStepSuggestion {
 // Workflow generation types
 export interface GenerateWorkflowInput {
   description: string;
+  site_id?: string;
 }
 
 export interface GeneratedWorkflow {
@@ -196,6 +200,7 @@ export interface GeneratedWorkflow {
 export interface GeneratePageContentInput {
   business_description: string;
   page_id?: string;
+  site_id?: string;
 }
 
 export interface GeneratedPageContent {
@@ -230,6 +235,7 @@ export interface RefinePageContentInput {
   feedback: string;
   section?: string;
   page_id?: string;
+  site_id?: string;
 }
 
 // ==================== SYNTHESIS ENGINE TYPES ====================
@@ -239,6 +245,7 @@ export interface SynthesizePageInput {
   intent_hints?: string[];
   style_preference?: 'professional' | 'bold' | 'minimal' | 'playful';
   page_id?: string;
+  site_id?: string;
   include_form?: boolean;
   include_chat?: boolean;
   block_types?: string[];  // Only generate these block types
@@ -430,6 +437,8 @@ export function useUpdateBusinessProfile(workspaceId: string, pageId?: string, s
     },
     onSuccess: (updatedProfile) => {
       queryClient.setQueryData(['businessProfile', workspaceId, pageId, siteId], updatedProfile);
+      // Invalidate all businessProfile queries so other views (PageEditor, SynthesisPopup, etc.) refetch
+      queryClient.invalidateQueries({ queryKey: ['businessProfile', workspaceId] });
     },
   });
 }
@@ -446,9 +455,10 @@ export function useAnalyzeContent(workspaceId: string) {
       }>(`/workspaces/${workspaceId}/ai/profile/analyze`, input);
       return data;
     },
-    onSuccess: (result, variables) => {
+    onSuccess: (result) => {
       if (result.profile) {
-        queryClient.setQueryData(['businessProfile', workspaceId, variables.page_id], result.profile);
+        // Invalidate all businessProfile queries so every view picks up the update
+        queryClient.invalidateQueries({ queryKey: ['businessProfile', workspaceId] });
       }
     },
   });
@@ -487,7 +497,9 @@ export function useSubmitOnboardingAnswer(workspaceId: string) {
       return data;
     },
     onSuccess: (result) => {
-      queryClient.setQueryData(['businessProfile', workspaceId], result.profile);
+      queryClient.setQueryData(['businessProfile', workspaceId, undefined, undefined], result.profile);
+      // Invalidate all businessProfile queries so PageEditor and other views refetch
+      queryClient.invalidateQueries({ queryKey: ['businessProfile', workspaceId] });
       // Invalidate to get next question
       queryClient.invalidateQueries({ queryKey: ['onboardingQuestion', workspaceId] });
     },
@@ -698,6 +710,7 @@ export interface SynthesizePlanInput {
   intent_hints?: string[];
   style_preference?: 'professional' | 'bold' | 'minimal' | 'playful';
   page_id?: string;
+  site_id?: string;
   block_types?: string[];
   existing_block_types?: string[];
 }
@@ -705,6 +718,7 @@ export interface SynthesizePlanInput {
 export interface SynthesizeGenerateInput {
   description: string;
   page_id?: string;
+  site_id?: string;
   brand: BrandFoundation;
   design_system: SynthesisDesignSystem;
   intent: PageIntent;
@@ -753,6 +767,7 @@ export interface AutofillNodeInput {
   current_config: Record<string, unknown>;
   nodes: Array<{ id: string; type?: string; data?: { nodeType?: string; label?: string; config?: Record<string, unknown> } }>;
   edges: Array<{ source: string; target: string }>;
+  site_id?: string;
 }
 
 export function useAutofillNode(workspaceId: string) {
@@ -775,6 +790,8 @@ export interface AnalyzeDomainInput {
 }
 
 export function useAnalyzeDomain(workspaceId: string) {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: async (input: AnalyzeDomainInput) => {
       const { data } = await api.post<{ analysis: Partial<BusinessProfile> }>(
@@ -782,6 +799,10 @@ export function useAnalyzeDomain(workspaceId: string) {
         input
       );
       return data.analysis;
+    },
+    onSuccess: () => {
+      // Domain analysis with auto_update modifies the profile server-side
+      queryClient.invalidateQueries({ queryKey: ['businessProfile', workspaceId] });
     },
   });
 }

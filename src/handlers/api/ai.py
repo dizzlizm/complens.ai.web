@@ -191,32 +191,32 @@ def get_business_profile(
     page_id: str | None = None,
     site_id: str | None = None,
 ) -> dict:
-    """Get the business profile for a workspace, site, or page."""
+    """Get the business profile for a workspace, site, or page.
+
+    Uses cascade read (page → site → workspace) so we always return the
+    most specific profile available WITHOUT creating empty ones as a
+    side-effect. Only PUT should create profiles.
+    """
     repo = BusinessProfileRepository()
 
     try:
-        profile = repo.get_or_create(workspace_id, page_id, site_id)
+        profile = repo.get_effective_profile(workspace_id, page_id, site_id)
+        if not profile:
+            # Return a transient empty profile (not persisted) so the
+            # frontend gets a valid shape with profile_score = 0
+            from complens.models.business_profile import BusinessProfile
+            profile = BusinessProfile(workspace_id=workspace_id)
+        profile.calculate_profile_score()
         return success(profile.model_dump(mode="json"))
     except Exception as e:
-        # If profile is corrupted, try to reset it
-        logger.warning(
-            "Failed to load business profile, attempting reset",
+        logger.error(
+            "Failed to load business profile",
             workspace_id=workspace_id,
             page_id=page_id,
             site_id=site_id,
             error=str(e),
         )
-        try:
-            # Delete corrupted profile and create fresh one
-            repo.delete_profile(workspace_id, page_id, site_id)
-            from complens.models.business_profile import BusinessProfile
-            profile = BusinessProfile(workspace_id=workspace_id, page_id=page_id, site_id=site_id)
-            profile = repo.create_profile(profile, page_id)
-            logger.info("Reset corrupted business profile", workspace_id=workspace_id, page_id=page_id, site_id=site_id)
-            return success(profile.model_dump(mode="json"))
-        except Exception as reset_error:
-            logger.error("Failed to reset business profile", error=str(reset_error))
-            return error(f"Profile data corrupted: {str(e)}", 500)
+        return error(f"Failed to load profile: {str(e)}", 500)
 
 
 def update_business_profile(
@@ -306,7 +306,10 @@ def analyze_content_for_profile(
 def get_onboarding_question(workspace_id: str) -> dict:
     """Get the next onboarding question using AI."""
     repo = BusinessProfileRepository()
-    profile = repo.get_or_create(workspace_id)
+    profile = repo.get_effective_profile(workspace_id)
+    if not profile:
+        # First onboarding — create a workspace-level profile
+        profile = repo.get_or_create(workspace_id)
 
     # If onboarding is complete, return status
     if profile.onboarding_completed:
@@ -417,6 +420,7 @@ def improve_block(workspace_id: str, event: dict) -> dict:
         page_context = body.get("page_context")
         instruction = body.get("instruction", "Improve this content to be more compelling")
         page_id = body.get("page_id")  # Page-specific profile
+        site_id = body.get("site_id")
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
@@ -431,6 +435,7 @@ def improve_block(workspace_id: str, event: dict) -> dict:
             page_context=page_context,
             instruction=instruction,
             page_id=page_id,
+            site_id=site_id,
         )
 
         return success({"config": improved})
@@ -449,6 +454,7 @@ def generate_blocks(workspace_id: str, event: dict) -> dict:
         include_form = body.get("include_form", True)
         include_chat = body.get("include_chat", False)
         page_id = body.get("page_id")  # Page-specific profile
+        site_id = body.get("site_id")
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
@@ -463,6 +469,7 @@ def generate_blocks(workspace_id: str, event: dict) -> dict:
             include_form=include_form,
             include_chat=include_chat,
             page_id=page_id,
+            site_id=site_id,
         )
 
         return success({"blocks": blocks})
@@ -551,6 +558,8 @@ def suggest_workflow_step(workspace_id: str, event: dict) -> dict:
         nodes = body.get("nodes", [])
         edges = body.get("edges", [])
         source_node_id = body.get("source_node_id", "")
+        page_id = body.get("page_id")
+        site_id = body.get("site_id")
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
@@ -607,9 +616,11 @@ def suggest_workflow_step(workspace_id: str, event: dict) -> dict:
             nodes=nodes,
             edges=edges,
             source_node_id=source_node_id,
+            page_id=page_id,
             forms=forms_data if forms_data else None,
             pages=pages_data if pages_data else None,
             domains=domains_data if domains_data else None,
+            site_id=site_id,
         )
 
         logger.info(
@@ -636,6 +647,7 @@ def generate_page_workflow(workspace_id: str, event: dict) -> dict:
     try:
         body = json.loads(event.get("body", "{}"))
         page_id = body.get("page_id", "")
+        site_id = body.get("site_id")
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
@@ -706,6 +718,7 @@ def generate_page_workflow(workspace_id: str, event: dict) -> dict:
             domains=domains_data if domains_data else None,
             from_email=from_email,
             owner_email=owner_email,
+            site_id=site_id,
         )
 
         logger.info(
@@ -727,6 +740,7 @@ def generate_workflow(workspace_id: str, event: dict) -> dict:
     try:
         body = json.loads(event.get("body", "{}"))
         description = body.get("description", "")
+        site_id = body.get("site_id")
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
@@ -737,6 +751,7 @@ def generate_workflow(workspace_id: str, event: dict) -> dict:
         workflow = ai_service.generate_workflow_from_description(
             workspace_id=workspace_id,
             description=description,
+            site_id=site_id,
         )
 
         return success({"workflow": workflow})
@@ -766,6 +781,7 @@ def autofill_node(workspace_id: str, event: dict) -> dict:
         nodes = body.get("nodes", [])
         edges = body.get("edges", [])
         node_id = body.get("node_id", "")
+        site_id = body.get("site_id")
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
@@ -802,12 +818,13 @@ def autofill_node(workspace_id: str, event: dict) -> dict:
         # Reverse so earliest ancestors come first
         preceding_nodes.reverse()
 
-    # Optionally fetch business profile for richer context
+    # Optionally fetch business profile for richer context (cascade read)
     business_profile = None
     try:
         repo = BusinessProfileRepository()
-        profile = repo.get_or_create(workspace_id)
-        business_profile = profile.model_dump(mode="json")
+        profile = repo.get_effective_profile(workspace_id, site_id=site_id)
+        if profile:
+            business_profile = profile.model_dump(mode="json")
     except Exception:
         pass
 
@@ -818,6 +835,7 @@ def autofill_node(workspace_id: str, event: dict) -> dict:
             current_config=current_config,
             preceding_nodes=preceding_nodes,
             business_profile=business_profile,
+            site_id=site_id,
         )
 
         logger.info(
@@ -918,6 +936,7 @@ def generate_page_content(workspace_id: str, event: dict) -> dict:
         body = json.loads(event.get("body", "{}"))
         business_description = body.get("business_description", "")
         page_id = body.get("page_id")
+        site_id = body.get("site_id")
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
@@ -932,6 +951,7 @@ def generate_page_content(workspace_id: str, event: dict) -> dict:
             workspace_id=workspace_id,
             business_description=business_description,
             page_id=page_id,
+            site_id=site_id,
         )
 
         logger.info(
@@ -960,6 +980,7 @@ def refine_page_content(workspace_id: str, event: dict) -> dict:
         feedback = body.get("feedback", "")
         section = body.get("section")  # Optional: headlines, features, faq, etc.
         page_id = body.get("page_id")
+        site_id = body.get("site_id")
     except json.JSONDecodeError:
         return error("Invalid JSON body", 400)
 
@@ -976,6 +997,7 @@ def refine_page_content(workspace_id: str, event: dict) -> dict:
             feedback=feedback,
             section=section,
             page_id=page_id,
+            site_id=site_id,
         )
 
         logger.info(
@@ -1029,6 +1051,7 @@ def synthesize_plan(workspace_id: str, event: dict) -> dict:
             style_preference=request.style_preference,
             block_types=request.block_types,
             existing_block_types=request.existing_block_types,
+            site_id=request.site_id,
         )
 
         logger.info(
@@ -1085,6 +1108,7 @@ def synthesize_generate(workspace_id: str, event: dict) -> dict:
             block_types=request.block_types,
             page_id=request.page_id,
             include_form=request.include_form,
+            site_id=request.site_id,
         )
 
         logger.info(
@@ -1146,6 +1170,7 @@ def synthesize_page(workspace_id: str, event: dict) -> dict:
             include_form=request.include_form,
             include_chat=request.include_chat,
             block_types=request.block_types,
+            site_id=request.site_id,
         )
 
         logger.info(

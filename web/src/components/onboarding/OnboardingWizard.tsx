@@ -261,7 +261,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               title: 'Set up email warmup',
               description: 'Start warming up your domain to improve email deliverability',
               icon: Flame,
-              path: '/email-warmup',
+              path: '/settings?section=domains',
               color: 'bg-orange-100 text-orange-700',
             },
             {

@@ -28,6 +28,7 @@ interface SynthesisPopupProps {
   selectedSlotIds?: string[];  // Optional: slot IDs from visual canvas
   existingBlockTypes?: string[];  // Block types already on the page (to avoid injecting duplicates)
   pageId?: string;
+  siteId?: string;
   onClose: () => void;
   onApply: (blocks: PageBlock[], synthesisResult: SynthesisResult, options: ApplyOptions) => void;
 }
@@ -112,11 +113,12 @@ export default function SynthesisPopup({
   selectedSlotIds: _selectedSlotIds = [],  // Reserved for future slot-specific generation
   existingBlockTypes,
   pageId,
+  siteId,
   onClose,
   onApply,
 }: SynthesisPopupProps) {
   const { workspaceId } = useCurrentWorkspace();
-  const { data: profile } = useBusinessProfile(workspaceId, pageId);
+  const { data: profile } = useBusinessProfile(workspaceId, pageId, siteId);
   const [pagePurpose, setPagePurpose] = useState('');
   const [description, setDescription] = useState('');
   const [style, setStyle] = useState<'professional' | 'bold' | 'minimal' | 'playful'>('professional');
@@ -228,6 +230,7 @@ export default function SynthesisPopup({
         description: fullDescription,
         style_preference: style,
         page_id: pageId,
+        site_id: siteId,
         block_types: selectedBlockTypes,
         ...(intentHints.length > 0 && { intent_hints: intentHints }),
         ...(existingBlockTypes && existingBlockTypes.length > 0 && { existing_block_types: existingBlockTypes }),
@@ -279,6 +282,7 @@ export default function SynthesisPopup({
         const result = await synthesizeGenerate.mutateAsync({
           description: fullDescription,
           page_id: pageId,
+          site_id: siteId,
           brand: planResult.brand,
           design_system: planResult.design_system,
           intent: planResult.intent,

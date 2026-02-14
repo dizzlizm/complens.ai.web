@@ -57,6 +57,7 @@ class WarmupEmailGenerator:
         domain: str,
         recipient_email: str,
         exclude_subjects: list[str] | None = None,
+        site_id: str | None = None,
     ) -> dict:
         """Generate a warmup email using AI.
 
@@ -70,6 +71,8 @@ class WarmupEmailGenerator:
             domain: Sending domain.
             recipient_email: Recipient email address.
             exclude_subjects: Previously used subjects to avoid repetition.
+            site_id: Optional site ID (from WarmupDomain). Resolved from
+                DomainSetup if not provided.
 
         Returns:
             Dict with subject, body_text, body_html, content_type.
@@ -78,15 +81,19 @@ class WarmupEmailGenerator:
         tone = random.choice(TONES)
         length = random.choice(LENGTHS)
 
+        # Use provided site_id, or resolve from domain
+        if not site_id:
+            site_id = self._resolve_site_id(workspace_id, domain)
+
         business_context = ""
         try:
-            business_context = get_business_context(workspace_id)
+            business_context = get_business_context(workspace_id, site_id=site_id)
         except Exception:
             logger.debug("Could not load business context, using generic", workspace_id=workspace_id)
 
         # Gather enrichment context from KB, pages, and deals
-        kb_context = self._get_kb_context(workspace_id, content_type)
-        page_context = self._get_page_context(workspace_id)
+        kb_context = self._get_kb_context(workspace_id, content_type, site_id=site_id)
+        page_context = self._get_page_context(workspace_id, site_id=site_id)
         deal_context = self._get_deal_context(workspace_id)
 
         enrichment_parts: list[str] = []
@@ -162,12 +169,37 @@ Return JSON with exactly these fields:
             return self._fallback_email(domain, content_type)
 
     @staticmethod
-    def _get_kb_context(workspace_id: str, content_type: str) -> str:
+    def _resolve_site_id(workspace_id: str, domain: str) -> str | None:
+        """Resolve site_id from a sending domain.
+
+        Looks up the DomainSetup record which links a domain to a site.
+
+        Args:
+            workspace_id: Workspace ID.
+            domain: Sending domain name.
+
+        Returns:
+            Site ID if the domain belongs to a site, None otherwise.
+        """
+        try:
+            from complens.repositories.domain import DomainRepository
+
+            domain_repo = DomainRepository()
+            domain_setup = domain_repo.get_by_domain(workspace_id, domain)
+            if domain_setup and domain_setup.site_id:
+                return domain_setup.site_id
+        except Exception:
+            logger.debug("Could not resolve site_id from domain", domain=domain)
+        return None
+
+    @staticmethod
+    def _get_kb_context(workspace_id: str, content_type: str, site_id: str | None = None) -> str:
         """Retrieve relevant KB snippets for the given content type.
 
         Args:
             workspace_id: Workspace ID.
             content_type: Email content type (newsletter, product_update, etc.).
+            site_id: Optional site ID for site-scoped retrieval.
 
         Returns:
             Formatted KB snippets string, or empty string if none available.
@@ -177,13 +209,16 @@ Return JSON with exactly these fields:
             from complens.services.knowledge_base_service import KnowledgeBaseService
 
             doc_repo = DocumentRepository()
-            indexed_docs, _ = doc_repo.list_by_workspace(workspace_id, status="indexed", limit=1)
+            if site_id:
+                indexed_docs, _ = doc_repo.list_by_site(workspace_id, site_id, limit=1)
+            else:
+                indexed_docs, _ = doc_repo.list_by_workspace(workspace_id, status="indexed", limit=1)
             if not indexed_docs:
                 return ""
 
             kb_service = KnowledgeBaseService()
             query = KB_QUERIES_BY_CONTENT_TYPE.get(content_type, "product features updates")
-            results = kb_service.retrieve(workspace_id, query, max_results=3)
+            results = kb_service.retrieve(workspace_id, query, max_results=3, site_id=site_id)
 
             if not results:
                 return ""
@@ -202,11 +237,12 @@ Return JSON with exactly these fields:
             return ""
 
     @staticmethod
-    def _get_page_context(workspace_id: str) -> str:
+    def _get_page_context(workspace_id: str, site_id: str | None = None) -> str:
         """Get published landing page titles and URLs for email references.
 
         Args:
             workspace_id: Workspace ID.
+            site_id: Optional site ID to filter pages.
 
         Returns:
             Formatted page list string, or empty string if none.
@@ -219,6 +255,10 @@ Return JSON with exactly these fields:
 
             if not pages:
                 return ""
+
+            # Filter to site pages when site_id is provided
+            if site_id:
+                pages = [p for p in pages if getattr(p, "site_id", None) == site_id]
 
             lines = []
             for page in pages:

@@ -19,6 +19,7 @@ interface NodeConfigPanelProps {
   node: Node | null;
   workspaceId: string | undefined;
   pageId?: string; // When provided, filters forms/pages to this page's context
+  siteId?: string;
   onClose: () => void;
   onUpdate: (nodeId: string, data: Partial<NodeData>) => void;
   getNodes?: () => Node[];
@@ -998,7 +999,7 @@ function getNodeColor(type: string) {
   }
 }
 
-export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, onUpdate, getNodes, getEdges }: NodeConfigPanelProps) {
+export default function NodeConfigPanel({ node, workspaceId, pageId, siteId, onClose, onUpdate, getNodes, getEdges }: NodeConfigPanelProps) {
   const [localLabel, setLocalLabel] = useState('');
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
   const [activeTab, setActiveTab] = useState<'config' | 'preview'>('config');
@@ -1007,21 +1008,28 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
   // Determine if we're in page-specific context
   const isPageContext = !!pageId;
 
+  // Fetch pages - scope to site when in site context
+  const { data: pages, isLoading: isLoadingPages } = usePages(workspaceId, siteId);
+  const { data: currentPage } = usePage(workspaceId, pageId);
+
   // Fetch data for dynamic dropdowns
   // When pageId is provided (page-level workflow), only show forms for that page
   // When pageId is NOT provided (global workflow), show all workspace forms
   const { data: allForms, isLoading: isLoadingAllForms } = useForms(workspaceId);
   const { data: pageForms, isLoading: isLoadingPageForms } = usePageForms(workspaceId, pageId);
 
-  // Use page-specific forms when in page context, otherwise all workspace forms
-  const forms = isPageContext ? pageForms : allForms;
+  // Filter forms by site when in site context (but not page context)
+  const siteForms = useMemo(() => {
+    if (!siteId || !allForms || !pages) return allForms;
+    const sitePageIds = new Set(pages.map(p => p.id));
+    return allForms.filter(f => f.page_id && sitePageIds.has(f.page_id));
+  }, [siteId, allForms, pages]);
+
+  // Use page-specific forms when in page context, site-filtered when in site context, otherwise all
+  const forms = isPageContext ? pageForms : (siteId ? siteForms : allForms);
   const isLoadingForms = isPageContext ? isLoadingPageForms : isLoadingAllForms;
 
-  // Fetch pages - in page context, we might still want to show other pages for reference
-  const { data: pages, isLoading: isLoadingPages } = usePages(workspaceId);
-  const { data: currentPage } = usePage(workspaceId, pageId);
-
-  const { data: workflows, isLoading: isLoadingWorkflows } = useWorkflows(workspaceId || '');
+  const { data: workflows, isLoading: isLoadingWorkflows } = useWorkflows(workspaceId || '', siteId);
   const { data: contactsData, isLoading: isLoadingContacts } = useContacts(workspaceId || '', { limit: 100 });
   const { data: domainsData, isLoading: isLoadingDomains } = useListDomains(workspaceId);
 
@@ -1129,6 +1137,7 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, onClose, on
         current_config: currentConfig,
         nodes: getNodes?.().map(n => ({ id: n.id, type: n.type, data: n.data })) || [],
         edges: getEdges?.().map(e => ({ source: e.source, target: e.target })) || [],
+        site_id: siteId,
       });
       if (suggestedConfig && Object.keys(suggestedConfig).length > 0) {
         const mergedConfig = { ...currentConfig };

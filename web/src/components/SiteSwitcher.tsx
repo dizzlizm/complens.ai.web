@@ -1,4 +1,4 @@
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCurrentWorkspace } from '@/lib/hooks/useWorkspaces';
 import { useSites } from '@/lib/hooks/useSites';
@@ -14,7 +14,6 @@ export default function SiteSwitcher() {
   const { workspaceId } = useCurrentWorkspace();
   const { data: sites } = useSites(workspaceId);
   const navigate = useNavigate();
-  const location = useLocation();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -42,10 +41,8 @@ export default function SiteSwitcher() {
     queryClient.removeQueries({ queryKey: ['businessProfile', workspaceId] });
     queryClient.removeQueries({ queryKey: ['site', workspaceId] });
 
-    // Preserve the current sub-route (e.g., /pages, /workflows)
-    const match = location.pathname.match(/\/sites\/[^/]+(\/.*)$/);
-    const subRoute = match?.[1] || '/pages';
-    navigate(`/sites/${newSiteId}${subRoute}`);
+    // Navigate to the new site root — SiteLayout will redirect to the page editor
+    navigate(`/sites/${newSiteId}`);
     setOpen(false);
   };
 

@@ -89,7 +89,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         elif http_method == "DELETE" and domain:
             return cancel_warmup(service, workspace_id, domain)
         elif http_method == "GET" and not domain:
-            return list_warmups(repo, workspace_id)
+            return list_warmups(repo, workspace_id, event)
         elif http_method == "POST" and not domain:
             return start_warmup(service, workspace_id, event)
         else:
@@ -110,17 +110,24 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         return error("Internal server error", 500)
 
 
-def list_warmups(repo: WarmupDomainRepository, workspace_id: str) -> dict:
-    """List all warm-up domains for a workspace.
+def list_warmups(repo: WarmupDomainRepository, workspace_id: str, event: dict) -> dict:
+    """List warm-up domains, optionally filtered by site_id.
 
     Args:
         repo: WarmupDomainRepository.
         workspace_id: Workspace ID.
+        event: API Gateway event (for query params).
 
     Returns:
         API response with warmup list.
     """
-    warmups, _ = repo.list_by_workspace(workspace_id, limit=100)
+    query_params = event.get("queryStringParameters", {}) or {}
+    site_id = query_params.get("site_id")
+
+    if site_id:
+        warmups = repo.list_by_site(workspace_id, site_id)
+    else:
+        warmups, _ = repo.list_by_workspace(workspace_id, limit=100)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     items = []

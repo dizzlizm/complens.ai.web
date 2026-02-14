@@ -16,7 +16,6 @@ import SegmentConfigCard from '../components/settings/SegmentConfigCard';
 import TeamManagement from '../components/settings/TeamManagement';
 import PricingTable from '../components/settings/PricingTable';
 import { TimezoneSelect } from '../components/ui';
-import EmailIdentity from '../components/email/EmailIdentity';
 import WarmupManager from '../components/email/WarmupManager';
 
 const settingsSections = [
@@ -57,16 +56,17 @@ const settingsSections = [
     description: 'Authentication, SSO, and access control',
   },
   {
-    id: 'email',
-    name: 'Email',
-    icon: Mail,
-    description: 'Email sender domain verification and settings',
+    id: 'domains',
+    name: 'Domains',
+    icon: Globe,
+    description: 'Domain verification, DNS records, and email warmup',
   },
 ];
 
 export default function Settings() {
   const [searchParams] = useSearchParams();
-  const initialSection = searchParams.get('section') === 'email' ? 'email' : 'workspace';
+  const sectionParam = searchParams.get('section');
+  const initialSection = sectionParam === 'domains' || sectionParam === 'email' ? 'domains' : 'workspace';
   const [activeSection, setActiveSection] = useState(initialSection);
 
   return (
@@ -109,7 +109,7 @@ export default function Settings() {
           {activeSection === 'integrations' && <IntegrationSettings />}
           {activeSection === 'billing' && <BillingSettings />}
           {activeSection === 'security' && <SecuritySettings />}
-          {activeSection === 'email' && <EmailDomainSettings />}
+          {activeSection === 'domains' && <DomainsSettings />}
         </div>
       </div>
     </div>
@@ -925,12 +925,11 @@ function SecuritySettings() {
   );
 }
 
-function EmailDomainSettings() {
+function DomainsSettings() {
   const { workspaceId } = useCurrentWorkspace();
-  const [emailSubTab, setEmailSubTab] = useState<'identity' | 'domains' | 'warmup'>('identity');
+  const [subTab, setSubTab] = useState<'domains' | 'warmup'>('domains');
 
   const subTabs = [
-    { id: 'identity' as const, label: 'Identity' },
     { id: 'domains' as const, label: 'Domains' },
     { id: 'warmup' as const, label: 'Warmup' },
   ];
@@ -942,9 +941,9 @@ function EmailDomainSettings() {
         {subTabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setEmailSubTab(tab.id)}
+            onClick={() => setSubTab(tab.id)}
             className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
-              emailSubTab === tab.id
+              subTab === tab.id
                 ? 'border-primary-600 text-primary-700'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
@@ -954,14 +953,11 @@ function EmailDomainSettings() {
         ))}
       </div>
 
-      {emailSubTab === 'identity' && (
-        <EmailIdentity workspaceId={workspaceId} onNavigateToDomains={() => setEmailSubTab('domains')} />
+      {subTab === 'domains' && (
+        <SendingDomainsCard workspaceId={workspaceId} onNavigateToWarmup={() => setSubTab('warmup')} />
       )}
-      {emailSubTab === 'domains' && (
-        <SendingDomainsCard workspaceId={workspaceId} onNavigateToWarmup={() => setEmailSubTab('warmup')} />
-      )}
-      {emailSubTab === 'warmup' && (
-        <WarmupManager workspaceId={workspaceId} onNavigateToDomains={() => setEmailSubTab('domains')} />
+      {subTab === 'warmup' && (
+        <WarmupManager workspaceId={workspaceId} onNavigateToDomains={() => setSubTab('domains')} />
       )}
     </div>
   );

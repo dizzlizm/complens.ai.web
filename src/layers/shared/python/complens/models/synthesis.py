@@ -312,6 +312,9 @@ class SynthesizePageRequest(PydanticBaseModel):
     page_id: str | None = Field(
         default=None, description="Existing page ID for update mode"
     )
+    site_id: str | None = Field(
+        default=None, description="Site ID for site-scoped profile"
+    )
     include_form: bool = Field(default=True)
     include_chat: bool = Field(default=True)
     block_types: list[str] | None = Field(
@@ -391,6 +394,9 @@ class SynthesizePlanRequest(PydanticBaseModel):
     page_id: str | None = Field(
         default=None, description="Existing page ID for update mode"
     )
+    site_id: str | None = Field(
+        default=None, description="Site ID for site-scoped profile"
+    )
     block_types: list[str] | None = Field(
         default=None,
         description="Only generate these block types",
@@ -415,6 +421,9 @@ class SynthesizeGenerateRequest(PydanticBaseModel):
         ..., min_length=10, max_length=10000, description="Business/page description"
     )
     page_id: str | None = Field(default=None)
+    site_id: str | None = Field(
+        default=None, description="Site ID for site-scoped profile"
+    )
     brand: BrandFoundation = Field(..., description="Brand context from plan phase")
     design_system: DesignSystem = Field(..., description="Design system from plan phase")
     intent: PageIntent = Field(..., description="Intent from plan phase")

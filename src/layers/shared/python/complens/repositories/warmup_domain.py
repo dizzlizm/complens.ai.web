@@ -66,6 +66,29 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
             last_key=last_key,
         )
 
+    def list_by_site(
+        self,
+        workspace_id: str,
+        site_id: str,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[WarmupDomain]:
+        """List warm-up domains for a specific site.
+
+        Queries by workspace then filters by site_id.
+
+        Args:
+            workspace_id: Workspace ID.
+            site_id: Site ID to filter by.
+            status: Optional status filter.
+            limit: Maximum items to return.
+
+        Returns:
+            List of WarmupDomain records for the site.
+        """
+        warmups, _ = self.list_by_workspace(workspace_id, status=status, limit=limit)
+        return [w for w in warmups if w.site_id == site_id]
+
     def list_active(self, limit: int = 500) -> list[WarmupDomain]:
         """List all active warm-up domains across all workspaces.
 

@@ -138,6 +138,7 @@ class SynthesisEngine:
         include_form: bool = True,
         include_chat: bool = True,
         block_types: list[str] | None = None,
+        site_id: str | None = None,
     ) -> SynthesisResult:
         """Main entry point for page synthesis.
 
@@ -167,7 +168,7 @@ class SynthesisEngine:
         stages_executed: list[str] = []
 
         # Get business profile for context
-        profile = self._get_profile(workspace_id, page_id)
+        profile = self._get_profile(workspace_id, page_id, site_id)
 
         # Stage 1: Intent Analysis
         logger.debug("Stage 1: Analyzing intent")
@@ -273,6 +274,7 @@ class SynthesisEngine:
         style_preference: str | None = None,
         block_types: list[str] | None = None,
         existing_block_types: list[str] | None = None,
+        site_id: str | None = None,
     ) -> PlanResult:
         """Phase 1: Plan the page — fast, single Haiku call.
 
@@ -297,7 +299,7 @@ class SynthesisEngine:
             description_length=len(description),
         )
 
-        profile = self._get_profile(workspace_id, page_id)
+        profile = self._get_profile(workspace_id, page_id, site_id)
 
         # Stage 1: Intent Analysis
         intent = self._analyze_intent(description, intent_hints, profile)
@@ -372,6 +374,7 @@ class SynthesisEngine:
         block_types: list[str],
         page_id: str | None = None,
         include_form: bool = False,
+        site_id: str | None = None,
     ) -> GenerateResult:
         """Phase 2: Generate content for a batch of blocks.
 
@@ -397,7 +400,7 @@ class SynthesisEngine:
             block_types=block_types,
         )
 
-        profile = self._get_profile(workspace_id, page_id)
+        profile = self._get_profile(workspace_id, page_id, site_id)
         profile_context = profile.get_ai_context() if profile.business_name else ""
 
         # Add knowledge base context
@@ -511,10 +514,10 @@ class SynthesisEngine:
         )
 
     def _get_profile(
-        self, workspace_id: str, page_id: str | None = None
+        self, workspace_id: str, page_id: str | None = None, site_id: str | None = None
     ) -> BusinessProfile:
         """Get the business profile for context."""
-        return self.profile_repo.get_or_create(workspace_id, page_id)
+        return self.profile_repo.get_or_create(workspace_id, page_id, site_id)
 
     def _analyze_intent(
         self,

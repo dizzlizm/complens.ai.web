@@ -2,6 +2,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import api from '../api';
 
+export interface SitePrimaryPage {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  subdomain?: string;
+}
+
 export interface Site {
   id: string;
   workspace_id: string;
@@ -9,6 +17,7 @@ export interface Site {
   name: string;
   description: string | null;
   settings: Record<string, unknown>;
+  primary_page?: SitePrimaryPage;
   created_at: string;
   updated_at: string;
 }

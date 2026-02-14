@@ -100,8 +100,15 @@ def list_sites(
     if next_key:
         next_cursor = base64.b64encode(json.dumps(next_key).encode()).decode()
 
+    # Enrich each site with its primary page info
+    items = []
+    for s in sites:
+        site_data = s.model_dump(mode="json")
+        site_data["primary_page"] = _get_primary_page(workspace_id, s.id)
+        items.append(site_data)
+
     return success({
-        "items": [s.model_dump(mode="json") for s in sites],
+        "items": items,
         "pagination": {
             "limit": limit,
             "next_cursor": next_cursor,
@@ -127,6 +134,9 @@ def _ensure_default_site(repo: SiteRepository, workspace_id: str) -> Site | None
         # Adopt any unassigned pages (e.g., demo page from onboarding)
         _assign_orphan_pages(workspace_id, site.id)
 
+        # Ensure the site has at least one page
+        _ensure_site_has_page(workspace_id, site.id, site.name)
+
         return site
     except Exception as e:
         logger.error("Failed to auto-create default site", error=str(e), workspace_id=workspace_id)
@@ -149,6 +159,49 @@ def _assign_orphan_pages(workspace_id: str, site_id: str) -> None:
             logger.info("Orphan pages adopted", count=adopted, site_id=site_id, workspace_id=workspace_id)
     except Exception as e:
         logger.warning("Failed to adopt orphan pages", error=str(e))
+
+
+def _ensure_site_has_page(workspace_id: str, site_id: str, site_name: str) -> None:
+    """Ensure a site has at least one page. Creates one if empty."""
+    try:
+        page_repo = PageRepository()
+        pages, _ = page_repo.list_by_site(workspace_id, site_id, limit=1)
+        if pages:
+            return  # Already has pages
+
+        from complens.models.page import Page
+        slug = site_name.lower().replace(" ", "-").replace("_", "-")
+        slug = "".join(c for c in slug if c.isalnum() or c == "-")[:50] or "page"
+        page = Page(
+            workspace_id=workspace_id,
+            site_id=site_id,
+            name=site_name,
+            slug=slug,
+            status="draft",
+        )
+        page_repo.create_page(page)
+        logger.info("Auto-created page for site", page_id=page.id, site_id=site_id)
+    except Exception as e:
+        logger.warning("Failed to auto-create page for site", error=str(e), site_id=site_id)
+
+
+def _get_primary_page(workspace_id: str, site_id: str) -> dict | None:
+    """Get the primary (first) page for a site, returning summary info."""
+    try:
+        page_repo = PageRepository()
+        pages, _ = page_repo.list_by_site(workspace_id, site_id, limit=1)
+        if not pages:
+            return None
+        page = pages[0]
+        return {
+            "id": page.id,
+            "name": page.name,
+            "slug": page.slug,
+            "status": getattr(page, "status", "draft"),
+            "subdomain": getattr(page, "subdomain", None),
+        }
+    except Exception:
+        return None
 
 
 def get_site(
@@ -202,9 +255,14 @@ def create_site(
 
     site = repo.create_site(site)
 
+    # Auto-create a page for the new site
+    _ensure_site_has_page(workspace_id, site.id, site.name)
+
     logger.info("Site created", site_id=site.id, workspace_id=workspace_id, domain=site.domain_name)
 
-    return created(site.model_dump(mode="json"))
+    result = site.model_dump(mode="json")
+    result["primary_page"] = _get_primary_page(workspace_id, site.id)
+    return created(result)
 
 
 def update_site(

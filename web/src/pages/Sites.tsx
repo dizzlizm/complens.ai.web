@@ -18,10 +18,14 @@ export default function Sites() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Auto-navigate to the single site if there's exactly one
+  // Auto-navigate to the single site's page editor if there's exactly one
   useEffect(() => {
     if (!isLoading && sites && sites.length === 1) {
-      navigate(`/sites/${sites[0].id}/pages`, { replace: true });
+      const site = sites[0];
+      const target = site.primary_page
+        ? `/sites/${site.id}/pages/${site.primary_page.id}`
+        : `/sites/${site.id}/pages`;
+      navigate(target, { replace: true });
     }
   }, [isLoading, sites, navigate]);
 
@@ -99,7 +103,12 @@ export default function Sites() {
           {filteredSites.map((site) => (
               <div
                 key={site.id}
-                onClick={() => navigate(`/sites/${site.id}/pages`)}
+                onClick={() => {
+                  const target = site.primary_page
+                    ? `/sites/${site.id}/pages/${site.primary_page.id}`
+                    : `/sites/${site.id}/pages`;
+                  navigate(target);
+                }}
                 className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow group cursor-pointer"
               >
                 <div className="flex items-start justify-between mb-3">

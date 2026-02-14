@@ -370,6 +370,7 @@ export default function AgenticPageBuilder({
       const result = await generatePageContent.mutateAsync({
         business_description: description,
         page_id: pageId,
+        site_id: siteId,
       });
 
       setGeneratedContent(result);
@@ -417,6 +418,7 @@ export default function AgenticPageBuilder({
         feedback,
         section,
         page_id: pageId,
+        site_id: siteId,
       });
 
       setGeneratedContent(result);
@@ -526,6 +528,7 @@ export default function AgenticPageBuilder({
         intent_hints: generatedContent.business_info?.business_type ? [generatedContent.business_info.business_type] : undefined,
         style_preference: style,
         page_id: pageId,
+        site_id: siteId,
         include_form: includeForm,
         include_chat: includeChat,
       });

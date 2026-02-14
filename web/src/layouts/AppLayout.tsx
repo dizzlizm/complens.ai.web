@@ -21,6 +21,7 @@ import {
   BookOpen,
   ArrowLeft,
   MessageSquare,
+  Mail,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -37,8 +38,9 @@ const globalNavigation = [
 // Site-scoped navigation items (siteId will be interpolated)
 function getSiteNavigation(siteId: string) {
   return [
-    { name: 'Pages', href: `/sites/${siteId}/pages`, icon: FileText },
+    { name: 'Content', href: `/sites/${siteId}/pages`, icon: FileText },
     { name: 'Workflows', href: `/sites/${siteId}/workflows`, icon: GitBranch },
+    { name: 'Email', href: `/sites/${siteId}/email`, icon: Mail },
     { name: 'AI & Knowledge Base', href: `/sites/${siteId}/ai`, icon: BookOpen },
   ];
 }

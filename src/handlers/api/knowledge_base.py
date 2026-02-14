@@ -150,6 +150,7 @@ def create_document(
         document_id=document.id,
         content_type=request.content_type,
         file_name=request.name,
+        site_id=site_id,
     )
 
     logger.info(

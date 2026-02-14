@@ -37,6 +37,7 @@ class KnowledgeBaseService:
         document_id: str,
         content_type: str,
         file_name: str,
+        site_id: str | None = None,
     ) -> str:
         """Generate a presigned URL for document upload.
 
@@ -45,6 +46,7 @@ class KnowledgeBaseService:
             document_id: Document ID.
             content_type: MIME type.
             file_name: Original file name.
+            site_id: Optional site ID for site-scoped documents.
 
         Returns:
             Presigned upload URL.
@@ -52,16 +54,20 @@ class KnowledgeBaseService:
         bucket = os.environ.get("KB_DOCUMENTS_BUCKET", "")
         key = f"workspaces/{workspace_id}/documents/{document_id}/{file_name}"
 
+        metadata = {
+            "workspace_id": workspace_id,
+            "document_id": document_id,
+        }
+        if site_id:
+            metadata["site_id"] = site_id
+
         url = self.s3.generate_presigned_url(
             "put_object",
             Params={
                 "Bucket": bucket,
                 "Key": key,
                 "ContentType": content_type,
-                "Metadata": {
-                    "workspace_id": workspace_id,
-                    "document_id": document_id,
-                },
+                "Metadata": metadata,
             },
             ExpiresIn=3600,
         )
@@ -153,6 +159,7 @@ class KnowledgeBaseService:
         workspace_id: str,
         query: str,
         max_results: int = 5,
+        site_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve relevant documents from Bedrock Knowledge Base.
 
@@ -160,6 +167,7 @@ class KnowledgeBaseService:
             workspace_id: Workspace ID for metadata filtering.
             query: Search query.
             max_results: Maximum results to return.
+            site_id: Optional site ID for site-scoped retrieval.
 
         Returns:
             List of retrieval results with text and metadata.
@@ -169,6 +177,18 @@ class KnowledgeBaseService:
             logger.warning("KNOWLEDGE_BASE_ID not configured")
             return []
 
+        # Build metadata filter — scope to site when provided
+        metadata_filter: dict = {
+            "equals": {"key": "workspace_id", "value": workspace_id},
+        }
+        if site_id:
+            metadata_filter = {
+                "andAll": [
+                    {"equals": {"key": "workspace_id", "value": workspace_id}},
+                    {"equals": {"key": "site_id", "value": site_id}},
+                ],
+            }
+
         try:
             response = self.bedrock_agent.retrieve(
                 knowledgeBaseId=kb_id,
@@ -176,12 +196,7 @@ class KnowledgeBaseService:
                 retrievalConfiguration={
                     "vectorSearchConfiguration": {
                         "numberOfResults": max_results,
-                        "filter": {
-                            "equals": {
-                                "key": "workspace_id",
-                                "value": workspace_id,
-                            },
-                        },
+                        "filter": metadata_filter,
                     },
                 },
             )

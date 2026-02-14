@@ -21,6 +21,7 @@ interface BlockAIToolbarProps {
     accentColor?: string;
   };
   pageId?: string;
+  siteId?: string;
 }
 
 // Functional editing options only - tone/voice comes from the business profile
@@ -42,6 +43,7 @@ export default function BlockAIToolbar({
   imageField = 'url',
   pageDesign,
   pageId,
+  siteId,
 }: BlockAIToolbarProps) {
   const { workspaceId } = useCurrentWorkspace();
   const [showOptions, setShowOptions] = useState(false);
@@ -50,7 +52,7 @@ export default function BlockAIToolbar({
 
   const improveBlock = useImproveBlock(workspaceId || '');
   const generateImage = useGenerateImage(workspaceId || '');
-  const { data: businessProfile } = useBusinessProfile(workspaceId, pageId);
+  const { data: businessProfile } = useBusinessProfile(workspaceId, pageId, siteId);
 
   // Whether this is a hero block that should auto-generate from context
   const isHeroImage = blockType === 'hero' && imageField === 'backgroundImage';
@@ -64,6 +66,7 @@ export default function BlockAIToolbar({
         config,
         page_context: pageContext,
         instruction,
+        site_id: siteId,
       });
 
       onConfigChange(improved);

@@ -21,7 +21,7 @@ import {
 import { useGenerateWorkflow, useGeneratePageWorkflow } from '../lib/hooks/useAI';
 import { useCreateTemplate } from '../lib/hooks/useWorkflowTemplates';
 import { useWorkflowEvents, type WorkflowEvent } from '../lib/hooks/useWorkflowEvents';
-import api from '../lib/api';
+import api, { getApiErrorMessage } from '../lib/api';
 import { useToast } from '../components/Toast';
 
 export default function WorkflowEditor() {
@@ -334,7 +334,7 @@ export default function WorkflowEditor() {
         toast.success(currentStatus === 'draft' ? 'Workflow saved and activated!' : 'Workflow saved!');
       }
     } catch (error) {
-      toast.error(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      toast.error(`Failed to save: ${getApiErrorMessage(error, 'Unknown error')}`);
     } finally {
       setIsSaving(false);
     }
@@ -350,6 +350,7 @@ export default function WorkflowEditor() {
     try {
       const generatedWorkflow = await generateWorkflow.mutateAsync({
         description: aiDescription,
+        site_id: siteId,
       });
 
       if (generatedWorkflow && canvasRef.current) {
@@ -607,6 +608,7 @@ export default function WorkflowEditor() {
             node={selectedNode}
             workspaceId={workspaceId}
             pageId={pageId}
+            siteId={siteId}
             onClose={() => setSelectedNodeId(null)}
             onUpdate={handleNodeUpdate}
             getNodes={() => canvasRef.current?.getNodes() || []}

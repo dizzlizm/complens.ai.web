@@ -323,8 +323,20 @@ class WarmupService:
                 from complens.utils.exceptions import ConflictError
                 raise ConflictError(f"Warmup already exists for domain '{domain}'")
 
+        # Resolve site_id from DomainSetup if available
+        site_id = None
+        try:
+            from complens.repositories.domain import DomainRepository
+            domain_repo = DomainRepository()
+            domain_setup = domain_repo.get_by_domain(workspace_id, domain)
+            if domain_setup and domain_setup.site_id:
+                site_id = domain_setup.site_id
+        except Exception:
+            logger.debug("Could not resolve site_id for warmup domain", domain=domain)
+
         warmup = WarmupDomain(
             workspace_id=workspace_id,
+            site_id=site_id,
             domain=domain,
             status=WarmupStatus.ACTIVE,
             warmup_day=0,

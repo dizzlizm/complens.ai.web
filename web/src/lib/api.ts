@@ -64,8 +64,17 @@ export function getApiErrorMessage(error: unknown, fallback: string = 'An error 
   if (axios.isAxiosError(error)) {
     const data = error.response?.data;
     if (typeof data === 'object' && data !== null) {
-      return (data as Record<string, unknown>).error as string
-        || (data as Record<string, unknown>).message as string
+      const d = data as Record<string, unknown>;
+      // Surface specific validation errors when available
+      const details = d.details as Record<string, unknown> | undefined;
+      if (details?.errors && Array.isArray(details.errors) && details.errors.length > 0) {
+        const messages = (details.errors as Array<{ message?: string }>)
+          .map(e => e.message)
+          .filter(Boolean);
+        if (messages.length > 0) return messages.join('; ');
+      }
+      return d.error as string
+        || d.message as string
         || fallback;
     }
   }

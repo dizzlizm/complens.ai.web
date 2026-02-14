@@ -39,27 +39,36 @@ BEDROCK_CONFIG = Config(
 bedrock = boto3.client("bedrock-runtime", config=BEDROCK_CONFIG)
 
 
-def get_business_context(workspace_id: str, page_id: str | None = None) -> str:
-    """Get the business profile context for a workspace or page.
+def get_business_context(
+    workspace_id: str,
+    page_id: str | None = None,
+    site_id: str | None = None,
+) -> str:
+    """Get the business profile context for a workspace, site, or page.
 
     Args:
         workspace_id: The workspace ID.
         page_id: Optional page ID for page-specific profile.
+        site_id: Optional site ID for site-specific profile.
 
     Returns:
         Formatted context string for AI prompts.
     """
     repo = BusinessProfileRepository()
-    profile = repo.get_or_create(workspace_id, page_id)
+    # Cascade read (page → site → workspace) — never create as a side-effect
+    profile = repo.get_effective_profile(workspace_id, page_id, site_id)
+    if not profile:
+        return ""
     return profile.get_ai_context()
 
 
-def get_kb_context(workspace_id: str, query: str) -> str:
+def get_kb_context(workspace_id: str, query: str, site_id: str | None = None) -> str:
     """Retrieve relevant knowledge base documents for AI prompts.
 
     Args:
         workspace_id: The workspace ID.
         query: Search query to find relevant documents.
+        site_id: Optional site ID for site-scoped retrieval.
 
     Returns:
         Formatted context string from KB, or empty string if no results.
@@ -68,7 +77,7 @@ def get_kb_context(workspace_id: str, query: str) -> str:
         from complens.services.knowledge_base_service import KnowledgeBaseService
 
         kb_service = KnowledgeBaseService()
-        results = kb_service.retrieve(workspace_id, query, max_results=3)
+        results = kb_service.retrieve(workspace_id, query, max_results=3, site_id=site_id)
 
         if not results:
             return ""
@@ -93,6 +102,7 @@ def invoke_claude(
     model: str = DEFAULT_MODEL,
     max_tokens: int = 4096,
     temperature: float = 0.7,
+    site_id: str | None = None,
 ) -> str:
     """Invoke Claude with optional business context.
 
@@ -104,6 +114,7 @@ def invoke_claude(
         model: The model to use.
         max_tokens: Maximum tokens to generate.
         temperature: Sampling temperature.
+        site_id: Optional site ID for site-specific profile.
 
     Returns:
         The generated text response.
@@ -112,13 +123,13 @@ def invoke_claude(
     system_parts = []
 
     if workspace_id:
-        context = get_business_context(workspace_id, page_id)
+        context = get_business_context(workspace_id, page_id, site_id)
         if context:
             system_parts.append(context)
             system_parts.append("")  # Add blank line
 
         # Include knowledge base context
-        kb_context = get_kb_context(workspace_id, prompt)
+        kb_context = get_kb_context(workspace_id, prompt, site_id=site_id)
         if kb_context:
             system_parts.append(kb_context)
             system_parts.append("")
@@ -163,6 +174,7 @@ def invoke_claude_json(
     workspace_id: str | None = None,
     page_id: str | None = None,
     model: str = DEFAULT_MODEL,
+    site_id: str | None = None,
 ) -> dict:
     """Invoke Claude and parse JSON response.
 
@@ -172,6 +184,7 @@ def invoke_claude_json(
         workspace_id: Optional workspace ID for business context.
         page_id: Optional page ID for page-specific profile.
         model: The model to use.
+        site_id: Optional site ID for site-specific profile.
 
     Returns:
         Parsed JSON response as dict.
@@ -183,6 +196,7 @@ def invoke_claude_json(
         page_id=page_id,
         model=model,
         temperature=0.5,  # Lower temperature for structured output
+        site_id=site_id,
     )
 
     # Try to parse JSON from response
@@ -211,6 +225,7 @@ def improve_block_content(
     page_context: dict | None = None,
     instruction: str = "Improve this content",
     page_id: str | None = None,
+    site_id: str | None = None,
 ) -> dict:
     """Improve a block's content using AI with full context.
 
@@ -259,7 +274,7 @@ Improve this content following the instruction: {instruction}
 
 Return the improved configuration as a JSON object with the same structure."""
 
-    return invoke_claude_json(prompt, system, workspace_id, page_id)
+    return invoke_claude_json(prompt, system, workspace_id, page_id, site_id=site_id)
 
 
 def generate_page_blocks(
@@ -269,6 +284,7 @@ def generate_page_blocks(
     include_form: bool = True,
     include_chat: bool = False,
     page_id: str | None = None,
+    site_id: str | None = None,
 ) -> list[dict]:
     """Generate page blocks from a description using AI with full context.
 
@@ -319,7 +335,7 @@ Return ONLY valid JSON array of block objects. Each block should have:
 
 Generate the blocks as a JSON array. Use the business context to personalize all content."""
 
-    blocks = invoke_claude_json(prompt, system, workspace_id, page_id)
+    blocks = invoke_claude_json(prompt, system, workspace_id, page_id, site_id=site_id)
 
     # Ensure it's a list
     if isinstance(blocks, dict) and "blocks" in blocks:
@@ -337,6 +353,7 @@ def suggest_next_workflow_step(
     forms: list[dict] | None = None,
     pages: list[dict] | None = None,
     domains: list[str] | None = None,
+    site_id: str | None = None,
 ) -> list[dict]:
     """Suggest the next workflow step based on current workflow context.
 
@@ -455,7 +472,7 @@ Return a JSON array where each element has:
 - "description": one-line explanation of why this step is useful
 - "config": complete config object ready to use"""
 
-    result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+    result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL, site_id=site_id)
 
     # Normalize: accept both array and {"suggestions": [...]}
     if isinstance(result, dict) and "suggestions" in result:
@@ -475,6 +492,7 @@ def generate_page_workflow(
     domains: list[str] | None = None,
     from_email: str | None = None,
     owner_email: str | None = None,
+    site_id: str | None = None,
 ) -> dict:
     """Generate a complete workflow for a landing page.
 
@@ -670,7 +688,7 @@ Forms:
 Design the automation steps for this landing page.
 Write real email copy that matches this page's purpose and brand voice."""
 
-    result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+    result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL, site_id=site_id)
 
     if not isinstance(result, dict) or "steps" not in result:
         logger.warning("generate_page_workflow: unexpected AI result", result_type=type(result).__name__)
@@ -859,6 +877,7 @@ def autofill_node_config(
     current_config: dict,
     preceding_nodes: list[dict],
     business_profile: dict | None = None,
+    site_id: str | None = None,
 ) -> dict:
     """Suggest values for empty fields in a workflow node's configuration.
 
@@ -971,7 +990,7 @@ Preceding nodes (in order, earliest first):
 Suggest values for the empty fields in this node's configuration.
 Return a JSON object with only the field names and suggested values."""
 
-    result = invoke_claude_json(prompt, system, workspace_id, model=FAST_MODEL)
+    result = invoke_claude_json(prompt, system, workspace_id, model=FAST_MODEL, site_id=site_id)
 
     # Only return suggestions for fields that were actually empty
     if current_config and not all_empty:
@@ -985,6 +1004,7 @@ def generate_workflow_from_description(
     description: str,
     available_triggers: list[str] | None = None,
     available_actions: list[str] | None = None,
+    site_id: str | None = None,
 ) -> dict:
     """Generate a workflow from a natural language description.
 
@@ -1105,7 +1125,7 @@ Return JSON with:
 
 Return the workflow as a JSON object. Make sure every node's data.config has all required fields populated with real content."""
 
-    return invoke_claude_json(prompt, system, workspace_id)
+    return invoke_claude_json(prompt, system, workspace_id, site_id=site_id)
 
 
 def generate_image_prompt(
@@ -1113,6 +1133,7 @@ def generate_image_prompt(
     context: str,
     style: str = "professional",
     colors: dict | None = None,
+    site_id: str | None = None,
 ) -> str:
     """Generate an image prompt based on business context.
 
@@ -1157,7 +1178,7 @@ Visual style: {style}{color_info}
 
 The image should align with the brand and appeal to the target audience."""
 
-    return invoke_claude(prompt, system, workspace_id, model=FAST_MODEL, max_tokens=500)
+    return invoke_claude(prompt, system, workspace_id, model=FAST_MODEL, max_tokens=500, site_id=site_id)
 
 
 def generate_image(
@@ -1237,6 +1258,7 @@ def generate_image(
 def ask_onboarding_question(
     workspace_id: str,
     previous_answers: list[dict],
+    site_id: str | None = None,
 ) -> dict:
     """Generate the next onboarding question based on previous answers.
 
@@ -1276,7 +1298,7 @@ Return JSON with:
 What's the most important question to ask next?
 If we have enough information, set is_complete to true."""
 
-    return invoke_claude_json(prompt, system, workspace_id, model=FAST_MODEL)
+    return invoke_claude_json(prompt, system, workspace_id, model=FAST_MODEL, site_id=site_id)
 
 
 def analyze_content_for_profile(
@@ -1370,6 +1392,7 @@ def generate_page_content_from_description(
     workspace_id: str,
     business_description: str,
     page_id: str | None = None,
+    site_id: str | None = None,
 ) -> dict:
     """Generate rich page content from a business description.
 
@@ -1480,7 +1503,7 @@ generate compelling marketing copy that will convert visitors into leads.
 Prioritize information from the business context - it contains verified details."""
 
     try:
-        result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+        result = invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL, site_id=site_id)
 
         # Validate and ensure required structure
         if "business_info" not in result:
@@ -1507,6 +1530,7 @@ def refine_page_content(
     feedback: str,
     section: str | None = None,
     page_id: str | None = None,
+    site_id: str | None = None,
 ) -> dict:
     """Refine generated page content based on user feedback.
 
@@ -1545,7 +1569,7 @@ User feedback: {feedback}
 Generate the updated content with the feedback applied."""
 
     try:
-        return invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL)
+        return invoke_claude_json(prompt, system, workspace_id, page_id, model=FAST_MODEL, site_id=site_id)
     except Exception as e:
         logger.error("Failed to refine page content", error=str(e))
         raise

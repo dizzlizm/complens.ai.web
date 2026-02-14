@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { usePage, useUpdatePage, type UpdatePageInput, type PageLayout } from '../lib/hooks/usePages';
 import { usePageForms, type Form } from '../lib/hooks/useForms';
-import { usePageWorkflows } from '../lib/hooks/useWorkflows';
+// usePageWorkflows removed — Workflows tab is now in sidebar nav
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import { useSite } from '../lib/hooks/useSites';
 import {
@@ -15,7 +15,7 @@ import { PageBlock, AgenticPageBuilder, ContentTabV2 } from '../components/page-
 import { Loader2 } from 'lucide-react';
 import Tabs from '../components/ui/Tabs';
 import DomainTab from '../components/page-editor/DomainTab';
-import WorkflowsTab from '../components/page-editor/WorkflowsTab';
+// WorkflowsTab removed — accessible via sidebar nav
 import FormsTab from '../components/page-editor/FormsTab';
 
 // Auto-save delay in milliseconds
@@ -25,18 +25,16 @@ const AUTO_SAVE_DELAY = 3000;
 const API_URL = import.meta.env.VITE_API_URL || '';
 const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '') || 'complens.ai';
 
-type Tab = 'content' | 'forms' | 'workflows' | 'domain';
+type Tab = 'content' | 'forms' | 'domain';
 
 export default function PageEditor() {
   const { id: pageId, siteId } = useParams<{ id: string; siteId: string }>();
   const navigate = useNavigate();
   const { workspaceId } = useCurrentWorkspace();
-  const basePath = siteId ? `/sites/${siteId}` : '';
   const toast = useToast();
 
   const { data: page, isLoading } = usePage(workspaceId, pageId);
   const { data: pageForms } = usePageForms(workspaceId, pageId);
-  const { data: pageWorkflows } = usePageWorkflows(workspaceId, pageId);
   const updatePage = useUpdatePage(workspaceId || '', pageId || '');
 
   // AI Profile hook - only for profile score in ContentTabV2
@@ -296,8 +294,8 @@ export default function PageEditor() {
     return (
       <div className="bg-red-50 text-red-600 rounded-lg p-4">
         Page not found.{' '}
-        <Link to={`${basePath}/pages`} className="underline">
-          Go back to pages
+        <Link to="/sites" className="underline">
+          Go back to sites
         </Link>
       </div>
     );
@@ -306,7 +304,6 @@ export default function PageEditor() {
   const tabs: { id: Tab; label: string }[] = [
     { id: 'content', label: 'Content' },
     { id: 'forms', label: `Forms${pageForms?.length ? ` (${pageForms.length})` : ''}` },
-    { id: 'workflows', label: `Workflows${pageWorkflows?.length ? ` (${pageWorkflows.length})` : ''}` },
     { id: 'domain', label: 'Domain' },
   ];
 
@@ -316,7 +313,7 @@ export default function PageEditor() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => navigate(`${basePath}/pages`)}
+            onClick={() => navigate('/sites')}
             className="text-gray-500 hover:text-gray-700"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -396,6 +393,7 @@ export default function PageEditor() {
             pageSubheadline={formData.subheadline}
             workspaceId={workspaceId}
             pageId={pageId}
+            siteId={siteId}
             profileScore={profile?.profile_score || 0}
             onGoToProfile={() => navigate(siteId ? `/sites/${siteId}/ai` : '/sites')}
             pageName={formData.name}
@@ -432,14 +430,6 @@ export default function PageEditor() {
           <FormsTab
             workspaceId={workspaceId || ''}
             pageId={pageId || ''}
-          />
-        )}
-
-        {activeTab === 'workflows' && (
-          <WorkflowsTab
-            workspaceId={workspaceId || ''}
-            pageId={pageId || ''}
-            siteId={siteId}
           />
         )}
 

@@ -112,7 +112,7 @@ export interface UpdatePageInput {
 }
 
 // Fetch all pages for a workspace, optionally scoped to a site
-export function usePages(workspaceId: string | undefined, siteId?: string) {
+export function usePages(workspaceId: string | undefined, siteId?: string, enabled?: boolean) {
   return useQuery({
     queryKey: ['pages', workspaceId, siteId],
     queryFn: async () => {
@@ -122,7 +122,7 @@ export function usePages(workspaceId: string | undefined, siteId?: string) {
       );
       return data.items;
     },
-    enabled: !!workspaceId,
+    enabled: enabled !== undefined ? (!!workspaceId && enabled) : !!workspaceId,
   });
 }
 

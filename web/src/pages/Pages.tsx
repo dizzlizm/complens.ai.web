@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { usePages, useDeletePage, useCreatePage, type Page } from '../lib/hooks/usePages';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
@@ -13,6 +13,13 @@ export default function Pages() {
   const createPage = useCreatePage(workspaceId || '');
   const navigate = useNavigate();
   const toast = useToast();
+
+  // Auto-redirect to the page editor when there's exactly one page (one site = one page)
+  useEffect(() => {
+    if (siteId && pages && pages.length === 1) {
+      navigate(`/sites/${siteId}/pages/${pages[0].id}`, { replace: true });
+    }
+  }, [siteId, pages, navigate]);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newPageName, setNewPageName] = useState('');

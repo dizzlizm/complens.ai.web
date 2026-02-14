@@ -262,6 +262,24 @@ export default function WarmupManager({
   const verifyReplyTo = useVerifyReplyTo(workspaceId || '');
   const checkReplyTo = useCheckReplyTo(workspaceId || '');
 
+  // Auto-poll reply-to verification status after sending verification email
+  useEffect(() => {
+    if (!replyToVerifySent || replyToVerified || !newDomain) return;
+    const interval = setInterval(async () => {
+      try {
+        const result = await checkReplyTo.mutateAsync({ domain: newDomain });
+        if (result.verified) {
+          setReplyToVerified(true);
+          setReplyToVerifySent(false);
+          clearInterval(interval);
+        }
+      } catch {
+        // Silently retry on next interval
+      }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [replyToVerifySent, replyToVerified, newDomain]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const warmups = warmupsData?.items || [];
 
   // Only show verified domains that aren't already warming up
@@ -429,24 +447,9 @@ export default function WarmupManager({
                     <Check className="w-3.5 h-3.5" /> Verified
                   </span>
                 ) : replyToVerifySent ? (
-                  <button
-                    onClick={async () => {
-                      try {
-                        const result = await checkReplyTo.mutateAsync({ domain: newDomain });
-                        if (result.verified) {
-                          setReplyToVerified(true);
-                          setReplyToVerifySent(false);
-                        }
-                      } catch {
-                        // Error handled by mutation state
-                      }
-                    }}
-                    disabled={checkReplyTo.isPending}
-                    className="btn btn-primary btn-sm inline-flex items-center gap-1"
-                  >
-                    {checkReplyTo.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                    Check Verification
-                  </button>
+                  <span className="btn btn-sm bg-blue-50 text-blue-600 cursor-default inline-flex items-center gap-1">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Waiting...
+                  </span>
                 ) : (
                   <button
                     onClick={async () => {
@@ -468,12 +471,7 @@ export default function WarmupManager({
               </div>
               {replyToVerifySent && !replyToVerified && (
                 <p className="text-xs text-blue-600 mt-2">
-                  Verification email sent to <strong>{initReplyTo}</strong>. Check your inbox and click the link, then click "Check Verification" above.
-                </p>
-              )}
-              {checkReplyTo.isSuccess && !replyToVerified && replyToVerifySent && (
-                <p className="text-xs text-amber-600 mt-1">
-                  Not verified yet. Click the link in the verification email, then try again.
+                  Verification email sent to <strong>{initReplyTo}</strong>. Click the link in your inbox — this will update automatically.
                 </p>
               )}
               {verifyReplyTo.isError && (

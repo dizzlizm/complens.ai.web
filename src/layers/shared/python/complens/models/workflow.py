@@ -166,6 +166,8 @@ class Workflow(BaseModel):
         """Validate the workflow graph structure.
 
         Returns a list of validation errors, empty if valid.
+        Only checks critical issues (missing trigger, invalid edge refs).
+        Orphan nodes are allowed so users can save work-in-progress.
         """
         errors = []
 
@@ -176,18 +178,8 @@ class Workflow(BaseModel):
         elif len(trigger_nodes) > 1:
             errors.append("Workflow can only have one trigger node")
 
-        # Check for orphan nodes (no incoming or outgoing edges, except trigger)
-        node_ids = {n.id for n in self.nodes}
-        connected_as_source = {e.source for e in self.edges}
-        connected_as_target = {e.target for e in self.edges}
-
-        for node in self.nodes:
-            if node.node_type.startswith("trigger_"):
-                continue  # Trigger doesn't need incoming edges
-            if node.id not in connected_as_target:
-                errors.append(f"Node '{node.data.get('label', node.id)}' has no incoming edges")
-
         # Check for invalid edge references
+        node_ids = {n.id for n in self.nodes}
         for edge in self.edges:
             if edge.source not in node_ids:
                 errors.append(f"Edge references non-existent source node: {edge.source}")

@@ -54,6 +54,7 @@ class WarmupDomain(BaseModel):
     _sk_prefix: ClassVar[str] = "META"
 
     workspace_id: str = Field(..., description="Owning workspace ID")
+    site_id: str | None = Field(None, description="Site this warmup belongs to (resolved from DomainSetup)")
     domain: str = Field(..., min_length=1, max_length=253, description="Email sending domain")
     status: WarmupStatus = Field(default=WarmupStatus.PENDING, description="Warm-up status")
     warmup_day: int = Field(default=0, description="Current warm-up day (0-indexed)")
@@ -247,6 +248,7 @@ class WarmupStatusResponse(PydanticBaseModel):
     """Response model for warm-up domain status."""
 
     domain: str
+    site_id: str | None = None
     status: str
     warmup_day: int
     daily_limit: int
@@ -287,6 +289,7 @@ class WarmupStatusResponse(PydanticBaseModel):
         """
         return cls(
             domain=wd.domain,
+            site_id=wd.site_id,
             status=wd.status,
             warmup_day=wd.warmup_day,
             daily_limit=wd.daily_limit,

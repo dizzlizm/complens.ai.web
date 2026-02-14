@@ -38,6 +38,7 @@ interface ContentTabV2Props {
   pageSubheadline?: string;
   workspaceId?: string;
   pageId?: string;
+  siteId?: string;
   profileScore?: number;
   onGoToProfile: () => void;
   // Page metadata fields
@@ -83,6 +84,7 @@ export default function ContentTabV2({
   // pageHeadline, pageSubheadline kept in props for future use
   workspaceId,
   pageId,
+  siteId,
   profileScore = 100,
   onGoToProfile,
   pageName,
@@ -187,7 +189,7 @@ export default function ContentTabV2({
 
   // OG image generation
   const generateImage = useGenerateImage(workspaceId || '');
-  const { data: businessProfile } = useBusinessProfile(workspaceId, pageId);
+  const { data: businessProfile } = useBusinessProfile(workspaceId, pageId, siteId);
 
   const handleGenerateOgImage = useCallback(async () => {
     if (!workspaceId) return;
@@ -831,6 +833,7 @@ export default function ContentTabV2({
           selectedSlotIds={selectedSlotIds}
           existingBlockTypes={blocks.filter(b => b.type !== 'placeholder').map(b => b.type)}
           pageId={pageId}
+          siteId={siteId}
           onClose={handleCloseSynthesis}
           onApply={handleApplySynthesis}
         />

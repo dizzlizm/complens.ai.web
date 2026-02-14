@@ -65,7 +65,10 @@ class BusinessProfileRepository(BaseRepository[BusinessProfile]):
         """Get the effective profile for a context.
 
         Cascade order: page profile -> site profile -> workspace profile.
-        Returns the most specific profile available.
+        Returns the most specific profile that has meaningful data.
+
+        Profiles with score 0 (completely empty) are skipped during cascade
+        so they don't shadow a parent profile that has real data.
 
         Args:
             workspace_id: The workspace ID.
@@ -73,16 +76,20 @@ class BusinessProfileRepository(BaseRepository[BusinessProfile]):
             site_id: Optional site ID for site-specific lookup.
 
         Returns:
-            The most specific profile available, or None.
+            The most specific non-empty profile available, or None.
         """
         if page_id:
             profile = self.get_by_page(workspace_id, page_id)
             if profile:
-                return profile
+                profile.calculate_profile_score()
+                if profile.profile_score > 0:
+                    return profile
         if site_id:
             profile = self.get_by_site(workspace_id, site_id)
             if profile:
-                return profile
+                profile.calculate_profile_score()
+                if profile.profile_score > 0:
+                    return profile
         return self.get_by_workspace(workspace_id)
 
     def create_profile(
@@ -153,17 +160,50 @@ class BusinessProfileRepository(BaseRepository[BusinessProfile]):
         Returns:
             The existing or newly created profile.
         """
-        # Cascade: page → site → workspace (return most specific available)
-        profile = self.get_effective_profile(workspace_id, page_id, site_id)
+        # Try to get the profile at the exact requested scope first
+        exact_profile = None
+        if page_id:
+            exact_profile = self.get_by_page(workspace_id, page_id)
+        elif site_id:
+            exact_profile = self.get_by_site(workspace_id, site_id)
+        else:
+            exact_profile = self.get_by_workspace(workspace_id)
 
-        if not profile:
-            # No profile at any level — create at workspace level
-            profile = BusinessProfile(workspace_id=workspace_id)
-            profile = self.create_profile(profile)
-            logger.info(
-                "Created new business profile",
-                workspace_id=workspace_id,
+        if exact_profile:
+            return exact_profile
+
+        # No profile at the exact scope — create one, seeded from a
+        # less-specific profile if available (cascade: site → workspace)
+        seed_profile = None
+        if page_id or site_id:
+            seed_profile = self.get_effective_profile(workspace_id, page_id=None, site_id=site_id if page_id else None)
+            if not seed_profile:
+                seed_profile = self.get_by_workspace(workspace_id)
+
+        if seed_profile:
+            profile_data = seed_profile.model_dump(
+                exclude={"id", "page_id", "site_id", "created_at", "updated_at"},
             )
+            profile = BusinessProfile(
+                **profile_data,
+                site_id=site_id if site_id and not page_id else None,
+                page_id=page_id,
+            )
+        else:
+            profile = BusinessProfile(
+                workspace_id=workspace_id,
+                site_id=site_id if site_id and not page_id else None,
+                page_id=page_id,
+            )
+
+        profile = self.create_profile(profile, page_id=page_id)
+        logger.info(
+            "Created new business profile",
+            workspace_id=workspace_id,
+            site_id=site_id,
+            page_id=page_id,
+            seeded_from=seed_profile.page_id or seed_profile.site_id or "workspace" if seed_profile else None,
+        )
 
         return profile
 

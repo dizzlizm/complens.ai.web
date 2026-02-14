@@ -561,15 +561,59 @@ def delete_page(
     workspace_id: str,
     page_id: str,
 ) -> dict:
-    """Delete a page."""
+    """Delete a page and cascade-delete associated forms, workflows, and profile."""
     deleted = repo.delete_page(workspace_id, page_id)
 
     if not deleted:
         return not_found("Page", page_id)
 
+    # Cascade delete associated resources — failures are logged but don't block
+    _cascade_delete_page_resources(workspace_id, page_id)
+
     logger.info("Page deleted", page_id=page_id, workspace_id=workspace_id)
 
     return success({"deleted": True, "id": page_id})
+
+
+def _cascade_delete_page_resources(workspace_id: str, page_id: str) -> None:
+    """Delete forms, workflows, and business profile associated with a page.
+
+    Each cascade is wrapped in try/except so secondary cleanup failure
+    does not block the page deletion response.
+
+    Args:
+        workspace_id: The workspace ID.
+        page_id: The page ID being deleted.
+    """
+    # Delete forms
+    try:
+        form_repo = FormRepository()
+        forms, _ = form_repo.list_by_page(page_id)
+        for form in forms:
+            form_repo.delete_form(workspace_id, form.id)
+        if forms:
+            logger.info("Cascade deleted forms", page_id=page_id, count=len(forms))
+    except Exception as e:
+        logger.warning("Failed to cascade delete forms", page_id=page_id, error=str(e))
+
+    # Delete workflows
+    try:
+        wf_repo = WorkflowRepository()
+        workflows, _ = wf_repo.list_by_page(page_id)
+        for wf in workflows:
+            wf_repo.delete_workflow(workspace_id, wf.id)
+        if workflows:
+            logger.info("Cascade deleted workflows", page_id=page_id, count=len(workflows))
+    except Exception as e:
+        logger.warning("Failed to cascade delete workflows", page_id=page_id, error=str(e))
+
+    # Delete business profile
+    try:
+        from complens.repositories.business_profile import BusinessProfileRepository
+        profile_repo = BusinessProfileRepository()
+        profile_repo.delete_profile(workspace_id, page_id=page_id)
+    except Exception as e:
+        logger.warning("Failed to cascade delete profile", page_id=page_id, error=str(e))
 
 
 def check_subdomain_availability(repo: PageRepository, event: dict) -> dict:
