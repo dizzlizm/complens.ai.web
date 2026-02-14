@@ -27,7 +27,7 @@ import PageEditor from './pages/PageEditor';
 import Conversations from './pages/Conversations';
 import Settings from './pages/Settings';
 import SiteAISettings from './pages/SiteAISettings';
-import SiteEmail from './pages/SiteEmail';
+import SiteSetup from './pages/SiteSetup';
 import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
 
@@ -92,7 +92,8 @@ function App() {
               <Route path="pages/:id" element={<PageEditor />} />
               <Route path="workflows" element={<Workflows />} />
               <Route path="workflows/:id" element={<WorkflowEditor />} />
-              <Route path="email" element={<SiteEmail />} />
+              <Route path="setup" element={<SiteSetup />} />
+              <Route path="email" element={<Navigate to="setup" replace />} />
               <Route path="email-warmup" element={<Navigate to="/settings?section=domains" replace />} />
               <Route path="ai" element={<SiteAISettings />} />
             </Route>

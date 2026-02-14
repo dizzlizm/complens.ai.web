@@ -21,7 +21,7 @@ import {
   BookOpen,
   ArrowLeft,
   MessageSquare,
-  Mail,
+  Settings2,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -40,7 +40,7 @@ function getSiteNavigation(siteId: string) {
   return [
     { name: 'Content', href: `/sites/${siteId}/pages`, icon: FileText },
     { name: 'Workflows', href: `/sites/${siteId}/workflows`, icon: GitBranch },
-    { name: 'Email', href: `/sites/${siteId}/email`, icon: Mail },
+    { name: 'Setup', href: `/sites/${siteId}/setup`, icon: Settings2 },
     { name: 'AI & Knowledge Base', href: `/sites/${siteId}/ai`, icon: BookOpen },
   ];
 }

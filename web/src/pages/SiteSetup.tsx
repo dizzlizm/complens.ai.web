@@ -1,10 +1,11 @@
 import { useNavigate, useParams } from 'react-router-dom';
-import { useCurrentWorkspace, useSite, useUpdateSite, useListDomains } from '../lib/hooks';
-import { Loader2, Mail, Globe, Check, Clock, AlertTriangle, ArrowRight, Star } from 'lucide-react';
+import { useCurrentWorkspace, useSite, useListDomains, useUpdateSite } from '../lib/hooks';
+import { Loader2, Settings2, Globe, Check, Clock, AlertTriangle, ArrowRight, Star } from 'lucide-react';
 import EmailIdentity from '../components/email/EmailIdentity';
 import WarmupManager from '../components/email/WarmupManager';
+import CustomDomainSection from '../components/domains/CustomDomainSection';
 
-export default function SiteEmail() {
+export default function SiteSetup() {
   const navigate = useNavigate();
   const { siteId } = useParams<{ siteId: string }>();
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
@@ -24,15 +25,26 @@ export default function SiteEmail() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <Mail className="w-7 h-7 text-primary-600" />
-          Email Campaigns
+          <Settings2 className="w-7 h-7 text-primary-600" />
+          Site Setup
         </h1>
         <p className="mt-1 text-gray-500">
-          Configure sender identity and email campaigns for this site.
+          Configure domains, sender identity, and email campaigns for this site.
         </p>
       </div>
 
       <DomainStatusCard workspaceId={workspaceId} siteId={siteId} />
+
+      {/* Custom Domain */}
+      {siteId && workspaceId && (
+        <div className="card">
+          <h2 className="text-lg font-semibold text-gray-900 mb-1">Custom Domain</h2>
+          <p className="text-sm text-gray-500 mb-4">
+            Connect your own domain to serve pages from a branded URL
+          </p>
+          <CustomDomainSection workspaceId={workspaceId} siteId={siteId} />
+        </div>
+      )}
 
       <EmailIdentity
         workspaceId={workspaceId}
