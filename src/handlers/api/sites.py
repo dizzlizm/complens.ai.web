@@ -79,12 +79,7 @@ def list_sites(
     workspace_id: str,
     event: dict,
 ) -> dict:
-    """List sites in a workspace.
-
-    Auto-creates a default "My Site" if the workspace has no sites yet.
-    This ensures free-tier users can immediately access pages without
-    needing to verify a domain first.
-    """
+    """List sites in a workspace."""
     query_params = event.get("queryStringParameters", {}) or {}
     limit = min(int(query_params.get("limit", 50)), 100)
     cursor = query_params.get("cursor")
@@ -94,12 +89,6 @@ def list_sites(
         last_key = json.loads(base64.b64decode(cursor).decode())
 
     sites, next_key = repo.list_by_workspace(workspace_id, limit, last_key)
-
-    # Auto-create default site if workspace has none (adopts orphan pages like demo)
-    if not sites and not cursor:
-        default_site = _ensure_default_site(repo, workspace_id)
-        if default_site:
-            sites = [default_site]
 
     next_cursor = None
     if next_key:
