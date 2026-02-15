@@ -223,9 +223,8 @@ def _is_public_channel(event: dict[str, Any]) -> bool:
     if channel == "public":
         return True
 
-    # Check for page_id parameter (indicates public page chat)
-    page_id = query_params.get("page_id")
-    if page_id:
+    # Check for page_id or site_id parameter (indicates public page/site chat)
+    if query_params.get("page_id") or query_params.get("site_id"):
         return True
 
     # Check route key for public paths
