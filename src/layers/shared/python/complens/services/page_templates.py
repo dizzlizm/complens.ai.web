@@ -1399,19 +1399,30 @@ def render_full_page(
   function connectWS() {{
     if (ws) return;
     intentionalClose = false;
-    ws = new WebSocket(WS_URL + '?page_id=' + PAGE_ID + '&workspace_id=' + WORKSPACE_ID + '&visitor_id=' + visitorId);
+    var url = WS_URL + '/?page_id=' + PAGE_ID + '&workspace_id=' + WORKSPACE_ID + '&visitor_id=' + visitorId;
+    console.log('[Complens Chat] Connecting to', url);
+    ws = new WebSocket(url);
 
     ws.onopen = function() {{
+      console.log('[Complens Chat] Connected');
       reconnectAttempts = 0;
       if (INITIAL_MSG && !initialShown) {{
         addMessage(INITIAL_MSG, 'bot');
         initialShown = true;
       }}
+      // Keepalive ping every 30s to prevent API Gateway 10-min idle timeout
+      if (window._ccPing) clearInterval(window._ccPing);
+      window._ccPing = setInterval(function() {{
+        if (ws && ws.readyState === WebSocket.OPEN) {{
+          ws.send(JSON.stringify({{ action: 'ping' }}));
+        }}
+      }}, 30000);
     }};
 
     ws.onmessage = function(e) {{
       try {{
         var data = JSON.parse(e.data);
+        console.log('[Complens Chat] Received:', data.action);
         if (data.action === 'ai_response') {{
           hideTyping();
           addMessage(data.message, 'bot');
@@ -1421,9 +1432,12 @@ def render_full_page(
       }}
     }};
 
-    ws.onerror = function() {{}};
+    ws.onerror = function(e) {{
+      console.error('[Complens Chat] WebSocket error', e);
+    }};
 
-    ws.onclose = function() {{
+    ws.onclose = function(e) {{
+      console.log('[Complens Chat] Disconnected, code:', e.code, 'reason:', e.reason);
       ws = null;
       if (!intentionalClose) {{
         var delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);

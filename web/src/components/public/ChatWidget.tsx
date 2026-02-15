@@ -77,7 +77,7 @@ export default function ChatWidget({
     const params = new URLSearchParams({ workspace_id: workspaceId, visitor_id: visitorId.current });
     if (pageId) params.set('page_id', pageId);
     if (siteId) params.set('site_id', siteId);
-    const wsUrl = `${WS_URL}?${params.toString()}`;
+    const wsUrl = `${WS_URL}/?${params.toString()}`;
     ws.current = new WebSocket(wsUrl);
 
     ws.current.onopen = () => {
