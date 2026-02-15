@@ -66,6 +66,9 @@ export interface StartWarmupRequest {
   preferred_content_types?: string[];
   email_length?: string;
   target_daily_volume?: number;
+  warmup_days?: number;
+  start_volume?: number;
+  site_id?: string;
 }
 
 export interface UpdateSeedListRequest {
@@ -99,6 +102,10 @@ export interface WarmupLogEntry {
   from_email: string;
   content_type: string;
   sent_at: string;
+  kb_source?: string;
+  kb_excerpt?: string;
+  kb_reasoning?: string;
+  profile_alignment?: string;
 }
 
 export interface WarmupLogResponse {
@@ -475,6 +482,67 @@ export function useConfirmFromEmail(workspaceId: string) {
   });
 }
 
+// Verified email registry types and hooks
+export interface VerifiedEmail {
+  email: string;
+  verified: boolean;
+}
+
+export interface VerifiedEmailsResponse {
+  items: VerifiedEmail[];
+}
+
+// List all registered verified emails for a workspace
+export function useVerifiedEmails(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: ['verified-emails', workspaceId],
+    queryFn: async () => {
+      const { data } = await api.get<VerifiedEmailsResponse>(
+        `/workspaces/${workspaceId}/email-warmup/verified-emails`
+      );
+      return data;
+    },
+    enabled: !!workspaceId,
+    staleTime: 0,
+  });
+}
+
+// Register a new email and trigger SES verification
+export function useAddVerifiedEmail(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ email }: { email: string }) => {
+      const { data } = await api.post<{ sent_to: string }>(
+        `/workspaces/${workspaceId}/email-warmup/verified-emails`,
+        { email }
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['verified-emails', workspaceId] });
+    },
+  });
+}
+
+// Remove a registered email
+export function useRemoveVerifiedEmail(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ email }: { email: string }) => {
+      const { data } = await api.delete(
+        `/workspaces/${workspaceId}/email-warmup/verified-emails`,
+        { data: { email } }
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['verified-emails', workspaceId] });
+    },
+  });
+}
+
 // Verify a sender email address (workspace-level, not domain-scoped)
 export function useVerifySender(workspaceId: string) {
   return useMutation({
@@ -554,6 +622,31 @@ export function usePreviewEmail(workspaceId: string) {
       const { data } = await api.post<EmailPreview>(
         `/workspaces/${workspaceId}/email-warmup/${domain}/preview-email`,
         { preferred_tones, preferred_content_types, email_length }
+      );
+      return data;
+    },
+  });
+}
+
+// Generate a preview warmup email during setup (no existing warmup needed)
+export function usePreviewSetupEmail(workspaceId: string) {
+  return useMutation({
+    mutationFn: async ({
+      domain,
+      site_id,
+      preferred_tones,
+      preferred_content_types,
+      email_length,
+    }: {
+      domain: string;
+      site_id?: string;
+      preferred_tones?: string[];
+      preferred_content_types?: string[];
+      email_length?: string;
+    }) => {
+      const { data } = await api.post<EmailPreview>(
+        `/workspaces/${workspaceId}/email-warmup/preview-setup`,
+        { domain, site_id, preferred_tones, preferred_content_types, email_length }
       );
       return data;
     },

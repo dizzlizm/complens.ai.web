@@ -2,10 +2,8 @@
 
 import csv
 import io
-import os
+import re
 import urllib.request
-from html.parser import HTMLParser
-from urllib.parse import urlparse
 
 import boto3
 import structlog
@@ -13,84 +11,48 @@ import structlog
 logger = structlog.get_logger()
 
 
-class _HTMLTextExtractor(HTMLParser):
-    """HTML to markdown text extractor with broad tag support."""
+def _strip_boilerplate(html: str) -> str:
+    """Remove non-content elements from HTML before markdown conversion.
 
-    # Tags whose content is never useful
-    _SKIP_TAGS = frozenset(("script", "style"))
+    Strips navigation, footers, cookie banners, ads, and other boilerplate
+    so the resulting markdown is clean business content.
+    """
+    from bs4 import BeautifulSoup
 
-    # Block-level tags that get a leading newline
-    _BLOCK_TAGS = frozenset((
-        "p", "div", "br", "section", "article", "main",
-        "blockquote", "table", "ul", "ol", "figcaption", "figure",
-        "nav", "footer", "header", "aside",
-    ))
+    soup = BeautifulSoup(html, "html.parser")
 
-    def __init__(self):
-        super().__init__()
-        self._parts: list[str] = []
-        self._skip_depth = 0
-        self._href: str | None = None
+    # Remove elements that are never useful content
+    for tag_name in ("script", "style", "noscript", "iframe", "svg"):
+        for el in soup.find_all(tag_name):
+            el.decompose()
 
-    def handle_starttag(self, tag, attrs):
-        if tag in self._SKIP_TAGS:
-            self._skip_depth += 1
-            return
+    # Remove boilerplate sections by tag
+    for tag_name in ("nav", "footer", "header"):
+        for el in soup.find_all(tag_name):
+            el.decompose()
 
-        if self._skip_depth:
-            return
+    # Remove common boilerplate by role, class, or id patterns
+    boilerplate_patterns = re.compile(
+        r"cookie|consent|banner|popup|modal|sidebar|breadcrumb|"
+        r"social[-_]?share|share[-_]?button|newsletter[-_]?signup|"
+        r"advertisement|ad[-_]?container|skip[-_]?nav",
+        re.IGNORECASE,
+    )
+    for el in soup.find_all(attrs={"class": boilerplate_patterns}):
+        el.decompose()
+    for el in soup.find_all(attrs={"id": boilerplate_patterns}):
+        el.decompose()
+    for el in soup.find_all(attrs={"role": re.compile(r"^(navigation|banner|contentinfo)$")}):
+        el.decompose()
 
-        if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
-            level = int(tag[1])
-            self._parts.append("\n" + "#" * level + " ")
-        elif tag == "blockquote":
-            self._parts.append("\n> ")
-        elif tag in self._BLOCK_TAGS:
-            self._parts.append("\n")
-        elif tag == "li":
-            self._parts.append("\n- ")
-        elif tag == "tr":
-            self._parts.append("\n")
-        elif tag in ("th", "td"):
-            self._parts.append(" | ")
-        elif tag == "a":
-            self._href = dict(attrs).get("href", "")
-            self._parts.append("[")
-        elif tag in ("strong", "b"):
-            self._parts.append("**")
-        elif tag in ("em", "i"):
-            self._parts.append("*")
-        elif tag in ("pre", "code"):
-            self._parts.append("`")
-        elif tag == "img":
-            alt = dict(attrs).get("alt", "")
-            if alt:
-                self._parts.append(f" {alt} ")
+    # Prefer main/article content if available
+    main = soup.find("main") or soup.find("article") or soup.find(attrs={"role": "main"})
+    if main:
+        return str(main)
 
-    def handle_endtag(self, tag):
-        if tag in self._SKIP_TAGS:
-            self._skip_depth = max(0, self._skip_depth - 1)
-            return
-
-        if self._skip_depth:
-            return
-
-        if tag == "a" and self._href is not None:
-            self._parts.append(f"]({self._href})")
-            self._href = None
-        elif tag in ("strong", "b"):
-            self._parts.append("**")
-        elif tag in ("em", "i"):
-            self._parts.append("*")
-        elif tag in ("pre", "code"):
-            self._parts.append("`")
-
-    def handle_data(self, data):
-        if not self._skip_depth:
-            self._parts.append(data)
-
-    def get_text(self) -> str:
-        return "".join(self._parts).strip()
+    # Fall back to body or full soup
+    body = soup.find("body")
+    return str(body) if body else str(soup)
 
 
 def process_document(bucket: str, file_key: str, content_type: str, name: str) -> str:
@@ -214,20 +176,81 @@ def _docx_to_markdown(raw_bytes: bytes) -> str:
 
 
 def _html_to_markdown(html: str) -> str:
-    """Convert HTML to markdown-like text."""
-    extractor = _HTMLTextExtractor()
-    extractor.feed(html)
-    return extractor.get_text()
+    """Convert HTML to clean markdown using boilerplate stripping + markdownify."""
+    from markdownify import markdownify
+
+    clean_html = _strip_boilerplate(html)
+    md = markdownify(clean_html, heading_style="ATX", strip=["img"])
+
+    # Collapse excessive blank lines (3+ → 2)
+    md = re.sub(r"\n{3,}", "\n\n", md)
+    return md.strip()
 
 
 def extract_from_url(url: str) -> str:
     """Fetch a web page and extract its content as markdown.
+
+    Uses Jina Reader API (r.jina.ai) for JS-rendered content extraction.
+    Falls back to direct fetch + HTML-to-markdown if Jina is unavailable.
 
     Args:
         url: HTTP or HTTPS URL to fetch.
 
     Returns:
         Extracted markdown text from the page.
+    """
+    # Try Jina Reader first — renders JS, returns clean markdown
+    jina_md = _fetch_via_jina(url)
+    if jina_md and len(jina_md.strip()) >= 50:
+        logger.info("URL extracted via Jina Reader", url=url, length=len(jina_md))
+        return jina_md
+
+    # Fall back to direct fetch for static pages
+    logger.info("Jina Reader insufficient, falling back to direct fetch", url=url)
+    return _fetch_direct(url)
+
+
+def _fetch_via_jina(url: str) -> str:
+    """Fetch rendered page content via Jina Reader API.
+
+    Jina Reader (r.jina.ai) renders JavaScript and returns clean markdown.
+    Free tier, no API key needed.
+
+    Args:
+        url: URL to fetch.
+
+    Returns:
+        Markdown content, or empty string on failure.
+    """
+    try:
+        jina_url = f"https://r.jina.ai/{url}"
+        req = urllib.request.Request(
+            jina_url,
+            headers={
+                "Accept": "text/markdown",
+                "User-Agent": "complens-ai/1.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=20) as response:
+            md = response.read().decode("utf-8", errors="replace")
+        # Clean up excessive whitespace
+        md = re.sub(r"\n{3,}", "\n\n", md)
+        return md.strip()
+    except Exception as e:
+        logger.warning("Jina Reader fetch failed", url=url, error=str(e))
+        return ""
+
+
+def _fetch_direct(url: str) -> str:
+    """Fetch a URL directly and convert HTML to markdown.
+
+    Falls back to meta tag extraction for SPA pages with empty bodies.
+
+    Args:
+        url: URL to fetch.
+
+    Returns:
+        Markdown content.
     """
     req = urllib.request.Request(
         url,
@@ -246,7 +269,83 @@ def extract_from_url(url: str) -> str:
             charset = content_type.split("charset=")[-1].split(";")[0].strip()
         html = response.read().decode(charset, errors="replace")
 
-    return _html_to_markdown(html)
+    md = _html_to_markdown(html)
+
+    # If body was empty (SPA / JS-rendered), extract what we can from meta tags
+    if len(md.strip()) < 50:
+        meta_md = _extract_meta_content(html, url)
+        if meta_md:
+            return meta_md
+
+    return md
+
+
+def _extract_meta_content(html: str, url: str) -> str:
+    """Extract content from HTML meta tags as a markdown fallback.
+
+    Used when the page body is empty (SPA / JS-rendered sites).
+    Pulls title, description, Open Graph, and other meta tags.
+
+    Args:
+        html: Raw HTML string.
+        url: Source URL for attribution.
+
+    Returns:
+        Markdown string from meta tags, or empty string if nothing useful.
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    parts: list[str] = []
+
+    # Title
+    title_tag = soup.find("title")
+    title = title_tag.get_text(strip=True) if title_tag else ""
+    og_title = _get_meta(soup, "og:title")
+    name = og_title or title
+    if name:
+        parts.append(f"# {name}")
+
+    parts.append(f"Source: {url}")
+
+    # Description
+    desc = _get_meta(soup, "description") or _get_meta(soup, "og:description")
+    if desc:
+        parts.append(f"\n{desc}")
+
+    # Keywords
+    keywords = _get_meta(soup, "keywords")
+    if keywords:
+        parts.append(f"\nKeywords: {keywords}")
+
+    # Author
+    author = _get_meta(soup, "author")
+    if author:
+        parts.append(f"\nBy {author}")
+
+    # Any other og: or twitter: meta with content
+    seen = {"og:title", "og:description", "description", "keywords", "author", "viewport", "charset"}
+    for meta in soup.find_all("meta"):
+        prop = meta.get("property", "") or meta.get("name", "")
+        content = meta.get("content", "")
+        if prop and content and prop.lower() not in seen:
+            seen.add(prop.lower())
+            # Skip technical meta tags
+            if any(skip in prop.lower() for skip in ("twitter:card", "twitter:site", "viewport", "theme-color", "robots")):
+                continue
+            label = prop.replace("og:", "").replace("twitter:", "").replace(":", " ").replace("_", " ").title()
+            parts.append(f"**{label}:** {content}")
+
+    if len(parts) <= 2:
+        return ""
+
+    return "\n\n".join(parts)
+
+
+def _get_meta(soup, name: str) -> str:
+    """Get meta tag content by name or property."""
+    tag = soup.find("meta", attrs={"name": name}) or soup.find("meta", attrs={"property": name})
+    return tag.get("content", "").strip() if tag else ""
 
 
 def _csv_to_markdown(text: str) -> str:

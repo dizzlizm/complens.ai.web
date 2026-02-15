@@ -1360,25 +1360,43 @@ def analyze_domain_content(
     Returns:
         Dict with extracted business profile fields.
     """
-    system_prompt = """You are a brand analyst. Analyze the website content and extract structured business information.
+    system_prompt = """You are a business research analyst. You're given content gathered from multiple sources — a company's homepage, subpages (/about, /products, /pricing, etc.), and possibly web search results. Synthesize ALL sources into a comprehensive business profile.
 
-Return a JSON object with these fields (leave null if not determinable):
+Return a JSON object with these fields (use null for anything not clearly present):
 {
-  "business_name": "The company/business name",
-  "industry": "Industry/sector",
-  "description": "1-2 sentence business description",
-  "tagline": "Main tagline or value proposition",
-  "target_audience": "Who they serve",
-  "tone": "Brand voice tone (e.g., professional, friendly, bold)",
-  "key_features": ["Feature 1", "Feature 2", ...],
-  "services": ["Service 1", "Service 2", ...],
-  "unique_selling_points": ["USP 1", "USP 2", ...],
-  "colors": {"primary": "#hex", "secondary": "#hex"} or null
+  "business_name": "The company or person's name",
+  "tagline": "Main headline or tagline from the site",
+  "description": "2-3 sentence description of what the business does",
+  "industry": "MUST be one of: technology, ecommerce, consulting, healthcare, finance, education, real_estate, marketing, creative, professional_services, retail, hospitality, nonprofit, other",
+  "business_type": "MUST be one of: saas, agency, freelancer, ecommerce_store, local_business, consultant, coach, creator, nonprofit, other",
+  "target_audience": "Who they serve — be specific about demographics and needs",
+  "ideal_customer": "Description of their ideal customer or client",
+  "customer_pain_points": ["Pain point 1", "Pain point 2", ...],
+  "unique_value_proposition": "What makes them different from competitors",
+  "key_benefits": ["Benefit 1", "Benefit 2", ...],
+  "differentiators": ["What sets them apart 1", "What sets them apart 2", ...],
+  "brand_voice": "MUST be one of: professional, friendly, bold, playful, authoritative, casual, inspirational, technical",
+  "brand_personality": "Brief description of the brand's personality and feel",
+  "keywords": ["SEO keyword 1", "keyword 2", ...],
+  "pricing_model": "e.g. subscription, one-time, freemium, hourly, custom — or null",
+  "products": [{"name": "Product name", "description": "What it does", "features": ["feature1", "feature2"]}],
+  "achievements": ["Award, metric, or notable milestone", ...],
+  "faqs": [{"question": "Common question", "answer": "Answer from the site"}],
+  "website": "The canonical URL if visible",
+  "contact_email": "Contact email if visible on the page",
+  "phone": "Phone number if visible"
 }
 
-Only include information clearly present in the content. Do not fabricate details."""
+IMPORTANT:
+- industry, business_type, and brand_voice MUST use the exact values listed above (lowercase).
+- Cross-reference multiple sources to get the fullest picture possible.
+- Only include information clearly present in the content. Do not fabricate details.
+- For products, extract actual named products/services with descriptions from /products, /services, or /pricing pages.
+- For FAQs, extract actual Q&A pairs if present on any page.
+- For pricing, look at /pricing page content for specific plans, tiers, or models.
+- Prefer specific details (numbers, names, features) over generic descriptions."""
 
-    user_prompt = f"Analyze this website content from {domain}:\n\n{content}"
+    user_prompt = f"Research gathered about {domain}:\n\n{content}"
 
     result = invoke_claude_json(
         prompt=user_prompt,

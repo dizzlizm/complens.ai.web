@@ -108,10 +108,11 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             )
             continue
 
+        # Pick from-email: use a verified email matching this domain, else noreply
+        from_addr = _get_verified_sender(warmup.workspace_id, warmup.domain)
         from_name = warmup.from_name or warmup.domain
-        local_part = warmup.from_email_local if (warmup.from_email_local and warmup.from_email_verified) else "noreply"
-        from_email = f"{from_name} <{local_part}@{warmup.domain}>"
-        reply_to_list = [warmup.reply_to] if warmup.reply_to and warmup.reply_to_verified else None
+        from_email = f"{from_name} <{from_addr}>"
+        reply_to_list = [from_addr] if from_addr and not from_addr.startswith("noreply@") else None
 
         sent_for_domain = 0
         for i in range(emails_this_hour):
@@ -155,6 +156,10 @@ def handler(event: dict[str, Any], context: Any) -> dict:
                         "from_email": from_email,
                         "content_type": email_content.get("content_type", ""),
                         "sent_at": datetime.now(timezone.utc).isoformat(),
+                        "kb_source": email_content.get("kb_source", ""),
+                        "kb_excerpt": email_content.get("kb_excerpt", ""),
+                        "kb_reasoning": email_content.get("kb_reasoning", ""),
+                        "profile_alignment": email_content.get("profile_alignment", ""),
                     },
                 )
             except Exception:
@@ -208,3 +213,58 @@ def _remaining_window_hours(
         else:
             remaining = window_end - current_hour
     return max(remaining, 1)
+
+
+def _get_verified_sender(workspace_id: str, domain: str) -> str:
+    """Get a verified sender email for a domain from workspace settings.
+
+    Looks through the workspace's registered_emails for a verified email
+    whose domain matches the warmup domain.
+
+    Args:
+        workspace_id: Workspace ID.
+        domain: Warmup domain name.
+
+    Returns:
+        Verified email address, or "noreply@{domain}" as fallback.
+    """
+    try:
+        import boto3
+
+        ses = boto3.client("ses")
+        from complens.repositories.workspace import WorkspaceRepository
+
+        ws_repo = WorkspaceRepository()
+        workspace = ws_repo.get_by_id(workspace_id)
+        if not workspace or not workspace.settings:
+            return f"noreply@{domain}"
+
+        registered = workspace.settings.get("registered_emails", [])
+        if not registered:
+            return f"noreply@{domain}"
+
+        # Find emails matching this domain
+        matching = [
+            entry["email"]
+            for entry in registered
+            if isinstance(entry, dict)
+            and entry.get("email", "").endswith(f"@{domain}")
+        ]
+
+        if not matching:
+            return f"noreply@{domain}"
+
+        # Verify with SES which ones are actually verified
+        response = ses.get_identity_verification_attributes(Identities=matching)
+        attrs = response.get("VerificationAttributes", {})
+
+        for email in matching:
+            status = attrs.get(email, {}).get("VerificationStatus")
+            if status == "Success":
+                return email
+
+        return f"noreply@{domain}"
+
+    except Exception:
+        logger.debug("Could not resolve verified sender", workspace_id=workspace_id, domain=domain)
+        return f"noreply@{domain}"

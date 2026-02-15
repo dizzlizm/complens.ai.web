@@ -104,56 +104,125 @@ class WarmupEmailGenerator:
             logger.debug("Could not load business context, using generic", workspace_id=workspace_id)
 
         # Gather enrichment context from KB, pages, and deals
-        kb_context = self._get_kb_context(workspace_id, content_type, site_id=site_id)
+        kb_result = self._get_kb_context(workspace_id, content_type, site_id=site_id)
+        kb_context = kb_result.get("text", "")
+        kb_source = kb_result.get("source", "")
         page_context = self._get_page_context(workspace_id, site_id=site_id)
         deal_context = self._get_deal_context(workspace_id)
 
-        enrichment_parts: list[str] = []
-        if kb_context:
-            enrichment_parts.append(f"Real business content to reference (from knowledge base):\n{kb_context}")
-        if page_context:
-            enrichment_parts.append(f"Published landing pages (use for links/references):\n{page_context}")
-        if deal_context:
-            enrichment_parts.append(f"Business metrics (use naturally for milestones/updates):\n{deal_context}")
+        logger.info(
+            "Warmup email context gathered",
+            domain=domain,
+            has_business_profile=bool(business_context),
+            business_context_len=len(business_context),
+            has_kb_context=bool(kb_context),
+            kb_context_len=len(kb_context),
+            kb_source=kb_source[:120] if kb_source else "",
+            has_page_context=bool(page_context),
+            has_deal_context=bool(deal_context),
+        )
 
-        enrichment_text = "\n\n".join(enrichment_parts)
+        # KB is the PRIMARY content source — the email's topic comes from here
+        kb_section = ""
+        if kb_context:
+            kb_section = f"""
+=== THIS EMAIL'S TOPIC (real content from the knowledge base — build the entire email around this) ===
+{kb_context}
+=== END TOPIC ==="""
+
+        # Business profile is SECONDARY — only used for voice/tone/audience, not content
+        business_section = ""
+        if business_context:
+            business_section = f"""
+=== BUSINESS VOICE (use for tone and audience only, NOT for email content) ===
+{business_context}
+=== END VOICE ==="""
+
+        # Build supplementary context
+        extra_parts: list[str] = []
+        if page_context:
+            extra_parts.append(f"Published landing pages (link to these):\n{page_context}")
+        if deal_context:
+            extra_parts.append(f"Business metrics:\n{deal_context}")
+        extra_section = "\n\n".join(extra_parts)
 
         exclude_text = ""
         if exclude_subjects:
             subjects_str = "\n".join(f"- {s}" for s in exclude_subjects[:20])
             exclude_text = f"\n\nDo NOT reuse any of these previously sent subjects:\n{subjects_str}"
 
-        prompt = f"""Generate a realistic business email for domain warm-up purposes.
-The email should look like a genuine {content_type} from a real company.
+        # KB-first approach:
+        # With KB: deep dive on the KB topic — this is the only way to get specific content
+        # Without KB: super short and generic — just enough for domain warmup, no fabrication
+        if kb_context:
+            truthfulness_rule = (
+                "8. The topic above is REAL content from the knowledge base. Make it the "
+                "entire focus of this email. Go deep on this one thing — explain it, "
+                "share why it matters, make the reader care about it."
+            )
+            approach_note = ""
+        else:
+            truthfulness_rule = (
+                "8. You have NO knowledge base content. Write a very brief, friendly email — "
+                "just a short hello, one observation, or a question. 2-3 sentences MAX. "
+                "DO NOT invent any products, features, services, statistics, or claims."
+            )
+            approach_note = (
+                "\nIMPORTANT: No knowledge base docs available. Keep this extremely short and generic. "
+                "This is just for domain warmup — a friendly check-in, nothing more. "
+                "Do not pretend to know what this business sells or does."
+            )
 
-Requirements:
+        prompt = f"""Generate a short business email for domain warm-up.
+
+MOST IMPORTANT RULE: ONE TOPIC PER EMAIL.
+Pick a single thing to talk about — one feature, one insight, one question, one KPI, one story.
+The entire email should be about that ONE thing. Do NOT list multiple features or bullet-point
+several updates. A real person emails about one thing at a time.
+
+Email parameters:
 - Content type: {content_type}
 - Tone: {tone}
 - Length: {length}
 - Sending domain: {domain}
 - Recipient: {recipient_email}
-{f"- Business context: {business_context}" if business_context else "- Use generic but realistic business content"}
-{f"\n{enrichment_text}" if enrichment_text else ""}
+{business_section}
+{kb_section}
+{f"{extra_section}" if extra_section else ""}
+{approach_note}
 {exclude_text}
 
-The email must:
-1. Have a compelling, natural subject line (NOT spammy)
-2. Include realistic body content that encourages engagement (replies, clicks)
-3. Feel like a genuine business communication, not a marketing blast
-4. Include a plain text version and an HTML version
-5. End with a casual question or call-to-action that invites a reply
-{f"6. Naturally weave in real product/business details from the knowledge base content above" if kb_context else ""}
+REQUIREMENTS:
+1. Subject line about that ONE topic. Specific and natural, never generic.
+2. Opening: get to the point immediately. No "Hope this finds you well" filler.
+3. Body: stay on the single topic. Go deeper, not wider. No bullet lists of features.
+4.{f" Write for the target audience in the business context." if business_context else " Keep it conversational."}
+5. End with a question related to that one topic.
+6. HTML: clean, short paragraphs. No heavy styling.
+7. Write like a human — contractions, personality. Not a marketing bot.
+{truthfulness_rule}
+9. NEVER fabricate facts. If it's not in the context above, don't say it.
 
 Return JSON with exactly these fields:
 - subject: string (email subject line)
 - body_text: string (plain text version)
 - body_html: string (HTML version with basic formatting)
-- content_type: string ("{content_type}")"""
+- content_type: string ("{content_type}")
+- kb_reasoning: string (1-2 sentences: why this KB content was chosen as the email's focus, or "" if no KB content)
+- profile_alignment: string (1-2 sentences: how the email's tone and style reflect the business profile, or "" if no profile)"""
 
         try:
+            system_prompt = (
+                "You write emails for this company. Rules: "
+                "1) ONE topic per email — pick a single thing and go deep, never list multiple items. "
+                "2) ONLY state facts explicitly in the context — never invent anything. "
+                "3) Shorter and honest beats longer and fabricated. "
+                "Return valid JSON only."
+            )
+
             result = invoke_claude_json(
                 prompt=prompt,
-                system="You are an email copywriter generating warm-up emails for domain reputation building. Create natural, engaging emails that look like genuine business communications. When provided with real business content from a knowledge base, incorporate it naturally - reference actual features, products, and information rather than making things up. Return valid JSON only.",
+                system=system_prompt,
                 model=FAST_MODEL,
             )
 
@@ -162,12 +231,25 @@ Return JSON with exactly these fields:
 
             result["content_type"] = content_type
 
+            # Attach KB attribution metadata
+            if kb_context:
+                result["kb_source"] = kb_source
+                result["kb_excerpt"] = kb_context[:300]
+            else:
+                result["kb_source"] = ""
+                result["kb_excerpt"] = ""
+
+            # Ensure reasoning fields exist (Claude may omit if empty)
+            result.setdefault("kb_reasoning", "")
+            result.setdefault("profile_alignment", "")
+
             logger.info(
                 "Warmup email generated",
                 domain=domain,
                 content_type=content_type,
                 subject=result["subject"][:50],
                 has_kb_context=bool(kb_context),
+                kb_source=result["kb_source"][:80] if result["kb_source"] else "",
             )
 
             return result
@@ -205,8 +287,12 @@ Return JSON with exactly these fields:
         return None
 
     @staticmethod
-    def _get_kb_context(workspace_id: str, content_type: str, site_id: str | None = None) -> str:
-        """Retrieve relevant KB snippets for the given content type.
+    def _get_kb_context(workspace_id: str, content_type: str, site_id: str | None = None) -> dict:
+        """Retrieve a single KB snippet for the email to focus on.
+
+        Queries KB for relevant content, then randomly picks ONE snippet so
+        each email is about a single topic. Variety comes from randomness
+        across invocations.
 
         Args:
             workspace_id: Workspace ID.
@@ -214,7 +300,7 @@ Return JSON with exactly these fields:
             site_id: Optional site ID for site-scoped retrieval.
 
         Returns:
-            Formatted KB snippets string, or empty string if none available.
+            Dict with ``text`` and ``source`` keys, or empty dict if none available.
         """
         try:
             from complens.repositories.document import DocumentRepository
@@ -226,27 +312,45 @@ Return JSON with exactly these fields:
             else:
                 indexed_docs, _ = doc_repo.list_by_workspace(workspace_id, status="indexed", limit=1)
             if not indexed_docs:
-                return ""
+                return {}
 
             kb_service = KnowledgeBaseService()
             query = KB_QUERIES_BY_CONTENT_TYPE.get(content_type, "product features updates")
-            results = kb_service.retrieve(workspace_id, query, max_results=3, site_id=site_id)
+            results = kb_service.retrieve(workspace_id, query, max_results=8, site_id=site_id)
 
-            if not results:
-                return ""
-
-            snippets = []
-            for r in results:
+            # Collect unique snippets with their source metadata
+            seen_texts: set[str] = set()
+            snippets: list[dict] = []
+            for r in (results or []):
                 text = r.get("text", "").strip()
-                if text:
-                    # Truncate long snippets to keep prompt size manageable
-                    snippets.append(text[:500])
+                if text and text[:100] not in seen_texts:
+                    seen_texts.add(text[:100])
+                    snippets.append({
+                        "text": text[:1500],
+                        "source": r.get("source", ""),
+                    })
 
-            return "\n---\n".join(snippets) if snippets else ""
+            if not snippets:
+                return {}
+
+            # Pick ONE random snippet — each email focuses on a single topic
+            chosen = random.choice(snippets)
+
+            logger.info(
+                "KB snippet selected for warmup",
+                workspace_id=workspace_id,
+                content_type=content_type,
+                available_snippets=len(snippets),
+                chosen_len=len(chosen["text"]),
+                chosen_preview=chosen["text"][:80],
+                chosen_source=chosen["source"][:120] if chosen["source"] else "",
+            )
+
+            return chosen
 
         except Exception:
             logger.debug("Could not load KB context for warmup", workspace_id=workspace_id)
-            return ""
+            return {}
 
     @staticmethod
     def _get_page_context(workspace_id: str, site_id: str | None = None) -> str:

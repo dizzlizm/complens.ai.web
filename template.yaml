@@ -1012,6 +1012,12 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/sites/{site_id}
             Method: DELETE
+        Copy:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/sites/{site_id}/copy
+            Method: POST
 
   ContactsFunction:
     Type: AWS::Serverless::Function
@@ -1834,6 +1840,22 @@ Resources:
             Method: OPTIONS
             Auth:
               Authorizer: NONE
+        GetSiteChatConfig:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/chat-config/site/{site_id}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        GetSiteChatConfigOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/chat-config/site/{site_id}
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
         GetPageByDomain:
           Type: Api
           Properties:
@@ -1879,6 +1901,14 @@ Resources:
           Properties:
             RestApiId: !Ref RestApi
             Path: /public/verify-reply-to/{domain}/{token}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        VerifyEmail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /public/verify-email/{workspace_id}/{token}
             Method: GET
             Auth:
               Authorizer: NONE
@@ -2741,6 +2771,54 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /admin/workspaces/{workspace_id}/members/{user_id}
             Method: DELETE
+        AdminListPages:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/pages
+            Method: GET
+        AdminDeletePage:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/pages/{page_id}
+            Method: DELETE
+        AdminListContacts:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/contacts
+            Method: GET
+        AdminDeleteContact:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/contacts/{contact_id}
+            Method: DELETE
+        AdminListWorkflows:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/workflows
+            Method: GET
+        AdminDeleteWorkflow:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/workflows/{workflow_id}
+            Method: DELETE
+        AdminListForms:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/forms
+            Method: GET
+        AdminDeleteForm:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/forms/{form_id}
+            Method: DELETE
         ToggleSuperAdmin:
           Type: Api
           Properties:
@@ -2878,6 +2956,18 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/knowledge-base/import-url
             Method: POST
+        ImportText:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/knowledge-base/import-text
+            Method: POST
+        CrawlSite:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/knowledge-base/crawl-site
+            Method: POST
 
   # S3 Bucket for Knowledge Base documents
   KBDocumentsBucket:
@@ -2973,6 +3063,10 @@ Resources:
                 - ses:SendEmail
                 - ses:SendRawEmail
                 - ses:VerifyEmailIdentity
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
               Resource: "*"
       Environment:
         Variables:
@@ -3087,6 +3181,30 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /workspaces/{workspace_id}/email-warmup/{domain}/confirm-from-email
             Method: POST
+        ListVerifiedEmails:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/verified-emails
+            Method: GET
+        AddVerifiedEmail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/verified-emails
+            Method: POST
+        RemoveVerifiedEmail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/verified-emails
+            Method: DELETE
+        PreviewSetupEmail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /workspaces/{workspace_id}/email-warmup/preview-setup
+            Method: POST
         VerifySender:
           Type: Api
           Properties:
@@ -3132,6 +3250,8 @@ Resources:
               Action:
                 - ses:SendEmail
                 - ses:SendRawEmail
+                - ses:GetIdentityVerificationAttributes
+                - ses:GetIdentityDkimAttributes
               Resource: "*"
       Environment:
         Variables:
@@ -3179,6 +3299,8 @@ Resources:
               Action:
                 - ses:SendEmail
                 - ses:SendRawEmail
+                - ses:GetIdentityVerificationAttributes
+                - ses:GetIdentityDkimAttributes
               Resource: "*"
             - Effect: Allow
               Action:

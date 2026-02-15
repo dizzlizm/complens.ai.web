@@ -21,6 +21,7 @@ from complens.models.workflow_run import RunStatus, WorkflowRun
 from complens.nodes.base import NodeContext, NodeResult
 from complens.queue.feature_flags import FeatureFlag, is_flag_enabled
 from complens.repositories.contact import ContactRepository
+from complens.repositories.site import SiteRepository
 from complens.repositories.workflow import WorkflowRepository, WorkflowRunRepository
 from complens.repositories.workspace import WorkspaceRepository
 from complens.services.workflow_engine import WorkflowEngine
@@ -209,6 +210,14 @@ def execute_node(event: dict) -> dict:
             "twilio_phone_number": workspace.twilio_phone_number or "",
         }
 
+    # Load site settings if workflow is scoped to a site
+    site_settings: dict = {}
+    if workflow.site_id:
+        site_repo = SiteRepository()
+        site = site_repo.get_by_id(workspace_id, workflow.site_id)
+        if site:
+            site_settings = site.settings or {}
+
     # Get node definition
     node_def = workflow.get_node_by_id(current_node_id)
     if not node_def:
@@ -228,6 +237,7 @@ def execute_node(event: dict) -> dict:
         workflow_run=run,
         workspace_id=workspace_id,
         workspace_settings=workspace_settings,
+        site_settings=site_settings,
         variables=variables,
         trigger_data=run.trigger_data,
         node_config=node_def.get_config(),

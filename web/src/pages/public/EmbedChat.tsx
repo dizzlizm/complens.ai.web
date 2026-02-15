@@ -5,17 +5,20 @@ import type { ChatConfig } from '../../lib/hooks/usePages';
 import publicApi from '../../lib/publicApi';
 
 interface EmbedConfig {
-  page_id: string;
+  page_id?: string;
+  site_id?: string;
   workspace_id: string;
   chat_config: ChatConfig;
-  primary_color: string;
-  page_name: string;
+  primary_color?: string;
+  page_name?: string;
+  site_name?: string;
   ws_url: string;
 }
 
 export default function EmbedChat() {
   const [searchParams] = useSearchParams();
   const pageId = searchParams.get('page_id');
+  const siteId = searchParams.get('site_id');
   const workspaceId = searchParams.get('ws');
 
   const [config, setConfig] = useState<EmbedConfig | null>(null);
@@ -29,14 +32,18 @@ export default function EmbedChat() {
   }, []);
 
   useEffect(() => {
-    if (!pageId || !workspaceId) {
-      setError('Missing page_id or ws parameter');
+    if (!workspaceId || (!pageId && !siteId)) {
+      setError('Missing page_id/site_id or ws parameter');
       setLoading(false);
       return;
     }
 
+    const endpoint = siteId
+      ? `/public/chat-config/site/${siteId}?ws=${workspaceId}`
+      : `/public/chat-config/${pageId}?ws=${workspaceId}`;
+
     publicApi
-      .get<EmbedConfig>(`/public/chat-config/${pageId}?ws=${workspaceId}`)
+      .get<EmbedConfig>(endpoint)
       .then((res) => {
         setConfig(res.data);
         setLoading(false);
@@ -45,7 +52,7 @@ export default function EmbedChat() {
         setError('Chat is not available');
         setLoading(false);
       });
-  }, [pageId, workspaceId]);
+  }, [pageId, siteId, workspaceId]);
 
   // Notify parent frame of size changes for auto-resizing
   useEffect(() => {
@@ -69,17 +76,18 @@ export default function EmbedChat() {
     return null; // Don't show anything while loading — iframe should be invisible
   }
 
-  if (error || !config || !pageId || !workspaceId) {
+  if (error || !config || !workspaceId) {
     return null; // Don't show error UI in the iframe — just hide
   }
 
   return (
     <div className="bg-transparent">
       <ChatWidget
-        pageId={pageId}
+        pageId={pageId || undefined}
+        siteId={siteId || undefined}
         workspaceId={workspaceId}
         config={config.chat_config}
-        primaryColor={config.primary_color}
+        primaryColor={config.primary_color || '#6366f1'}
         mode="floating"
       />
     </div>

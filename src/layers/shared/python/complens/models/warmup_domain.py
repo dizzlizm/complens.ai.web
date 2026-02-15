@@ -27,8 +27,12 @@ DEFAULT_WARMUP_SCHEDULE = [
 ]
 
 
-def generate_schedule(target_daily_volume: int, days: int = 42) -> list[int]:
-    """Generate a warmup schedule that ramps from 10/day to the target volume.
+def generate_schedule(
+    target_daily_volume: int,
+    days: int = 42,
+    start_volume: int = 10,
+) -> list[int]:
+    """Generate a warmup schedule that ramps to the target volume.
 
     Uses geometric progression over the given number of days so the ramp
     curve feels natural (slow start, accelerating growth).
@@ -36,13 +40,14 @@ def generate_schedule(target_daily_volume: int, days: int = 42) -> list[int]:
     Args:
         target_daily_volume: Final daily sending volume to reach.
         days: Number of warmup days (default 42 = 6 weeks).
+        start_volume: Starting daily volume (default 10).
 
     Returns:
         List of daily sending limits.
     """
     import math
 
-    start = 10
+    start = max(1, start_volume)
     if target_daily_volume <= start:
         return [target_daily_volume] * days
 
@@ -240,6 +245,9 @@ class StartWarmupRequest(PydanticBaseModel):
     preferred_content_types: list[str] | None = None
     email_length: str | None = None
     target_daily_volume: int | None = Field(None, ge=50, le=10000)
+    warmup_days: int | None = Field(None, ge=7, le=90, description="Ramp-up duration in days")
+    start_volume: int | None = Field(None, ge=1, le=500, description="Starting daily volume")
+    site_id: str | None = Field(None, description="Site this warmup belongs to")
 
     @model_validator(mode="after")
     def validate_send_window(self) -> "StartWarmupRequest":

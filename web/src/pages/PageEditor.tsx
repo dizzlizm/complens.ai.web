@@ -2,9 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { usePage, useUpdatePage, type UpdatePageInput, type PageLayout } from '../lib/hooks/usePages';
 import { usePageForms, type Form } from '../lib/hooks/useForms';
-// usePageWorkflows removed — Workflows tab is now in sidebar nav
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
-import { useSite } from '../lib/hooks/useSites';
 import {
   useBusinessProfile,
   GeneratedPageContent,
@@ -13,19 +11,14 @@ import {
 import { useToast } from '../components/Toast';
 import { PageBlock, AgenticPageBuilder, ContentTabV2 } from '../components/page-builder';
 import { Loader2 } from 'lucide-react';
-import Tabs from '../components/ui/Tabs';
-import DomainTab from '../components/page-editor/DomainTab';
-// WorkflowsTab removed — accessible via sidebar nav
-import FormsTab from '../components/page-editor/FormsTab';
 
 // Auto-save delay in milliseconds
 const AUTO_SAVE_DELAY = 3000;
 
-// Extract subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
-const API_URL = import.meta.env.VITE_API_URL || '';
-const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '') || 'complens.ai';
-
-type Tab = 'content' | 'forms' | 'domain';
+// Subdomain suffix for page URLs (e.g., "dev.complens.ai" or "complens.ai")
+const SUBDOMAIN_SUFFIX = import.meta.env.VITE_SUBDOMAIN_SUFFIX
+  || (import.meta.env.VITE_API_URL || '').replace(/^https?:\/\/api\./, '')
+  || 'complens.ai';
 
 export default function PageEditor() {
   const { id: pageId, siteId } = useParams<{ id: string; siteId: string }>();
@@ -39,10 +32,7 @@ export default function PageEditor() {
 
   // AI Profile hook - only for profile score in ContentTabV2
   const { data: profile } = useBusinessProfile(workspaceId, pageId, siteId);
-  // Site data - for domain info in DomainTab
-  const { data: siteData } = useSite(workspaceId, siteId);
 
-  const [activeTab, setActiveTab] = useState<Tab>('content');
   const [formData, setFormData] = useState<UpdatePageInput>({});
   const [hasChanges, setHasChanges] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -301,19 +291,13 @@ export default function PageEditor() {
     );
   }
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'content', label: 'Content' },
-    { id: 'forms', label: `Forms${pageForms?.length ? ` (${pageForms.length})` : ''}` },
-    { id: 'domain', label: 'Domain' },
-  ];
-
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => navigate('/sites')}
+            onClick={() => navigate(siteId ? `/sites/${siteId}/pages` : '/sites')}
             className="text-gray-500 hover:text-gray-700"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -379,84 +363,46 @@ export default function PageEditor() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
-
-      {/* Tab Content */}
-      <div className={activeTab === 'content' ? '' : 'bg-white rounded-lg shadow p-6'}>
-        {activeTab === 'content' && (
-          <ContentTabV2
-            blocks={blocks}
-            onChange={handleBlocksChange}
-            forms={pageForms?.map((f: Form) => ({ id: f.id, name: f.name })) || []}
-            pageHeadline={formData.headline}
-            pageSubheadline={formData.subheadline}
-            workspaceId={workspaceId}
-            pageId={pageId}
-            siteId={siteId}
-            profileScore={profile?.profile_score || 0}
-            onGoToProfile={() => navigate(siteId ? `/sites/${siteId}/ai` : '/sites')}
-            pageName={formData.name}
-            pageSlug={formData.slug}
-            pageUrl={page?.subdomain ? `https://${page.subdomain}.${SUBDOMAIN_SUFFIX}` : `/p/${page?.slug}?ws=${workspaceId}`}
-            primaryColor={formData.primary_color}
-            secondaryColor={formData.secondary_color}
-            accentColor={formData.accent_color}
-            onPageNameChange={(name) => handleChange('name', name)}
-            onPageSlugChange={(slug) => handleChange('slug', slug)}
-            onPrimaryColorChange={(color) => handleChange('primary_color', color)}
-            onSecondaryColorChange={(color) => handleChange('secondary_color', color)}
-            onAccentColorChange={(color) => handleChange('accent_color', color)}
-            metaTitle={formData.meta_title || ''}
-            metaDescription={formData.meta_description || ''}
-            ogImageUrl={formData.og_image_url || ''}
-            onMetaTitleChange={(value) => handleChange('meta_title', value)}
-            onMetaDescriptionChange={(value) => handleChange('meta_description', value)}
-            onOgImageUrlChange={(value) => handleChange('og_image_url', value)}
-            gaTrackingId={formData.ga_tracking_id || ''}
-            fbPixelId={formData.fb_pixel_id || ''}
-            scriptsHead={formData.scripts_head || ''}
-            scriptsBody={formData.scripts_body || ''}
-            onGaTrackingIdChange={(value) => handleChange('ga_tracking_id', value)}
-            onFbPixelIdChange={(value) => handleChange('fb_pixel_id', value)}
-            onScriptsHeadChange={(value) => handleChange('scripts_head', value)}
-            onScriptsBodyChange={(value) => handleChange('scripts_body', value)}
-            layout={((formData.theme as Record<string, unknown>)?.layout as PageLayout) || 'full-bleed'}
-            onLayoutChange={(layout) => handleChange('theme', { ...formData.theme, layout })}
-          />
-        )}
-
-        {activeTab === 'forms' && (
-          <FormsTab
-            workspaceId={workspaceId || ''}
-            pageId={pageId || ''}
-          />
-        )}
-
-        {activeTab === 'domain' && (
-          <DomainTab
-            workspaceId={workspaceId || ''}
-            pageId={pageId || ''}
-            pageSlug={page.slug}
-            subdomain={formData.subdomain ?? page.subdomain ?? ''}
-            siteId={siteId}
-            siteDomain={siteData?.domain_name}
-            onSaveSubdomain={async (newSubdomain) => {
-              try {
-                await updatePage.mutateAsync({ subdomain: newSubdomain });
-                handleChange('subdomain', newSubdomain);
-                toast.success('Subdomain saved!');
-              } catch (err: any) {
-                const errorMessage = err?.response?.data?.message || 'Failed to save subdomain';
-                toast.error(errorMessage);
-              }
-            }}
-            isSaving={updatePage.isPending}
-            chatConfig={formData.chat_config ?? page.chat_config}
-            pageStatus={formData.status ?? page.status}
-          />
-        )}
-      </div>
+      {/* Page Builder */}
+      <ContentTabV2
+        blocks={blocks}
+        onChange={handleBlocksChange}
+        forms={pageForms?.map((f: Form) => ({ id: f.id, name: f.name })) || []}
+        pageHeadline={formData.headline}
+        pageSubheadline={formData.subheadline}
+        workspaceId={workspaceId}
+        pageId={pageId}
+        siteId={siteId}
+        profileScore={profile?.profile_score || 0}
+        onGoToProfile={() => navigate(siteId ? `/sites/${siteId}/ai` : '/sites')}
+        pageName={formData.name}
+        pageSlug={formData.slug}
+        pageUrl={page?.subdomain ? `https://${page.subdomain}.${SUBDOMAIN_SUFFIX}` : `/p/${page?.slug}?ws=${workspaceId}`}
+        primaryColor={formData.primary_color}
+        secondaryColor={formData.secondary_color}
+        accentColor={formData.accent_color}
+        onPageNameChange={(name) => handleChange('name', name)}
+        onPageSlugChange={(slug) => handleChange('slug', slug)}
+        onPrimaryColorChange={(color) => handleChange('primary_color', color)}
+        onSecondaryColorChange={(color) => handleChange('secondary_color', color)}
+        onAccentColorChange={(color) => handleChange('accent_color', color)}
+        metaTitle={formData.meta_title || ''}
+        metaDescription={formData.meta_description || ''}
+        ogImageUrl={formData.og_image_url || ''}
+        onMetaTitleChange={(value) => handleChange('meta_title', value)}
+        onMetaDescriptionChange={(value) => handleChange('meta_description', value)}
+        onOgImageUrlChange={(value) => handleChange('og_image_url', value)}
+        gaTrackingId={formData.ga_tracking_id || ''}
+        fbPixelId={formData.fb_pixel_id || ''}
+        scriptsHead={formData.scripts_head || ''}
+        scriptsBody={formData.scripts_body || ''}
+        onGaTrackingIdChange={(value) => handleChange('ga_tracking_id', value)}
+        onFbPixelIdChange={(value) => handleChange('fb_pixel_id', value)}
+        onScriptsHeadChange={(value) => handleChange('scripts_head', value)}
+        onScriptsBodyChange={(value) => handleChange('scripts_body', value)}
+        layout={((formData.theme as Record<string, unknown>)?.layout as PageLayout) || 'full-bleed'}
+        onLayoutChange={(layout) => handleChange('theme', { ...formData.theme, layout })}
+      />
 
       {/* AI Page Builder Modal - agentic chat-based builder */}
       {showAIGenerator && (

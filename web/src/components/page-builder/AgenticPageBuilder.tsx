@@ -23,9 +23,10 @@ import axios from 'axios';
 import { getApiErrorMessage } from '../../lib/api';
 import { useSite } from '../../lib/hooks/useSites';
 
-// Derive subdomain suffix from API URL (e.g., "dev.complens.ai" from "https://api.dev.complens.ai")
-const API_URL = import.meta.env.VITE_API_URL || '';
-const SUBDOMAIN_SUFFIX = API_URL.replace(/^https?:\/\/api\./, '') || 'complens.ai';
+// Subdomain suffix for page URLs (e.g., "dev.complens.ai" or "complens.ai")
+const SUBDOMAIN_SUFFIX = import.meta.env.VITE_SUBDOMAIN_SUFFIX
+  || (import.meta.env.VITE_API_URL || '').replace(/^https?:\/\/api\./, '')
+  || 'complens.ai';
 
 interface AgenticPageBuilderProps {
   onComplete: (result: {

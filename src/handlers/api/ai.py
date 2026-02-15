@@ -853,11 +853,13 @@ def autofill_node(workspace_id: str, event: dict) -> dict:
 
 
 def analyze_domain(workspace_id: str, event: dict) -> dict:
-    """Analyze a domain's website to extract brand and business information.
+    """Research a domain and extract brand/business information.
 
-    Fetches the domain homepage, extracts text content, and uses AI to
-    identify business name, industry, tagline, target audience, tone,
-    key features, and services.
+    Multi-step research pipeline:
+    1. Fetch homepage + key subpages via Jina Reader (renders JS)
+    2. If content is thin, search the web for more info
+    3. Combine all sources and run through AI analysis
+    4. Optionally auto-update the business profile
 
     Request body:
         domain: The domain to analyze (required)
@@ -873,23 +875,19 @@ def analyze_domain(workspace_id: str, event: dict) -> dict:
     if not domain:
         return error("domain is required", 400)
 
-    # Fetch and extract content from the domain
-    from complens.services.document_processor import extract_from_url
+    # Multi-step research: homepage + subpages + web search
+    from complens.services.business_research_service import research_business
 
-    url = f"https://{domain}" if not domain.startswith("http") else domain
     try:
-        content = extract_from_url(url)
+        content = research_business(domain)
     except Exception as e:
-        logger.warning("Failed to fetch domain content", domain=domain, error=str(e))
-        return error(f"Could not fetch domain: {str(e)}", 422)
+        logger.warning("Business research failed", domain=domain, error=str(e))
+        return error(f"Could not research domain: {str(e)}", 422)
 
     if not content or len(content.strip()) < 50:
-        return error("Could not extract enough content from the domain", 422)
+        return error("Could not find enough content about this business", 422)
 
-    # Truncate content to avoid token limits
-    content = content[:15000]
-
-    # Use AI to analyze the content
+    # Use AI to analyze all gathered content
     try:
         analysis = ai_service.analyze_domain_content(
             workspace_id=workspace_id,
@@ -899,15 +897,41 @@ def analyze_domain(workspace_id: str, event: dict) -> dict:
 
         # Optionally auto-update the business profile
         if body.get("auto_update", False):
+            # Legacy field name mapping (AI prompt v1 → model field names)
+            _FIELD_MAP = {
+                "tone": "brand_voice",
+                "key_features": "key_benefits",
+                "unique_selling_points": "differentiators",
+            }
+            # Remap analysis keys to model field names
+            mapped = {}
+            for key, val in analysis.items():
+                mapped[_FIELD_MAP.get(key, key)] = val
+
             repo = BusinessProfileRepository()
             profile = repo.get_or_create(workspace_id, site_id=site_id)
-            for field, value in analysis.items():
-                if value and hasattr(profile, field):
-                    current = getattr(profile, field)
-                    # Only fill empty fields
-                    if not current or (isinstance(current, list) and len(current) == 0):
-                        setattr(profile, field, value)
+            updated_fields = []
+            for field, value in mapped.items():
+                if not value or not hasattr(profile, field):
+                    continue
+                # Overwrite — user explicitly clicked Research
+                try:
+                    setattr(profile, field, value)
+                    updated_fields.append(field)
+                except (ValueError, PydanticValidationError):
+                    # Enum validation failure etc. — skip this field
+                    logger.debug(
+                        "Skipped field during auto-update",
+                        field=field,
+                        value=str(value)[:100],
+                    )
             profile = repo.update_profile(profile)
+
+            logger.info(
+                "Domain analysis auto-updated profile",
+                domain=domain,
+                updated_fields=updated_fields,
+            )
             return success({
                 "analysis": analysis,
                 "profile": profile.model_dump(mode="json"),
@@ -1052,6 +1076,7 @@ def synthesize_plan(workspace_id: str, event: dict) -> dict:
             block_types=request.block_types,
             existing_block_types=request.existing_block_types,
             site_id=request.site_id,
+            max_blocks=request.max_blocks,
         )
 
         logger.info(

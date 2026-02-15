@@ -177,8 +177,16 @@ class DomainHealthService:
 
         return result
 
+    # Spamhaus (dbl.spamhaus.org, zen.spamhaus.org) returns false positives
+    # from cloud/Lambda environments — they rate-limit public DNS resolvers
+    # and return error codes that pydnsbl interprets as blacklist hits.
+    EXCLUDED_PROVIDERS = {"dbl.spamhaus.org", "zen.spamhaus.org"}
+
     def _check_blacklists(self, domain: str) -> dict[str, Any]:
         """Check if domain is on any DNS blacklists via pydnsbl.
+
+        Excludes Spamhaus providers which return false positives from
+        cloud environments (AWS Lambda) due to public DNS rate limiting.
 
         Args:
             domain: Domain to check.
@@ -193,8 +201,15 @@ class DomainHealthService:
 
         try:
             from pydnsbl import DNSBLDomainChecker
+            from pydnsbl.providers import BASE_DOMAIN_PROVIDERS, Provider
 
-            checker = DNSBLDomainChecker()
+            # Filter out Spamhaus providers that give false positives from Lambda
+            providers = [
+                p for p in BASE_DOMAIN_PROVIDERS
+                if p.host.strip() not in self.EXCLUDED_PROVIDERS
+            ]
+
+            checker = DNSBLDomainChecker(providers=providers)
             bl_result = checker.check(domain)
             result["blacklisted"] = bl_result.blacklisted
             result["listings"] = [

@@ -6,7 +6,7 @@ import { useForms, usePageForms } from '../../lib/hooks/useForms';
 import { usePages, usePage } from '../../lib/hooks/usePages';
 import { useWorkflows } from '../../lib/hooks/useWorkflows';
 import { useContacts } from '../../lib/hooks/useContacts';
-import { useListDomains, useWarmups } from '../../lib/hooks/useEmailWarmup';
+import { useListDomains, useWarmups, useVerifiedEmails } from '../../lib/hooks/useEmailWarmup';
 import EmailPreview from '../workflow-builder/EmailPreview';
 
 interface NodeData {
@@ -1034,6 +1034,7 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, siteId, onC
   const { data: contactsData, isLoading: isLoadingContacts } = useContacts(workspaceId || '', { limit: 100 });
   const { data: domainsData, isLoading: isLoadingDomains } = useListDomains(workspaceId);
   const { data: warmupsData } = useWarmups(workspaceId);
+  const { data: verifiedEmailsData, isLoading: isLoadingVerifiedEmails } = useVerifiedEmails(workspaceId);
 
   // Extract unique tags from contacts
   const allTags = useMemo(() => {
@@ -1090,63 +1091,31 @@ export default function NodeConfigPanel({ node, workspaceId, pageId, siteId, onC
         };
       case 'domains':
       case 'verified_senders': {
-        // Build from-email options from verified warmup domains
-        const senderOptions: { value: string; label: string }[] = [];
-        const warmups = warmupsData?.items || [];
-        for (const w of warmups) {
-          // Show verified custom from-email first
-          if (w.from_email_local && w.from_email_verified) {
-            senderOptions.push({
-              value: `${w.from_email_local}@${w.domain}`,
-              label: `${w.from_email_local}@${w.domain}`,
-            });
-          }
-          // Always include noreply@ for verified/ready domains
-          const domainSetup = domainsData?.items?.find(d => d.domain === w.domain && d.ready);
-          if (domainSetup) {
-            senderOptions.push({
-              value: `noreply@${w.domain}`,
-              label: `noreply@${w.domain}`,
-            });
-          }
-        }
-        // Also add noreply@ for any verified domains that don't have warmup records
-        const warmupDomains = new Set(warmups.map(w => w.domain));
-        const extraDomains = domainsData?.items?.filter(d => d.ready && !warmupDomains.has(d.domain)) || [];
-        for (const d of extraDomains) {
-          senderOptions.push({
-            value: `noreply@${d.domain}`,
-            label: `noreply@${d.domain}`,
-          });
-        }
+        const emails = verifiedEmailsData?.items || [];
+        const senderOptions = emails
+          .filter(e => e.verified)
+          .map(e => ({ value: e.email, label: e.email }));
         return {
           options: senderOptions,
-          isLoading: isLoadingDomains,
-          contextNote: senderOptions.length > 0 ? 'Only verified sender addresses' : undefined,
+          isLoading: isLoadingVerifiedEmails,
+          contextNote: senderOptions.length > 0 ? 'Only verified sender addresses' : 'No verified emails — add in Settings > Email Infrastructure',
         };
       }
       case 'verified_reply_to': {
-        // Only show verified reply-to addresses from warmup domains
-        const replyOptions: { value: string; label: string }[] = [];
-        const allWarmups = warmupsData?.items || [];
-        for (const w of allWarmups) {
-          if (w.reply_to && w.reply_to_verified) {
-            replyOptions.push({
-              value: w.reply_to,
-              label: w.reply_to,
-            });
-          }
-        }
+        const emails = verifiedEmailsData?.items || [];
+        const replyOptions = emails
+          .filter(e => e.verified)
+          .map(e => ({ value: e.email, label: e.email }));
         return {
           options: replyOptions,
-          isLoading: false,
-          contextNote: replyOptions.length > 0 ? 'Only verified reply-to addresses' : 'No verified reply-to addresses — verify in Email settings',
+          isLoading: isLoadingVerifiedEmails,
+          contextNote: replyOptions.length > 0 ? 'Only verified reply-to addresses' : 'No verified emails — add in Settings > Email Infrastructure',
         };
       }
       default:
         return { options: [], isLoading: false };
     }
-  }, [forms, pages, workflows, allTags, isLoadingForms, isLoadingPages, isLoadingWorkflows, isLoadingContacts, isPageContext, currentPage, pageId, domainsData, isLoadingDomains, warmupsData]);
+  }, [forms, pages, workflows, allTags, isLoadingForms, isLoadingPages, isLoadingWorkflows, isLoadingContacts, isPageContext, currentPage, pageId, domainsData, isLoadingDomains, warmupsData, verifiedEmailsData, isLoadingVerifiedEmails]);
 
   // Initialize local state when node changes
   useEffect(() => {

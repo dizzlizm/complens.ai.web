@@ -125,3 +125,21 @@ export function useDeleteSite(workspaceId: string) {
     },
   });
 }
+
+// Copy a site with all child entities
+export function useCopySite(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ siteId, name }: { siteId: string; name?: string }) => {
+      const { data } = await api.post<Site>(
+        `/workspaces/${workspaceId}/sites/${siteId}/copy`,
+        { name }
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sites', workspaceId] });
+    },
+  });
+}

@@ -9,6 +9,14 @@ import {
   useUpdateWorkspaceMember,
   useRemoveWorkspaceMember,
   useAdminUsers,
+  useAdminPages,
+  useAdminContacts,
+  useAdminWorkflows,
+  useAdminForms,
+  useDeleteAdminPage,
+  useDeleteAdminContact,
+  useDeleteAdminWorkflow,
+  useDeleteAdminForm,
   type AdminUser,
 } from '@/lib/hooks/useAdmin';
 import {
@@ -55,6 +63,17 @@ export default function AdminWorkspaceDetail() {
   const [addMemberSearch, setAddMemberSearch] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedRole, setSelectedRole] = useState('member');
+  const [contentTab, setContentTab] = useState<'pages' | 'contacts' | 'workflows' | 'forms'>('pages');
+
+  // Content queries — lazy-loaded per tab
+  const { data: pagesData, isLoading: pagesLoading } = useAdminPages(contentTab === 'pages' ? id : undefined);
+  const { data: contactsData, isLoading: contactsLoading } = useAdminContacts(contentTab === 'contacts' ? id : undefined);
+  const { data: workflowsData, isLoading: workflowsLoading } = useAdminWorkflows(contentTab === 'workflows' ? id : undefined);
+  const { data: formsData, isLoading: formsLoading } = useAdminForms(contentTab === 'forms' ? id : undefined);
+  const deletePage = useDeleteAdminPage(id || '');
+  const deleteContact = useDeleteAdminContact(id || '');
+  const deleteWorkflow = useDeleteAdminWorkflow(id || '');
+  const deleteForm = useDeleteAdminForm(id || '');
 
   const { data: allUsers } = useAdminUsers({ limit: 60 });
   const filteredUsers = useMemo(() => {
@@ -568,6 +587,241 @@ export default function AdminWorkspaceDetail() {
               </div>
             )}
           </>
+        )}
+      </div>
+
+      {/* Workspace Content */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mt-6">
+        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <FileText className="w-5 h-5 text-gray-400" />
+          Content
+        </h2>
+
+        {/* Tab bar */}
+        <div className="flex gap-1 mb-4 border-b border-gray-700 pb-2">
+          {(['pages', 'contacts', 'workflows', 'forms'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setContentTab(tab)}
+              className={`px-3 py-1.5 text-sm rounded-t-lg capitalize transition-colors ${
+                contentTab === tab
+                  ? 'bg-gray-700 text-white font-medium'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {/* Pages tab */}
+        {contentTab === 'pages' && (
+          pagesLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-red-500"></div>
+            </div>
+          ) : pagesData?.items && pagesData.items.length > 0 ? (
+            <table className="w-full">
+              <thead className="bg-gray-700/50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Title</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Slug</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Status</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Created</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {pagesData.items.map((page) => (
+                  <tr key={page.id} className="hover:bg-gray-700/30">
+                    <td className="px-4 py-3 text-white text-sm">{page.title || '(untitled)'}</td>
+                    <td className="px-4 py-3 text-gray-400 text-sm font-mono">{page.slug || '-'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        page.status === 'published' ? 'bg-green-600/20 text-green-400' : 'bg-gray-600/20 text-gray-400'
+                      }`}>
+                        {page.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-400 text-sm">
+                      {page.created_at ? new Date(page.created_at).toLocaleDateString() : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Delete page "${page.title || page.slug}"?`)) return;
+                          try {
+                            await deletePage.mutateAsync(page.id);
+                            showToast('success', 'Page deleted');
+                          } catch { showToast('error', 'Failed to delete page'); }
+                        }}
+                        className="p-1 text-red-400 hover:bg-red-600/20 rounded transition-colors"
+                        title="Delete page"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="text-gray-500 text-sm py-4">No pages</p>
+          )
+        )}
+
+        {/* Contacts tab */}
+        {contentTab === 'contacts' && (
+          contactsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-red-500"></div>
+            </div>
+          ) : contactsData?.items && contactsData.items.length > 0 ? (
+            <table className="w-full">
+              <thead className="bg-gray-700/50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Email</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Name</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Created</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {contactsData.items.map((contact) => (
+                  <tr key={contact.id} className="hover:bg-gray-700/30">
+                    <td className="px-4 py-3 text-white text-sm">{contact.email}</td>
+                    <td className="px-4 py-3 text-gray-400 text-sm">
+                      {[contact.first_name, contact.last_name].filter(Boolean).join(' ') || '-'}
+                    </td>
+                    <td className="px-4 py-3 text-gray-400 text-sm">
+                      {contact.created_at ? new Date(contact.created_at).toLocaleDateString() : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Delete contact "${contact.email}"?`)) return;
+                          try {
+                            await deleteContact.mutateAsync(contact.id);
+                            showToast('success', 'Contact deleted');
+                          } catch { showToast('error', 'Failed to delete contact'); }
+                        }}
+                        className="p-1 text-red-400 hover:bg-red-600/20 rounded transition-colors"
+                        title="Delete contact"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="text-gray-500 text-sm py-4">No contacts</p>
+          )
+        )}
+
+        {/* Workflows tab */}
+        {contentTab === 'workflows' && (
+          workflowsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-red-500"></div>
+            </div>
+          ) : workflowsData?.items && workflowsData.items.length > 0 ? (
+            <table className="w-full">
+              <thead className="bg-gray-700/50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Name</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Status</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Trigger</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Created</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {workflowsData.items.map((wf) => (
+                  <tr key={wf.id} className="hover:bg-gray-700/30">
+                    <td className="px-4 py-3 text-white text-sm">{wf.name || '(unnamed)'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        wf.status === 'active' ? 'bg-green-600/20 text-green-400' : 'bg-gray-600/20 text-gray-400'
+                      }`}>
+                        {wf.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-400 text-sm font-mono">{wf.trigger_type || '-'}</td>
+                    <td className="px-4 py-3 text-gray-400 text-sm">
+                      {wf.created_at ? new Date(wf.created_at).toLocaleDateString() : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Delete workflow "${wf.name}"?`)) return;
+                          try {
+                            await deleteWorkflow.mutateAsync(wf.id);
+                            showToast('success', 'Workflow deleted');
+                          } catch { showToast('error', 'Failed to delete workflow'); }
+                        }}
+                        className="p-1 text-red-400 hover:bg-red-600/20 rounded transition-colors"
+                        title="Delete workflow"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="text-gray-500 text-sm py-4">No workflows</p>
+          )
+        )}
+
+        {/* Forms tab */}
+        {contentTab === 'forms' && (
+          formsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-red-500"></div>
+            </div>
+          ) : formsData?.items && formsData.items.length > 0 ? (
+            <table className="w-full">
+              <thead className="bg-gray-700/50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Name</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Page ID</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase">Created</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-400 uppercase">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {formsData.items.map((form) => (
+                  <tr key={form.id} className="hover:bg-gray-700/30">
+                    <td className="px-4 py-3 text-white text-sm">{form.name || '(unnamed)'}</td>
+                    <td className="px-4 py-3 text-gray-400 text-sm font-mono">{form.page_id || '-'}</td>
+                    <td className="px-4 py-3 text-gray-400 text-sm">
+                      {form.created_at ? new Date(form.created_at).toLocaleDateString() : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Delete form "${form.name}"?`)) return;
+                          try {
+                            await deleteForm.mutateAsync(form.id);
+                            showToast('success', 'Form deleted');
+                          } catch { showToast('error', 'Failed to delete form'); }
+                        }}
+                        className="p-1 text-red-400 hover:bg-red-600/20 rounded transition-colors"
+                        title="Delete form"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="text-gray-500 text-sm py-4">No forms</p>
+          )
         )}
       </div>
 

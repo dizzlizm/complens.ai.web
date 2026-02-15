@@ -30,6 +30,9 @@ class NodeContext:
     workspace_id: str = ""
     workspace_settings: dict[str, Any] = field(default_factory=dict)
 
+    # Site-level settings (overrides workspace for email identity, etc.)
+    site_settings: dict[str, Any] = field(default_factory=dict)
+
     # Variables passed between nodes
     variables: dict[str, Any] = field(default_factory=dict)
 

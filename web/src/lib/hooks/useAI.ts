@@ -713,6 +713,7 @@ export interface SynthesizePlanInput {
   site_id?: string;
   block_types?: string[];
   existing_block_types?: string[];
+  max_blocks?: number;
 }
 
 export interface SynthesizeGenerateInput {

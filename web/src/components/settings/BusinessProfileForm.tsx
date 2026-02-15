@@ -95,6 +95,8 @@ export default function BusinessProfileForm({
           achievements: result.achievements?.length ? result.achievements : profileForm.achievements,
         });
       }
+      // Allow form to re-sync from saved profile on next fetch
+      setProfileInitialized(false);
       toast.success('Website analyzed! Profile fields updated.');
     } catch {
       // Error handled by mutation state
@@ -125,9 +127,9 @@ export default function BusinessProfileForm({
             <Globe className="w-5 h-5 text-blue-600" />
           </div>
           <div className="flex-1">
-            <p className="font-medium text-gray-900">Import from Website</p>
+            <p className="font-medium text-gray-900">Research Your Business</p>
             <p className="text-sm text-gray-600">
-              Enter your website URL to auto-fill your business profile
+              AI researches your website, subpages, and the web to auto-fill your profile
             </p>
           </div>
         </div>
@@ -153,12 +155,12 @@ export default function BusinessProfileForm({
             {analyzeDomain.isPending ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Analyzing...
+                Researching...
               </>
             ) : (
               <>
                 <Globe className="w-4 h-4" />
-                Analyze
+                Research
               </>
             )}
           </button>

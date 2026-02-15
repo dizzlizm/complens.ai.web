@@ -10,7 +10,8 @@ interface ChatMessage {
 }
 
 interface ChatWidgetProps {
-  pageId: string;
+  pageId?: string;
+  siteId?: string;
   workspaceId: string;
   config: ChatConfig;
   primaryColor?: string;
@@ -23,6 +24,7 @@ const WS_URL = import.meta.env.VITE_WS_URL || '';
 
 export default function ChatWidget({
   pageId,
+  siteId,
   workspaceId,
   config,
   primaryColor = '#6366f1',
@@ -72,7 +74,10 @@ export default function ChatWidget({
   const connectWebSocket = useCallback(() => {
     if (!WS_URL) return;
 
-    const wsUrl = `${WS_URL}?page_id=${pageId}&workspace_id=${workspaceId}&visitor_id=${visitorId.current}`;
+    const params = new URLSearchParams({ workspace_id: workspaceId, visitor_id: visitorId.current });
+    if (pageId) params.set('page_id', pageId);
+    if (siteId) params.set('site_id', siteId);
+    const wsUrl = `${WS_URL}?${params.toString()}`;
     ws.current = new WebSocket(wsUrl);
 
     ws.current.onopen = () => {
@@ -125,7 +130,7 @@ export default function ChatWidget({
     ws.current.onerror = () => {
       // onclose will fire after onerror, which handles reconnection
     };
-  }, [pageId, workspaceId, config.initial_message]);
+  }, [pageId, siteId, workspaceId, config.initial_message]);
 
   // Manage WebSocket lifecycle based on chat open/close state
   useEffect(() => {
@@ -162,15 +167,15 @@ export default function ChatWidget({
     setMessages((prev) => [...prev, message]);
 
     // Send to WebSocket
-    ws.current.send(
-      JSON.stringify({
-        action: 'public_chat',
-        message: inputValue.trim(),
-        page_id: pageId,
-        workspace_id: workspaceId,
-        visitor_id: visitorId.current,
-      })
-    );
+    const payload: Record<string, string> = {
+      action: 'public_chat',
+      message: inputValue.trim(),
+      workspace_id: workspaceId,
+      visitor_id: visitorId.current,
+    };
+    if (pageId) payload.page_id = pageId;
+    if (siteId) payload.site_id = siteId;
+    ws.current.send(JSON.stringify(payload));
 
     setInputValue('');
     setIsTyping(true);

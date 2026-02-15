@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback } from 'react';
-import { BookOpen, Upload, Trash2, RefreshCw, FileText, Loader2, CheckCircle, AlertCircle, Clock, Eye, Link2 } from 'lucide-react';
-import { useKBDocuments, useKBStatus, useCreateKBDocument, useConfirmKBUpload, useDeleteKBDocument, useSyncKB, useImportKBUrl } from '../../lib/hooks/useKnowledgeBase';
+import { BookOpen, Upload, Trash2, RefreshCw, FileText, Loader2, CheckCircle, AlertCircle, Clock, Eye, Link2, ClipboardPaste, Globe } from 'lucide-react';
+import { useKBDocuments, useKBStatus, useCreateKBDocument, useConfirmKBUpload, useDeleteKBDocument, useSyncKB, useImportKBUrl, useImportKBText, useCrawlSite } from '../../lib/hooks/useKnowledgeBase';
 import { useFormatDate } from '../../lib/hooks/useFormatDate';
 import DocumentContentModal from './DocumentContentModal';
 
@@ -31,10 +31,18 @@ export default function KnowledgeBaseSettings({ workspaceId, siteId }: Knowledge
   const deleteDocument = useDeleteKBDocument(workspaceId);
   const syncKB = useSyncKB(workspaceId);
   const importUrl = useImportKBUrl(workspaceId);
+  const importText = useImportKBText(workspaceId);
+  const crawlSite = useCrawlSite(workspaceId);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [importUrlValue, setImportUrlValue] = useState('');
+  const [crawlEntireSite, setCrawlEntireSite] = useState(false);
+  const [maxPages, setMaxPages] = useState(20);
+  const [crawlResult, setCrawlResult] = useState<{ found: number; imported: number } | null>(null);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteName, setPasteName] = useState('');
+  const [showPasteArea, setShowPasteArea] = useState(false);
   const [viewingDoc, setViewingDoc] = useState<{ id: string; name: string } | null>(null);
 
   const uploadFiles = useCallback(async (files: File[]) => {
@@ -84,8 +92,28 @@ export default function KnowledgeBaseSettings({ workspaceId, siteId }: Knowledge
     const url = importUrlValue.trim();
     if (!url) return;
     try {
-      await importUrl.mutateAsync({ url, site_id: siteId });
-      setImportUrlValue('');
+      if (crawlEntireSite) {
+        const result = await crawlSite.mutateAsync({ url, max_pages: maxPages, site_id: siteId });
+        setCrawlResult({ found: result.pages_found, imported: result.pages_imported });
+        setImportUrlValue('');
+        setCrawlEntireSite(false);
+      } else {
+        await importUrl.mutateAsync({ url, site_id: siteId });
+        setImportUrlValue('');
+      }
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
+  const handleImportText = async () => {
+    const text = pasteText.trim();
+    if (!text) return;
+    try {
+      await importText.mutateAsync({ text, name: pasteName.trim() || undefined, site_id: siteId });
+      setPasteText('');
+      setPasteName('');
+      setShowPasteArea(false);
     } catch {
       // Error handled by mutation state
     }
@@ -204,28 +232,131 @@ export default function KnowledgeBaseSettings({ workspaceId, siteId }: Knowledge
             <input
               type="url"
               value={importUrlValue}
-              onChange={(e) => setImportUrlValue(e.target.value)}
+              onChange={(e) => { setImportUrlValue(e.target.value); setCrawlResult(null); }}
               onKeyDown={(e) => e.key === 'Enter' && handleImportUrl()}
-              placeholder="Import from URL..."
+              placeholder={crawlEntireSite ? "Enter website URL to crawl..." : "Import from URL..."}
               className="input pl-9 w-full"
             />
           </div>
           <button
             onClick={handleImportUrl}
-            disabled={!importUrlValue.trim() || importUrl.isPending}
+            disabled={!importUrlValue.trim() || importUrl.isPending || crawlSite.isPending}
             className="btn btn-secondary inline-flex items-center gap-2 whitespace-nowrap"
           >
-            {importUrl.isPending ? (
+            {(importUrl.isPending || crawlSite.isPending) ? (
               <Loader2 className="w-4 h-4 animate-spin" />
+            ) : crawlEntireSite ? (
+              <Globe className="w-4 h-4" />
             ) : (
               <Link2 className="w-4 h-4" />
             )}
-            Import
+            {crawlSite.isPending ? 'Crawling...' : crawlEntireSite ? 'Crawl Site' : 'Import'}
           </button>
         </div>
+
+        {/* Crawl entire site toggle */}
+        <div className="mt-3 space-y-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={crawlEntireSite}
+              onChange={(e) => { setCrawlEntireSite(e.target.checked); setCrawlResult(null); }}
+              className="rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+            />
+            <span className="text-sm text-gray-600">Crawl entire site</span>
+            <span className="text-xs text-gray-400">(imports all pages as separate KB documents)</span>
+          </label>
+
+          {crawlEntireSite && (
+            <div className="flex items-center gap-3 pl-6">
+              <label className="text-xs text-gray-500">Max pages:</label>
+              <input
+                type="range"
+                min={5}
+                max={50}
+                step={5}
+                value={maxPages}
+                onChange={(e) => setMaxPages(parseInt(e.target.value))}
+                className="w-32 accent-violet-600"
+              />
+              <span className="text-sm font-medium text-gray-700 w-8">{maxPages}</span>
+            </div>
+          )}
+        </div>
+
         {importUrl.isError && (
           <p className="text-xs text-red-500 mt-1">Failed to import URL. Check the URL and try again.</p>
         )}
+        {crawlSite.isError && (
+          <p className="text-xs text-red-500 mt-1">Failed to crawl site. Check the URL and try again.</p>
+        )}
+        {crawlResult && (
+          <p className="text-xs text-green-600 mt-1">
+            Crawl complete: found {crawlResult.found} pages, imported {crawlResult.imported} documents.
+          </p>
+        )}
+
+        {/* Paste text */}
+        <div className="mt-4 border-t border-gray-100 pt-4">
+          {!showPasteArea ? (
+            <button
+              onClick={() => setShowPasteArea(true)}
+              className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+            >
+              <ClipboardPaste className="w-4 h-4" />
+              Paste text directly
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <ClipboardPaste className="w-4 h-4" />
+                  Paste Content
+                </div>
+                <button
+                  onClick={() => { setShowPasteArea(false); setPasteText(''); setPasteName(''); }}
+                  className="text-xs text-gray-400 hover:text-gray-600"
+                >
+                  Cancel
+                </button>
+              </div>
+              <input
+                type="text"
+                value={pasteName}
+                onChange={(e) => setPasteName(e.target.value)}
+                placeholder="Document name (optional)"
+                className="input w-full"
+              />
+              <textarea
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                placeholder="Paste product info, FAQs, feature descriptions, blog posts, or any business content..."
+                rows={6}
+                className="input w-full resize-y"
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-400">
+                  {pasteText.length > 0 ? `${pasteText.length.toLocaleString()} characters` : ''}
+                </span>
+                <button
+                  onClick={handleImportText}
+                  disabled={!pasteText.trim() || importText.isPending}
+                  className="btn btn-primary inline-flex items-center gap-2"
+                >
+                  {importText.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <ClipboardPaste className="w-4 h-4" />
+                  )}
+                  Save to KB
+                </button>
+              </div>
+              {importText.isError && (
+                <p className="text-xs text-red-500">Failed to save text. Please try again.</p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Document list */}

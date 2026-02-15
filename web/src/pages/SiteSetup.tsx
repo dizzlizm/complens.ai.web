@@ -1,18 +1,20 @@
+import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useCurrentWorkspace, useSite, useListDomains, useUpdateSite } from '../lib/hooks';
-import { Loader2, Settings2, Globe, Check, Clock, AlertTriangle, ArrowRight, Star } from 'lucide-react';
+import { useCurrentWorkspace, useSite, useListDomains, useUpdateSite, usePages, useUpdatePage, checkSubdomainAvailability } from '../lib/hooks';
+import { Loader2, Settings2, Globe, Check, Clock, AlertTriangle, ArrowRight, Star, ExternalLink, AlertCircle } from 'lucide-react';
 import EmailIdentity from '../components/email/EmailIdentity';
 import WarmupManager from '../components/email/WarmupManager';
 import CustomDomainSection from '../components/domains/CustomDomainSection';
+
+// Subdomain suffix for page URLs
+const SUBDOMAIN_SUFFIX = import.meta.env.VITE_SUBDOMAIN_SUFFIX
+  || (import.meta.env.VITE_API_URL || '').replace(/^https?:\/\/api\./, '')
+  || 'complens.ai';
 
 export default function SiteSetup() {
   const navigate = useNavigate();
   const { siteId } = useParams<{ siteId: string }>();
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
-  const { data: site } = useSite(workspaceId, siteId);
-
-  const primaryDomain = (site?.settings?.primary_domain as string) || '';
-
   if (isLoadingWorkspace) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -35,6 +37,11 @@ export default function SiteSetup() {
 
       <DomainStatusCard workspaceId={workspaceId} siteId={siteId} />
 
+      {/* Subdomain */}
+      {siteId && workspaceId && (
+        <SubdomainSection workspaceId={workspaceId} siteId={siteId} />
+      )}
+
       {/* Custom Domain */}
       {siteId && workspaceId && (
         <div className="card">
@@ -49,8 +56,6 @@ export default function SiteSetup() {
       <EmailIdentity
         workspaceId={workspaceId}
         siteId={siteId}
-        primaryDomain={primaryDomain}
-        onNavigateToDomains={() => navigate('/settings?section=domains')}
       />
 
       <WarmupManager
@@ -58,6 +63,133 @@ export default function SiteSetup() {
         siteId={siteId}
         onNavigateToDomains={() => navigate('/settings?section=domains')}
       />
+    </div>
+  );
+}
+
+function SubdomainSection({ workspaceId, siteId }: { workspaceId: string; siteId: string }) {
+  const { data: pages } = usePages(workspaceId, siteId);
+  const primaryPage = pages?.[0];
+  const updatePage = useUpdatePage(workspaceId, primaryPage?.id || '');
+
+  const currentSubdomain = primaryPage?.subdomain || '';
+  const [subdomainInput, setSubdomainInput] = useState(currentSubdomain);
+  const [subdomainStatus, setSubdomainStatus] = useState<{
+    checking: boolean;
+    available?: boolean;
+    message?: string;
+    url?: string;
+  }>({ checking: false });
+
+  // Sync local state when page data loads
+  useEffect(() => {
+    setSubdomainInput(currentSubdomain);
+  }, [currentSubdomain]);
+
+  // Check subdomain availability with debounce
+  useEffect(() => {
+    if (!subdomainInput || subdomainInput === currentSubdomain) {
+      setSubdomainStatus({ checking: false });
+      return;
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setSubdomainStatus({ checking: true });
+      try {
+        const result = await checkSubdomainAvailability(workspaceId, subdomainInput, primaryPage?.id);
+        setSubdomainStatus({
+          checking: false,
+          available: result.available,
+          message: result.message,
+          url: result.url,
+        });
+      } catch {
+        setSubdomainStatus({ checking: false, message: 'Failed to check availability' });
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [subdomainInput, currentSubdomain, workspaceId, primaryPage?.id]);
+
+  const handleSubdomainSave = async () => {
+    if (subdomainStatus.available === false && subdomainInput !== currentSubdomain) return;
+    if (!primaryPage) return;
+    try {
+      await updatePage.mutateAsync({ subdomain: subdomainInput });
+    } catch {
+      // error handled by mutation
+    }
+  };
+
+  if (!primaryPage) {
+    return null;
+  }
+
+  return (
+    <div className="card">
+      <h2 className="text-lg font-semibold text-gray-900 mb-1">Free Subdomain</h2>
+      <p className="text-sm text-gray-500 mb-4">
+        Claim a free subdomain to make your page publicly accessible
+      </p>
+      <div className="flex gap-2">
+        <div className="flex-1 flex items-center">
+          <input
+            type="text"
+            value={subdomainInput}
+            onChange={(e) => setSubdomainInput(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+            placeholder="mypage"
+            className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+          />
+          <span className="px-3 py-2 bg-gray-50 border border-l-0 border-gray-300 rounded-r-lg text-gray-500 text-sm whitespace-nowrap">
+            .{SUBDOMAIN_SUFFIX}
+          </span>
+        </div>
+        <button
+          onClick={handleSubdomainSave}
+          disabled={
+            updatePage.isPending ||
+            subdomainStatus.checking ||
+            Boolean(subdomainInput && subdomainStatus.available === false && subdomainInput !== currentSubdomain)
+          }
+          className="btn btn-primary btn-sm"
+        >
+          {updatePage.isPending ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+
+      {/* Status messages */}
+      {subdomainStatus.checking && (
+        <p className="text-xs text-gray-500 mt-2 flex items-center gap-1">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          Checking...
+        </p>
+      )}
+      {!subdomainStatus.checking && subdomainStatus.available === true && subdomainInput && (
+        <p className="text-xs text-green-600 mt-2 flex items-center gap-1">
+          <Check className="w-3 h-3" />
+          Available! <span className="font-medium">{subdomainStatus.url}</span>
+        </p>
+      )}
+      {!subdomainStatus.checking && subdomainStatus.available === false && (
+        <p className="text-xs text-red-600 mt-2 flex items-center gap-1">
+          <AlertCircle className="w-3 h-3" />
+          {subdomainStatus.message}
+        </p>
+      )}
+      {currentSubdomain && subdomainInput === currentSubdomain && (
+        <p className="text-xs text-gray-500 mt-2">
+          Live at{' '}
+          <a
+            href={`https://${currentSubdomain}.${SUBDOMAIN_SUFFIX}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary-600 hover:underline inline-flex items-center gap-1"
+          >
+            {currentSubdomain}.{SUBDOMAIN_SUFFIX}
+            <ExternalLink className="w-3 h-3" />
+          </a>
+        </p>
+      )}
     </div>
   );
 }

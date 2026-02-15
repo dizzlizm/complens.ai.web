@@ -452,7 +452,7 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
         email_id = str(ULID())
 
         try:
-            self.table.put_item(Item={
+            item: dict[str, Any] = {
                 "PK": f"WARMUP#{domain}",
                 "SK": f"EMAIL#{date_str}#{email_id}",
                 "subject": email_data.get("subject", ""),
@@ -461,7 +461,14 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
                 "content_type": email_data.get("content_type", ""),
                 "sent_at": email_data.get("sent_at", ""),
                 "ttl": ttl,
-            })
+            }
+            # Store attribution fields only when non-empty
+            for attr_field in ("kb_source", "kb_excerpt", "kb_reasoning", "profile_alignment"):
+                val = email_data.get(attr_field, "")
+                if val:
+                    item[attr_field] = val
+
+            self.table.put_item(Item=item)
         except ClientError as e:
             logger.error(
                 "Failed to record warmup email",
@@ -515,6 +522,10 @@ class WarmupDomainRepository(BaseRepository[WarmupDomain]):
                     "from_email": item.get("from_email", ""),
                     "content_type": item.get("content_type", ""),
                     "sent_at": item.get("sent_at", ""),
+                    "kb_source": item.get("kb_source", ""),
+                    "kb_excerpt": item.get("kb_excerpt", ""),
+                    "kb_reasoning": item.get("kb_reasoning", ""),
+                    "profile_alignment": item.get("profile_alignment", ""),
                 }
                 for item in response.get("Items", [])
             ]

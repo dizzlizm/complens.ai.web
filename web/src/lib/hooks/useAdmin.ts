@@ -511,6 +511,160 @@ export function useToggleSuperAdmin() {
   });
 }
 
+// Admin workspace content types
+export interface AdminPage {
+  id: string;
+  title: string;
+  slug: string;
+  status: string;
+  subdomain: string | null;
+  created_at: string | null;
+}
+
+export interface AdminContact {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  created_at: string | null;
+}
+
+export interface AdminWorkflow {
+  id: string;
+  name: string;
+  status: string;
+  trigger_type: string | null;
+  created_at: string | null;
+}
+
+export interface AdminForm {
+  id: string;
+  name: string;
+  page_id: string | null;
+  created_at: string | null;
+}
+
+// Admin workspace content hooks
+export function useAdminPages(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: ['admin', 'workspace', workspaceId, 'pages'],
+    queryFn: async () => {
+      const { data } = await api.get<{ items: AdminPage[]; count: number }>(
+        `/admin/workspaces/${workspaceId}/pages`
+      );
+      return data;
+    },
+    enabled: !!workspaceId,
+  });
+}
+
+export function useAdminContacts(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: ['admin', 'workspace', workspaceId, 'contacts'],
+    queryFn: async () => {
+      const { data } = await api.get<{ items: AdminContact[]; count: number }>(
+        `/admin/workspaces/${workspaceId}/contacts`
+      );
+      return data;
+    },
+    enabled: !!workspaceId,
+  });
+}
+
+export function useAdminWorkflows(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: ['admin', 'workspace', workspaceId, 'workflows'],
+    queryFn: async () => {
+      const { data } = await api.get<{ items: AdminWorkflow[]; count: number }>(
+        `/admin/workspaces/${workspaceId}/workflows`
+      );
+      return data;
+    },
+    enabled: !!workspaceId,
+  });
+}
+
+export function useAdminForms(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: ['admin', 'workspace', workspaceId, 'forms'],
+    queryFn: async () => {
+      const { data } = await api.get<{ items: AdminForm[]; count: number }>(
+        `/admin/workspaces/${workspaceId}/forms`
+      );
+      return data;
+    },
+    enabled: !!workspaceId,
+  });
+}
+
+export function useDeleteAdminPage(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (pageId: string) => {
+      const { data } = await api.delete<{ message: string; page_id: string }>(
+        `/admin/workspaces/${workspaceId}/pages/${pageId}`
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspace', workspaceId, 'pages'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspace', workspaceId, 'stats'] });
+    },
+  });
+}
+
+export function useDeleteAdminContact(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (contactId: string) => {
+      const { data } = await api.delete<{ message: string; contact_id: string }>(
+        `/admin/workspaces/${workspaceId}/contacts/${contactId}`
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspace', workspaceId, 'contacts'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspace', workspaceId, 'stats'] });
+    },
+  });
+}
+
+export function useDeleteAdminWorkflow(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (workflowId: string) => {
+      const { data } = await api.delete<{ message: string; workflow_id: string }>(
+        `/admin/workspaces/${workspaceId}/workflows/${workflowId}`
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspace', workspaceId, 'workflows'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspace', workspaceId, 'stats'] });
+    },
+  });
+}
+
+export function useDeleteAdminForm(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (formId: string) => {
+      const { data } = await api.delete<{ message: string; form_id: string }>(
+        `/admin/workspaces/${workspaceId}/forms/${formId}`
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspace', workspaceId, 'forms'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'workspace', workspaceId, 'stats'] });
+    },
+  });
+}
+
 // Plan config types
 export interface AdminPlanConfig {
   id: string;
