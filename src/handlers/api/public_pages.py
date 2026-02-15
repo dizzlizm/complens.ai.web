@@ -227,14 +227,6 @@ def get_chat_config(page_id: str, workspace_id: str | None, event: dict) -> dict
     if status_value != "published":
         return public_error("Page not found", origin, 404, "NOT_FOUND")
 
-    # Gate chat behind paid plan
-    from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
-    try:
-        plan = get_workspace_plan(workspace_id)
-        require_feature(plan, "chat")
-    except FeatureGateError:
-        return public_error("Chat requires a paid plan", origin, 403, "PLAN_LIMIT")
-
     # Extract chat config
     chat_config = page.chat_config
     if not chat_config:
@@ -290,14 +282,6 @@ def get_site_chat_config(site_id: str, workspace_id: str | None, event: dict) ->
 
     if not site_id:
         return public_error("Site ID is required", origin, 400)
-
-    # Gate chat behind paid plan
-    from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
-    try:
-        plan = get_workspace_plan(workspace_id)
-        require_feature(plan, "chat")
-    except FeatureGateError:
-        return public_error("Chat requires a paid plan", origin, 403, "PLAN_LIMIT")
 
     from complens.repositories.site import SiteRepository
     site_repo = SiteRepository()
