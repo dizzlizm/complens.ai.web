@@ -308,14 +308,42 @@ def delete_site(
     workspace_id: str,
     site_id: str,
 ) -> dict:
-    """Delete a site."""
+    """Delete a site and cascade-delete its pages."""
     deleted = repo.delete_site(workspace_id, site_id)
     if not deleted:
         return not_found("Site", site_id)
 
+    # Cascade delete all pages belonging to this site
+    _cascade_delete_site_pages(workspace_id, site_id)
+
     logger.info("Site deleted", site_id=site_id, workspace_id=workspace_id)
 
     return success({"deleted": True, "id": site_id})
+
+
+def _cascade_delete_site_pages(workspace_id: str, site_id: str) -> None:
+    """Delete all pages belonging to a site, including their child resources."""
+    try:
+        page_repo = PageRepository()
+        pages, _ = page_repo.list_by_site(workspace_id, site_id, limit=100)
+        for page in pages:
+            page_repo.delete_page(workspace_id, page.id)
+            # Cascade delete forms, workflows, profile for each page
+            from complens.handlers.api.pages import _cascade_delete_page_resources
+            _cascade_delete_page_resources(workspace_id, page.id)
+        if pages:
+            logger.info(
+                "Cascade deleted site pages",
+                site_id=site_id,
+                count=len(pages),
+                workspace_id=workspace_id,
+            )
+    except Exception as e:
+        logger.warning(
+            "Failed to cascade delete site pages",
+            site_id=site_id,
+            error=str(e),
+        )
 
 
 def copy_site(

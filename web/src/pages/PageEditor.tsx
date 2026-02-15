@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { usePage, useUpdatePage, type UpdatePageInput, type PageLayout } from '../lib/hooks/usePages';
+import { usePage, useUpdatePage, useDeletePage, type UpdatePageInput, type PageLayout } from '../lib/hooks/usePages';
 import { usePageForms, type Form } from '../lib/hooks/useForms';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import {
@@ -10,7 +10,8 @@ import {
 } from '../lib/hooks/useAI';
 import { useToast } from '../components/Toast';
 import { PageBlock, AgenticPageBuilder, ContentTabV2 } from '../components/page-builder';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Trash2 } from 'lucide-react';
+import Modal from '../components/ui/Modal';
 
 // Auto-save delay in milliseconds
 const AUTO_SAVE_DELAY = 3000;
@@ -29,6 +30,7 @@ export default function PageEditor() {
   const { data: page, isLoading } = usePage(workspaceId, pageId);
   const { data: pageForms } = usePageForms(workspaceId, pageId);
   const updatePage = useUpdatePage(workspaceId || '', pageId || '');
+  const deletePage = useDeletePage(workspaceId || '');
 
   // AI Profile hook - only for profile score in ContentTabV2
   const { data: profile } = useBusinessProfile(workspaceId, pageId, siteId);
@@ -36,6 +38,7 @@ export default function PageEditor() {
   const [formData, setFormData] = useState<UpdatePageInput>({});
   const [hasChanges, setHasChanges] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // AI Generate modal state - using agentic chat-based builder
   const [showAIGenerator, setShowAIGenerator] = useState(false);
@@ -180,6 +183,17 @@ export default function PageEditor() {
   const handleBlocksChange = (newBlocks: PageBlock[]) => {
     setBlocks(newBlocks);
     setHasChanges(true);
+  };
+
+  const handleDeletePage = async () => {
+    if (!pageId) return;
+    try {
+      await deletePage.mutateAsync(pageId);
+      toast.success('Page deleted');
+      navigate(siteId ? `/sites/${siteId}/pages` : '/sites');
+    } catch {
+      toast.error('Failed to delete page');
+    }
   };
 
   const handlePublish = async () => {
@@ -360,6 +374,13 @@ export default function PageEditor() {
           >
             {page.status === 'published' ? 'Update' : 'Publish'}
           </button>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+            title="Delete page"
+          >
+            <Trash2 className="w-5 h-5" />
+          </button>
         </div>
       </div>
 
@@ -414,6 +435,33 @@ export default function PageEditor() {
           useSynthesisEngine={true}
         />
       )}
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        title="Delete Page"
+        size="sm"
+      >
+        <p className="text-gray-600 mb-6">
+          Are you sure you want to delete <strong>{page.name}</strong>? This will also remove its forms, workflows, and business profile. This action cannot be undone.
+        </p>
+        <div className="flex gap-3">
+          <button
+            onClick={() => setShowDeleteConfirm(false)}
+            className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleDeletePage}
+            disabled={deletePage.isPending}
+            className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+          >
+            {deletePage.isPending ? 'Deleting...' : 'Delete'}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -122,6 +122,7 @@ export function useDeleteSite(workspaceId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sites', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['pages', workspaceId] });
     },
   });
 }
