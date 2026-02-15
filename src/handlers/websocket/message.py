@@ -111,24 +111,6 @@ def handle_public_chat(
         )
         return {"statusCode": 400, "body": "workspace_id is required"}
 
-    # Gate chat behind paid plan
-    from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
-    try:
-        plan = get_workspace_plan(workspace_id)
-        require_feature(plan, "chat")
-    except FeatureGateError:
-        send_to_connection(
-            connection_id,
-            domain,
-            stage,
-            {
-                "action": "ai_response",
-                "error": "PLAN_LIMIT",
-                "message": "Chat requires a paid plan.",
-            },
-        )
-        return {"statusCode": 403, "body": "Chat requires a paid plan"}
-
     # Rate limit: 5 messages/minute, 30/hour per visitor
     source_ip = (
         body.get("requestContext", {}).get("identity", {}).get("sourceIp")

@@ -140,7 +140,15 @@ export default function ChatWidget({
     reconnectAttempts.current = 0;
     connectWebSocket();
 
+    // Keepalive ping every 30s to prevent API Gateway 10-min idle timeout
+    const pingInterval = setInterval(() => {
+      if (ws.current?.readyState === WebSocket.OPEN) {
+        ws.current.send(JSON.stringify({ action: 'ping' }));
+      }
+    }, 30000);
+
     return () => {
+      clearInterval(pingInterval);
       intentionalClose.current = true;
       if (reconnectTimer.current) {
         clearTimeout(reconnectTimer.current);
