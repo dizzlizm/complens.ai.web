@@ -198,7 +198,7 @@ export function useWorkflowEvents(
       // WebSocket APIs don't forward custom headers to the $connect integration.
       // Risk is mitigated by wss:// (encrypted in transit) and short token expiry.
       // TODO: Replace with a short-lived connect token from a dedicated endpoint.
-      const wsUrl = `${WS_URL}?token=${encodeURIComponent(token)}`;
+      const wsUrl = `${WS_URL}/?token=${encodeURIComponent(token)}`;
       ws.current = new WebSocket(wsUrl);
 
       ws.current.onopen = () => {
