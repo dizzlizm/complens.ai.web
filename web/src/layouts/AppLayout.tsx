@@ -8,6 +8,7 @@ import {
   Users,
   DollarSign,
   FileText,
+  ClipboardList,
   Settings,
   User,
   LogOut,
@@ -39,6 +40,7 @@ const globalNavigation = [
 function getSiteNavigation(siteId: string) {
   return [
     { name: 'Content', href: `/sites/${siteId}/pages`, icon: FileText },
+    { name: 'Forms', href: `/sites/${siteId}/forms`, icon: ClipboardList },
     { name: 'Workflows', href: `/sites/${siteId}/workflows`, icon: GitBranch },
     { name: 'Setup', href: `/sites/${siteId}/setup`, icon: Settings2 },
     { name: 'AI & Knowledge Base', href: `/sites/${siteId}/ai`, icon: BookOpen },

@@ -8,10 +8,6 @@ export default function SiteEmail() {
   const navigate = useNavigate();
   const { siteId } = useParams<{ siteId: string }>();
   const { workspaceId, isLoading: isLoadingWorkspace } = useCurrentWorkspace();
-  const { data: site } = useSite(workspaceId, siteId);
-
-  const primaryDomain = (site?.settings?.primary_domain as string) || '';
-
   if (isLoadingWorkspace) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -37,8 +33,6 @@ export default function SiteEmail() {
       <EmailIdentity
         workspaceId={workspaceId}
         siteId={siteId}
-        primaryDomain={primaryDomain}
-        onNavigateToDomains={() => navigate('/settings?section=domains')}
       />
 
       <WarmupManager

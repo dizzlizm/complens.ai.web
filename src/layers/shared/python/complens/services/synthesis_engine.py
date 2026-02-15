@@ -275,6 +275,7 @@ class SynthesisEngine:
         block_types: list[str] | None = None,
         existing_block_types: list[str] | None = None,
         site_id: str | None = None,
+        max_blocks: int | None = None,
     ) -> PlanResult:
         """Phase 1: Plan the page — fast, single Haiku call.
 
@@ -289,6 +290,7 @@ class SynthesisEngine:
             style_preference: Optional style like 'professional', 'bold'.
             block_types: Optional list of specific block types to generate.
             existing_block_types: Block types already on the page.
+            max_blocks: Maximum number of blocks to plan (from selected slot count).
 
         Returns:
             PlanResult with intent, block plan, design, brand, SEO.
@@ -310,12 +312,15 @@ class SynthesisEngine:
         # Stage 3: Block Planning
         include_form = "form" in (block_types or [])
         include_chat = "chat" in (block_types or [])
-        plan = self._plan_blocks(intent, assessment, include_form, include_chat, block_types)
+        plan = self._plan_blocks(intent, assessment, include_form, include_chat, block_types, max_blocks)
 
         # Auto-inject contact method if missing from plan AND existing page
-        contact_method_injected = self._ensure_contact_method(
-            intent, plan, existing_block_types
-        )
+        # Skip auto-injection when max_blocks constrains the plan (inline slot generation)
+        contact_method_injected = None
+        if not max_blocks:
+            contact_method_injected = self._ensure_contact_method(
+                intent, plan, existing_block_types
+            )
 
         # Stage 4: Design System
         design = self._generate_design_system(profile, intent, style_preference)
@@ -696,6 +701,7 @@ class SynthesisEngine:
         include_form: bool,
         include_chat: bool,
         block_types: list[str] | None = None,
+        max_blocks: int | None = None,
     ) -> BlockPlan:
         """Stage 3: Plan which blocks to include and their layout.
 
@@ -716,6 +722,7 @@ class SynthesisEngine:
             include_form: Whether to include a form block.
             include_chat: Whether to include a chat block.
             block_types: If provided, only include these specific block types.
+            max_blocks: Maximum number of blocks to plan.
         """
         goal = intent.goal.value
         mapping = INTENT_BLOCK_MAPPING.get(goal, INTENT_BLOCK_MAPPING["lead-gen"])
@@ -930,6 +937,22 @@ class SynthesisEngine:
             layout_strategy = "side-by-side-cta"
         else:
             layout_strategy = "full-width"
+
+        # Apply max_blocks constraint: keep the most important blocks
+        if max_blocks and len(planned_blocks) > max_blocks:
+            # Sort by emphasis priority (high > medium > low) while preserving
+            # relative order within each priority level
+            emphasis_order = {"high": 0, "medium": 1, "low": 2}
+            # Tag each block with its original index for stable sort
+            indexed = [(i, pb) for i, pb in enumerate(planned_blocks)]
+            indexed.sort(key=lambda x: (emphasis_order.get(x[1].emphasis, 2), x[0]))
+            # Keep the top max_blocks, then re-sort by original order
+            kept = sorted(indexed[:max_blocks], key=lambda x: x[0])
+            trimmed = [pb for _, pb in kept]
+            for pb in planned_blocks:
+                if pb not in trimmed:
+                    excluded[pb.type] = "Excluded to fit selected slot count"
+            planned_blocks = trimmed
 
         # Build rationale
         rationale_parts = [

@@ -7,7 +7,7 @@ import {
   MessageSquare, BarChart3, FileText,
   Trash2, TrendingUp, X, Copy, Clock, RefreshCw
 } from 'lucide-react';
-import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe, useCheckDomainAuth, useSetupDomain, useListDomains, useDeleteSavedDomain } from '../lib/hooks';
+import { useCurrentWorkspace, useUpdateWorkspace, useStripeConnectStatus, useStartStripeConnect, useDisconnectStripe, useCheckDomainAuth, useSetupDomain, useListDomains, useDeleteSavedDomain, useVerifiedEmails, useAddVerifiedEmail, useRemoveVerifiedEmail } from '../lib/hooks';
 import type { DomainSetupResult, DnsRecord } from '../lib/hooks/useEmailWarmup';
 import { useBillingStatus, useCreateCheckout, useCreatePortal } from '../lib/hooks/useBilling';
 import { getApiErrorMessage } from '../lib/api';
@@ -57,9 +57,9 @@ const settingsSections = [
   },
   {
     id: 'domains',
-    name: 'Domains',
-    icon: Globe,
-    description: 'Domain verification, DNS records, and email warmup',
+    name: 'Email Infrastructure',
+    icon: Mail,
+    description: 'Verify sending domains, DNS records, and email warmup',
   },
 ];
 
@@ -927,10 +927,11 @@ function SecuritySettings() {
 
 function DomainsSettings() {
   const { workspaceId } = useCurrentWorkspace();
-  const [subTab, setSubTab] = useState<'domains' | 'warmup'>('domains');
+  const [subTab, setSubTab] = useState<'domains' | 'emails' | 'warmup'>('domains');
 
   const subTabs = [
-    { id: 'domains' as const, label: 'Domains' },
+    { id: 'domains' as const, label: 'Sending Domains' },
+    { id: 'emails' as const, label: 'Verified Emails' },
     { id: 'warmup' as const, label: 'Warmup' },
   ];
 
@@ -956,8 +957,187 @@ function DomainsSettings() {
       {subTab === 'domains' && (
         <SendingDomainsCard workspaceId={workspaceId} onNavigateToWarmup={() => setSubTab('warmup')} />
       )}
+      {subTab === 'emails' && (
+        <VerifiedEmailsCard workspaceId={workspaceId} />
+      )}
       {subTab === 'warmup' && (
         <WarmupManager workspaceId={workspaceId} onNavigateToDomains={() => setSubTab('domains')} />
+      )}
+    </div>
+  );
+}
+
+function VerifiedEmailsCard({ workspaceId }: { workspaceId: string | undefined }) {
+  const { data: verifiedData, isLoading, refetch } = useVerifiedEmails(workspaceId);
+  const addEmail = useAddVerifiedEmail(workspaceId || '');
+  const removeEmail = useRemoveVerifiedEmail(workspaceId || '');
+
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [emailInput, setEmailInput] = useState('');
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+
+  const emails = verifiedData?.items || [];
+  const hasPending = emails.some(e => !e.verified);
+
+  // Auto-poll when there are pending emails (same pattern as warmup reply-to)
+  useEffect(() => {
+    if (!hasPending) return;
+    const interval = setInterval(() => { refetch(); }, 4000);
+    return () => clearInterval(interval);
+  }, [hasPending]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAdd = async () => {
+    const email = emailInput.trim().toLowerCase();
+    if (!email || !email.includes('@')) return;
+    try {
+      await addEmail.mutateAsync({ email });
+      setPendingEmail(email);
+      setEmailInput('');
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
+  const handleRemove = async (email: string) => {
+    if (confirmRemove !== email) {
+      setConfirmRemove(email);
+      return;
+    }
+    try {
+      await removeEmail.mutateAsync({ email });
+      setConfirmRemove(null);
+    } catch {
+      // Error handled by mutation state
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Verified Emails</h2>
+          <p className="text-sm text-gray-500">
+            Register and verify email addresses for sending. Only verified emails can be used as From or Reply-To addresses.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => refetch()}
+            disabled={isLoading}
+            className="btn btn-secondary btn-sm inline-flex items-center gap-1"
+            title="Re-check verification status"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
+          {!showAddForm && (
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="btn btn-primary btn-sm inline-flex items-center gap-1"
+            >
+              <Plus className="w-4 h-4" />
+              Add Email
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Add email form */}
+      {showAddForm && (
+        <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              className="input flex-1"
+              placeholder="hello@yourcompany.com"
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+            />
+            <button
+              onClick={handleAdd}
+              disabled={!emailInput.trim() || !emailInput.includes('@') || addEmail.isPending}
+              className="btn btn-primary inline-flex items-center gap-2"
+            >
+              {addEmail.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+              Send Verification
+            </button>
+            <button onClick={() => { setShowAddForm(false); setEmailInput(''); setPendingEmail(null); }} className="btn btn-secondary">
+              Cancel
+            </button>
+          </div>
+          {addEmail.isError && (
+            <p className="text-sm text-red-600 mt-2 flex items-center gap-1">
+              <AlertCircle className="w-4 h-4" />
+              {getApiErrorMessage(addEmail.error, 'Failed to send verification')}
+            </p>
+          )}
+          {pendingEmail && (
+            <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-sm text-blue-700">
+                Verification email sent to <strong>{pendingEmail}</strong>. Click the link in your inbox — this will update automatically.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Email list */}
+      {isLoading && (
+        <div className="flex items-center justify-center py-6 text-gray-500">
+          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+          Loading emails...
+        </div>
+      )}
+
+      {!isLoading && emails.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {emails.map((item) => (
+            <div
+              key={item.email}
+              className="flex items-center justify-between p-3 border border-gray-200 rounded-lg"
+            >
+              <div className="flex items-center gap-3">
+                <Mail className="w-5 h-5 text-gray-400" />
+                <span className="font-medium text-gray-900">{item.email}</span>
+                {item.verified ? (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium inline-flex items-center gap-1">
+                    <Check className="w-3 h-3" />
+                    Verified
+                  </span>
+                ) : (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium inline-flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Waiting...
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => handleRemove(item.email)}
+                disabled={removeEmail.isPending}
+                className={`text-xs px-3 py-1.5 rounded-md transition-colors inline-flex items-center gap-1 ${
+                  confirmRemove === item.email
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600'
+                }`}
+              >
+                <Trash2 className="w-3 h-3" />
+                {confirmRemove === item.email ? 'Click again to confirm' : 'Remove'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!isLoading && emails.length === 0 && !showAddForm && (
+        <div className="mt-4 p-6 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-center">
+          <Mail className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+          <p className="font-medium text-gray-700">No emails registered</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Add an email address to verify it for sending
+          </p>
+        </div>
       )}
     </div>
   );
@@ -1127,8 +1307,8 @@ function SendingDomainsCard({ workspaceId, onNavigateToWarmup }: { workspaceId: 
     <div className="card">
       <div className="flex items-center justify-between mb-2">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Domains</h2>
-          <p className="text-sm text-gray-500">Set up and verify domains for email sending and platform features</p>
+          <h2 className="text-lg font-semibold text-gray-900">Sending Domains</h2>
+          <p className="text-sm text-gray-500">Verify domains for email sending across all your sites. Each site picks its sending domain in Site Setup.</p>
         </div>
         {!showAddWizard && (
           <button

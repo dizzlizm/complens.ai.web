@@ -254,6 +254,9 @@ class WarmupService:
         preferred_content_types: list[str] | None = None,
         email_length: str | None = None,
         target_daily_volume: int | None = None,
+        warmup_days: int | None = None,
+        start_volume: int | None = None,
+        site_id: str | None = None,
     ) -> WarmupDomain:
         """Start a warm-up for a domain.
 
@@ -305,45 +308,40 @@ class WarmupService:
                 raise
             logger.warning("Domain auth check failed, proceeding with warmup", domain=domain, error=str(e))
 
-        # Check for existing record (may be PENDING from reply-to verification)
+        # Check for existing record (may be PENDING from reply-to verification,
+        # or CANCELLED/COMPLETED from a previous run).
         existing = self.repo.get_by_domain(domain)
 
-        # If reply_to specified, verify it was confirmed on the existing record
-        if reply_to:
-            if not existing or existing.reply_to != reply_to or not existing.reply_to_verified:
-                from complens.utils.exceptions import ValidationError
-                raise ValidationError(
-                    "Reply-to address must be verified before starting warm-up",
-                    errors=[{"field": "reply_to", "msg": f"'{reply_to}' is not verified"}],
-                )
-
-        # If a PENDING record exists (created during reply-to verification),
-        # delete it so we can create the full ACTIVE record.
-        # Non-pending records mean a warmup is already running.
         if existing:
             status_val = existing.status.value if hasattr(existing.status, "value") else existing.status
-            if status_val == "pending":
+            if status_val in ("pending", "cancelled", "completed"):
+                # Safe to replace — delete old record and start fresh
                 self.repo.delete_warmup(domain)
             else:
                 from complens.utils.exceptions import ConflictError
-                raise ConflictError(f"Warmup already exists for domain '{domain}'")
+                raise ConflictError(f"Warmup already exists for domain '{domain}' (status: {status_val})")
 
         # Resolve site_id from DomainSetup if available
-        site_id = None
-        try:
-            from complens.repositories.domain import DomainRepository
-            domain_repo = DomainRepository()
-            domain_setup = domain_repo.get_by_domain(workspace_id, domain)
-            if domain_setup and domain_setup.site_id:
-                site_id = domain_setup.site_id
-        except Exception:
-            logger.debug("Could not resolve site_id for warmup domain", domain=domain)
+        # Resolve site_id: prefer explicit param, fall back to DomainSetup lookup
+        if not site_id:
+            try:
+                from complens.repositories.domain import DomainRepository
+                domain_repo = DomainRepository()
+                domain_setup = domain_repo.get_by_domain(workspace_id, domain)
+                if domain_setup and domain_setup.site_id:
+                    site_id = domain_setup.site_id
+            except Exception:
+                logger.debug("Could not resolve site_id for warmup domain", domain=domain)
 
         # Determine schedule: explicit > generate from target > default
         if schedule:
             resolved_schedule = schedule
         elif target_daily_volume:
-            resolved_schedule = generate_schedule(target_daily_volume)
+            resolved_schedule = generate_schedule(
+                target_daily_volume,
+                days=warmup_days or 42,
+                start_volume=start_volume or 10,
+            )
         else:
             resolved_schedule = list(DEFAULT_WARMUP_SCHEDULE)
 

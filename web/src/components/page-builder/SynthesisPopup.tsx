@@ -110,7 +110,7 @@ type Step = 'input' | 'plan' | 'generate';
 
 export default function SynthesisPopup({
   selectedBlockTypes,
-  selectedSlotIds: _selectedSlotIds = [],  // Reserved for future slot-specific generation
+  selectedSlotIds = [],
   existingBlockTypes,
   pageId,
   siteId,
@@ -234,6 +234,8 @@ export default function SynthesisPopup({
         block_types: selectedBlockTypes,
         ...(intentHints.length > 0 && { intent_hints: intentHints }),
         ...(existingBlockTypes && existingBlockTypes.length > 0 && { existing_block_types: existingBlockTypes }),
+        // Limit blocks to the number of selected slots in the layout
+        ...(selectedSlotIds.length > 0 && { max_blocks: selectedSlotIds.length }),
       });
 
       setPlanResult(result);
@@ -251,7 +253,7 @@ export default function SynthesisPopup({
         setSynthesisError('Something went wrong. Please try again.');
       }
     }
-  }, [workspaceId, synthesizePlan, buildFullDescription, buildIntentHints, style, pageId, selectedBlockTypes]);
+  }, [workspaceId, synthesizePlan, buildFullDescription, buildIntentHints, style, pageId, selectedBlockTypes, selectedSlotIds]);
 
   // Step 2 → Step 3: Run generate phase (batched)
   const handleGenerate = useCallback(async () => {

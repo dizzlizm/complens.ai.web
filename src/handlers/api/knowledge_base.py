@@ -27,6 +27,8 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         POST   /workspaces/{ws}/knowledge-base/documents
         DELETE /workspaces/{ws}/knowledge-base/documents/{document_id}
         POST   /workspaces/{ws}/knowledge-base/import-url
+        POST   /workspaces/{ws}/knowledge-base/import-text
+        POST   /workspaces/{ws}/knowledge-base/crawl-site
         POST   /workspaces/{ws}/knowledge-base/sync
         GET    /workspaces/{ws}/knowledge-base/status
     """
@@ -48,6 +50,10 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return trigger_sync(kb_service)
         elif path.endswith("/import-url") and http_method == "POST":
             return import_from_url(repo, kb_service, workspace_id, event)
+        elif path.endswith("/import-text") and http_method == "POST":
+            return import_from_text(repo, kb_service, workspace_id, event)
+        elif path.endswith("/crawl-site") and http_method == "POST":
+            return crawl_site(repo, kb_service, workspace_id, event)
         elif path.endswith("/status") and http_method == "GET":
             return get_status(repo, workspace_id, event)
         elif http_method == "GET" and not document_id:
@@ -172,7 +178,11 @@ def import_from_url(
     workspace_id: str,
     event: dict,
 ) -> dict:
-    """Import a document from a URL by fetching and extracting its content.
+    """Import a document from a URL.
+
+    Fetches the page (with JS rendering via Jina Reader), cleans it with
+    AI to remove noise/duplication while preserving the actual content,
+    and stores the result as a KB document for RAG retrieval.
 
     Args:
         repo: Document repository.
@@ -199,19 +209,29 @@ def import_from_url(
 
     site_id = body.get("site_id")
 
-    # Extract content from URL
+    # Fetch page content (Jina Reader for JS rendering, fallback to direct)
     try:
-        markdown = extract_from_url(url)
+        raw_markdown = extract_from_url(url)
     except Exception as e:
         logger.error("URL extraction failed", url=url, error=str(e))
         return error(f"Failed to fetch URL: {e}", 400)
 
-    if not markdown.strip():
+    if not raw_markdown.strip():
         return error("No content could be extracted from the URL", 400)
 
-    # Derive document name from URL hostname
+    # Clean up with AI — preserve real content, remove noise
+    try:
+        markdown = _clean_content_for_kb(raw_markdown, url)
+        logger.info("URL content cleaned for KB", url=url, raw_len=len(raw_markdown), clean_len=len(markdown))
+    except Exception as e:
+        logger.warning("AI cleanup failed, using raw markdown", url=url, error=str(e))
+        markdown = raw_markdown
+
     parsed = urlparse(url)
-    doc_name = parsed.hostname or url
+    domain = parsed.hostname or url
+    # Use page path as document name for specificity
+    path = parsed.path.strip("/").replace("/", " - ") if parsed.path.strip("/") else ""
+    doc_name = f"{domain}/{path}" if path else domain
 
     document = Document(
         workspace_id=workspace_id,
@@ -241,6 +261,212 @@ def import_from_url(
     )
 
     return created(document.model_dump(mode="json", by_alias=True))
+
+
+def _clean_content_for_kb(raw_markdown: str, url: str) -> str:
+    """Clean fetched page content for KB storage using AI.
+
+    Preserves the actual page content (articles, product descriptions, FAQs)
+    while removing navigation noise, duplicate paragraphs, image references,
+    and boilerplate. Does NOT restructure or replace the content.
+
+    Args:
+        raw_markdown: Raw markdown from Jina Reader or direct fetch.
+        url: Source URL for context.
+
+    Returns:
+        Cleaned markdown preserving the original content.
+    """
+    from complens.services.ai_service import FAST_MODEL, invoke_claude_json
+
+    # Truncate to stay within token limits
+    content = raw_markdown[:20000]
+
+    result = invoke_claude_json(
+        prompt=f"""Clean up this web page content for a knowledge base. The content was fetched from: {url}
+
+RULES:
+1. PRESERVE the actual content — every fact, argument, tip, quote, and insight must stay.
+2. REMOVE: navigation links, image references, "read more" links, social sharing text, cookie notices, repeated header/footer text, sidebar content.
+3. DEDUPLICATE: if the same paragraph or sentence appears multiple times (common with meta descriptions repeated in body), keep only ONE copy.
+4. FORMAT: clean markdown with proper headings, paragraphs, and lists. No image markdown.
+5. Add a source attribution line at the top: "Source: {url}"
+6. Do NOT summarize, paraphrase, or restructure the content. Keep the author's exact words and structure.
+7. Do NOT add any commentary, analysis, or your own words.
+
+Return JSON with one field:
+- content: string (the cleaned markdown)
+
+PAGE CONTENT:
+{content}""",
+        system="You clean up web page content for knowledge base storage. Preserve all real content exactly. Remove only noise and duplicates. Return JSON.",
+        model=FAST_MODEL,
+    )
+
+    cleaned = result.get("content", "")
+    if not cleaned or len(cleaned.strip()) < 50:
+        # AI returned empty/useless — use raw
+        return raw_markdown
+
+    return cleaned.strip()
+
+
+def import_from_text(
+    repo: DocumentRepository,
+    kb_service,
+    workspace_id: str,
+    event: dict,
+) -> dict:
+    """Import raw pasted text as a KB document.
+
+    Stores the text directly as a markdown KB document — no processing needed.
+
+    Args:
+        repo: Document repository.
+        kb_service: Knowledge base service.
+        workspace_id: Workspace ID.
+        event: API Gateway event.
+
+    Returns:
+        API response with created document.
+    """
+    # Enforce knowledge_base feature gate
+    plan = get_workspace_plan(workspace_id)
+    require_feature(plan, "knowledge_base")
+
+    body = json.loads(event.get("body", "{}"))
+    text = body.get("text", "").strip()
+    name = body.get("name", "").strip() or "Pasted content"
+    site_id = body.get("site_id")
+
+    if not text:
+        return error("Text content is required", 400)
+
+    if len(text) < 20:
+        return error("Text is too short — paste at least a few sentences", 400)
+
+    document = Document(
+        workspace_id=workspace_id,
+        site_id=site_id,
+        name=name,
+        content_type="text/plain",
+        status=DocumentStatus.INDEXED,
+    )
+
+    file_key = kb_service.get_file_key(workspace_id, document.id, name)
+    processed_key = file_key.rsplit("/", 1)[0] + "/processed.md"
+    document.file_key = file_key
+    document.processed_key = processed_key
+
+    bucket = os.environ.get("KB_DOCUMENTS_BUCKET", "")
+    kb_service.put_document_content(bucket, processed_key, text)
+
+    document = repo.create_document(document)
+
+    logger.info(
+        "Knowledge base document imported from text",
+        workspace_id=workspace_id,
+        document_id=document.id,
+        name=name,
+        text_len=len(text),
+    )
+
+    return created(document.model_dump(mode="json", by_alias=True))
+
+
+def crawl_site(
+    repo: DocumentRepository,
+    kb_service,
+    workspace_id: str,
+    event: dict,
+) -> dict:
+    """Crawl a website and import all discovered pages as KB documents.
+
+    Discovers pages via sitemap.xml or link extraction, fetches each page
+    via Jina Reader, and stores the content as individual KB documents.
+
+    Args:
+        repo: Document repository.
+        kb_service: Knowledge base service.
+        workspace_id: Workspace ID.
+        event: API Gateway event.
+
+    Returns:
+        API response with crawl results.
+    """
+    from urllib.parse import urlparse
+
+    from complens.services.site_crawler_service import crawl_site as do_crawl
+
+    # Enforce knowledge_base feature gate
+    plan = get_workspace_plan(workspace_id)
+    require_feature(plan, "knowledge_base")
+
+    body = json.loads(event.get("body", "{}"))
+    url = body.get("url", "").strip()
+    max_pages = min(int(body.get("max_pages", 20)), 50)
+    site_id = body.get("site_id")
+
+    if not url:
+        return validation_error([{"loc": ["url"], "msg": "URL is required"}])
+
+    # Discover and fetch pages
+    try:
+        pages = do_crawl(url, max_pages=max_pages)
+    except Exception as e:
+        logger.error("Site crawl failed", url=url, error=str(e))
+        return error(f"Failed to crawl site: {e}", 400)
+
+    if not pages:
+        return error("No content pages found on this site", 400)
+
+    # Create KB documents for each fetched page
+    documents = []
+    bucket = os.environ.get("KB_DOCUMENTS_BUCKET", "")
+
+    for page in pages:
+        page_url = page["url"]
+        content = page["content"]
+        title = page["title"]
+
+        parsed = urlparse(page_url)
+        domain = parsed.hostname or url
+        path = parsed.path.strip("/").replace("/", " - ") if parsed.path.strip("/") else ""
+        doc_name = f"{domain}/{path}" if path else domain
+
+        document = Document(
+            workspace_id=workspace_id,
+            site_id=site_id,
+            name=doc_name,
+            content_type="text/html",
+            status=DocumentStatus.INDEXED,
+        )
+
+        file_key = kb_service.get_file_key(workspace_id, document.id, doc_name)
+        processed_key = file_key.rsplit("/", 1)[0] + "/processed.md"
+        document.file_key = file_key
+        document.processed_key = processed_key
+
+        try:
+            kb_service.put_document_content(bucket, processed_key, content)
+            document = repo.create_document(document)
+            documents.append(document.model_dump(mode="json", by_alias=True))
+        except Exception:
+            logger.warning("Failed to store crawled page", url=page_url)
+
+    logger.info(
+        "Site crawl import complete",
+        workspace_id=workspace_id,
+        url=url,
+        pages_discovered=len(pages),
+        documents_created=len(documents),
+    )
+
+    return created({
+        "pages_found": len(pages),
+        "pages_imported": len(documents),
+        "documents": documents,
+    })
 
 
 def confirm_upload(

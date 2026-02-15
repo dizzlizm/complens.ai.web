@@ -9,8 +9,7 @@ import {
   useCurrentWorkspace, useWarmups, useStartWarmup, usePauseWarmup, useResumeWarmup,
   useCancelWarmup, getWarmupStatusInfo, useUpdateSeedList, useSendWarmupTestEmail,
   useUpdateWarmupSettings, useWarmupLog, useDomainHealth, getHealthStatusInfo,
-  useListDomains, useVerifyFromEmail, useConfirmFromEmail,
-  useVerifyReplyTo, useCheckReplyTo, usePreviewEmail, useSite,
+  useListDomains, usePreviewEmail, usePreviewSetupEmail, useSite,
 } from '../../lib/hooks';
 import type { WarmupDomain } from '../../lib/hooks/useEmailWarmup';
 import { getApiErrorMessage } from '../../lib/api';
@@ -70,6 +69,54 @@ function buildHourOptions(timezone: string): { value: number; label: string }[] 
     value: i,
     label: `${i.toString().padStart(2, '0')}:00 ${shortTz}`,
   }));
+}
+
+function generatePreviewSchedule(target: number, days: number, start: number): number[] {
+  if (target <= start) return Array(days).fill(target);
+  const ratio = (target / start) ** (1.0 / (days - 1));
+  const schedule: number[] = [];
+  for (let d = 0; d < days; d++) {
+    schedule.push(Math.min(Math.round(start * ratio ** d), target));
+  }
+  schedule[days - 1] = target;
+  return schedule;
+}
+
+function SchedulePreview({ targetVolume, days, startVolume }: { targetVolume: number; days: number; startVolume: number }) {
+  const schedule = generatePreviewSchedule(targetVolume, days, startVolume);
+  // Show weekly milestones
+  const weeks = Math.ceil(days / 7);
+  const milestones: { week: number; day: number; volume: number }[] = [];
+  milestones.push({ week: 0, day: 1, volume: schedule[0] });
+  for (let w = 1; w <= weeks; w++) {
+    const dayIdx = Math.min(w * 7 - 1, days - 1);
+    milestones.push({ week: w, day: dayIdx + 1, volume: schedule[dayIdx] });
+  }
+  // Ensure the final day is included
+  if (milestones[milestones.length - 1].day !== days) {
+    milestones.push({ week: weeks, day: days, volume: schedule[days - 1] });
+  }
+
+  return (
+    <div className="mt-2 p-3 bg-white border border-gray-200 rounded-lg">
+      <p className="text-xs font-medium text-gray-600 mb-2">Schedule Preview</p>
+      <div className="flex items-end gap-0.5 h-12">
+        {schedule.map((vol, i) => (
+          <div
+            key={i}
+            className="bg-primary-400 rounded-t-sm min-w-[2px] flex-1"
+            style={{ height: `${Math.max(4, (vol / targetVolume) * 100)}%` }}
+            title={`Day ${i + 1}: ${vol}/day`}
+          />
+        ))}
+      </div>
+      <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+        {milestones.filter((_, i) => i === 0 || i === milestones.length - 1 || milestones.length <= 5 || i % Math.ceil(milestones.length / 4) === 0).map((m) => (
+          <span key={m.day}>Day {m.day}: {m.volume}/d</span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function ContactImportPicker({
@@ -255,34 +302,16 @@ export default function WarmupManager({
   const [initAutoWarmup, setInitAutoWarmup] = useState(false);
   const [showInitContactPicker, setShowInitContactPicker] = useState(false);
   const [startedSuccess, setStartedSuccess] = useState(false);
-  const [initFromName, setInitFromName] = useState('');
   const [initMaxBounce, setInitMaxBounce] = useState(5.0);
   const [initMaxComplaint, setInitMaxComplaint] = useState(0.1);
-  const [initReplyTo, setInitReplyTo] = useState('');
-  const [replyToVerifySent, setReplyToVerifySent] = useState(false);
-  const [replyToVerified, setReplyToVerified] = useState(false);
   const [initTargetVolume, setInitTargetVolume] = useState(500);
-
-  const verifyReplyTo = useVerifyReplyTo(workspaceId || '');
-  const checkReplyTo = useCheckReplyTo(workspaceId || '');
-
-  // Auto-poll reply-to verification status after sending verification email
-  useEffect(() => {
-    if (!replyToVerifySent || replyToVerified || !newDomain) return;
-    const interval = setInterval(async () => {
-      try {
-        const result = await checkReplyTo.mutateAsync({ domain: newDomain });
-        if (result.verified) {
-          setReplyToVerified(true);
-          setReplyToVerifySent(false);
-          clearInterval(interval);
-        }
-      } catch {
-        // Silently retry on next interval
-      }
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [replyToVerifySent, replyToVerified, newDomain]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [initWarmupDays, setInitWarmupDays] = useState(42);
+  const [initStartVolume, setInitStartVolume] = useState(10);
+  const [initTones, setInitTones] = useState<string[]>([]);
+  const [initContentTypes, setInitContentTypes] = useState<string[]>([]);
+  const [initEmailLength, setInitEmailLength] = useState('medium');
+  const [setupPreview, setSetupPreview] = useState<{ subject: string; body_html: string; content_type: string } | null>(null);
+  const previewSetupEmail = usePreviewSetupEmail(workspaceId || '');
 
   const warmups = warmupsData?.items || [];
 
@@ -291,16 +320,22 @@ export default function WarmupManager({
   const warmupDomainSet = new Set(warmups.map(w => w.domain));
   const verifiedDomains = (savedDomainsData?.items || []).filter(
     d => d.ready && !warmupDomainSet.has(d.domain)
-      && (!siteData?.domain_name || d.domain === siteData.domain_name)
   );
 
-  // Auto-select domain when there's only one verified domain available
+  // Auto-select: prefer site's primary domain, then fall back to single-domain auto-select
+  const sitePrimaryDomain = (siteData?.settings?.primary_domain as string) || '';
   useEffect(() => {
     if (newDomain) return;
-    if (verifiedDomains.length === 1) {
+    if (sitePrimaryDomain && verifiedDomains.some(d => d.domain === sitePrimaryDomain)) {
+      setNewDomain(sitePrimaryDomain);
+    } else if (verifiedDomains.length === 1) {
       setNewDomain(verifiedDomains[0].domain);
     }
-  }, [verifiedDomains.length]);
+  }, [verifiedDomains.length, sitePrimaryDomain]);
+
+  // Pull from/reply-to from site settings (set in Sender Identity above)
+  const siteFromName = (siteData?.settings?.from_name as string) || '';
+  const siteReplyTo = (siteData?.settings?.reply_to as string) || '';
 
   const handleStartWarmup = async () => {
     if (!newDomain.trim()) return;
@@ -311,22 +346,30 @@ export default function WarmupManager({
         send_window_end: localToUtc(sendWindowEnd, tzOffset),
         seed_list: initSeedList.length > 0 ? initSeedList : undefined,
         auto_warmup_enabled: initAutoWarmup,
-        from_name: initFromName || undefined,
+        from_name: siteFromName || undefined,
         max_bounce_rate: initMaxBounce,
         max_complaint_rate: initMaxComplaint,
-        reply_to: replyToVerified ? initReplyTo : undefined,
+        reply_to: siteReplyTo || undefined,
         target_daily_volume: initTargetVolume,
+        warmup_days: initWarmupDays,
+        start_volume: initStartVolume,
+        site_id: siteId || undefined,
+        preferred_tones: initTones.length > 0 ? initTones.map(t => t.toLowerCase()) : undefined,
+        preferred_content_types: initContentTypes.length > 0 ? initContentTypes.map(ct => CONTENT_TYPE_KEY_MAP[ct] || ct.toLowerCase()) : undefined,
+        email_length: initEmailLength,
       });
       setNewDomain('');
       setInitSeedList([]);
       setInitAutoWarmup(false);
-      setInitFromName('');
       setInitMaxBounce(5.0);
       setInitMaxComplaint(0.1);
-      setInitReplyTo('');
-      setReplyToVerifySent(false);
-      setReplyToVerified(false);
       setInitTargetVolume(500);
+      setInitWarmupDays(42);
+      setInitStartVolume(10);
+      setInitTones([]);
+      setInitContentTypes([]);
+      setInitEmailLength('medium');
+      setSetupPreview(null);
       setShowAddForm(false);
       setStartedSuccess(true);
       setTimeout(() => setStartedSuccess(false), 3000);
@@ -430,97 +473,201 @@ export default function WarmupManager({
             </div>
           </div>
 
-          {/* Target daily volume */}
-          <div className="mt-3">
-            <label className="block text-xs font-medium text-gray-600 mb-1">Target Daily Volume</label>
-            <select
-              className="input text-sm"
-              value={initTargetVolume}
-              onChange={(e) => setInitTargetVolume(Number(e.target.value))}
-            >
-              <option value={100}>100/day (Low volume)</option>
-              <option value={500}>500/day (Standard)</option>
-              <option value={1000}>1,000/day (Growth)</option>
-              <option value={5000}>5,000/day (High volume)</option>
-              <option value={10000}>10,000/day (Enterprise)</option>
-            </select>
-            <p className="text-xs text-gray-400 mt-1">
-              Schedule will ramp from 10/day to this target over 6 weeks
-            </p>
+          {/* Ramp-up settings */}
+          <div className="mt-3 grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Target Daily Volume</label>
+              <select
+                className="input text-sm"
+                value={initTargetVolume}
+                onChange={(e) => setInitTargetVolume(Number(e.target.value))}
+              >
+                <option value={50}>50/day</option>
+                <option value={100}>100/day</option>
+                <option value={250}>250/day</option>
+                <option value={500}>500/day</option>
+                <option value={1000}>1,000/day</option>
+                <option value={5000}>5,000/day</option>
+                <option value={10000}>10,000/day</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Ramp-up Duration</label>
+              <select
+                className="input text-sm"
+                value={initWarmupDays}
+                onChange={(e) => setInitWarmupDays(Number(e.target.value))}
+              >
+                <option value={7}>1 week</option>
+                <option value={14}>2 weeks</option>
+                <option value={21}>3 weeks</option>
+                <option value={28}>4 weeks</option>
+                <option value={42}>6 weeks</option>
+                <option value={60}>~2 months</option>
+                <option value={90}>3 months</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Start Volume</label>
+              <select
+                className="input text-sm"
+                value={initStartVolume}
+                onChange={(e) => setInitStartVolume(Number(e.target.value))}
+              >
+                <option value={5}>5/day</option>
+                <option value={10}>10/day</option>
+                <option value={25}>25/day</option>
+                <option value={50}>50/day</option>
+                <option value={100}>100/day</option>
+              </select>
+            </div>
           </div>
+          {/* Schedule preview */}
+          <SchedulePreview targetVolume={initTargetVolume} days={initWarmupDays} startVolume={initStartVolume} />
 
-          {/* Reply-to verification */}
+          {/* Email tone & style */}
           {newDomain && (
             <div className="mt-3 pt-3 border-t border-gray-200">
-              <label className="block text-xs font-medium text-gray-600 mb-1">Reply-To Email (required)</label>
-              <p className="text-xs text-gray-500 mb-2">
-                A real inbox that can receive replies. We'll send a verification email to confirm it works.
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="email"
-                  className="input flex-1 text-sm"
-                  placeholder="support@example.com"
-                  value={initReplyTo}
-                  onChange={(e) => {
-                    setInitReplyTo(e.target.value);
-                    setReplyToVerifySent(false);
-                    setReplyToVerified(false);
-                  }}
-                  disabled={replyToVerified}
-                />
-                {replyToVerified ? (
-                  <span className="btn btn-sm bg-green-100 text-green-700 cursor-default inline-flex items-center gap-1">
-                    <Check className="w-3.5 h-3.5" /> Verified
-                  </span>
-                ) : replyToVerifySent ? (
-                  <span className="btn btn-sm bg-blue-50 text-blue-600 cursor-default inline-flex items-center gap-1">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Waiting...
-                  </span>
-                ) : (
-                  <button
-                    onClick={async () => {
-                      if (!initReplyTo.includes('@') || !initReplyTo.includes('.')) return;
-                      try {
-                        await verifyReplyTo.mutateAsync({ domain: newDomain, reply_to: initReplyTo });
-                        setReplyToVerifySent(true);
-                      } catch {
-                        // Error handled by mutation state
-                      }
-                    }}
-                    disabled={verifyReplyTo.isPending || !initReplyTo.includes('@')}
-                    className="btn btn-secondary btn-sm inline-flex items-center gap-1"
-                  >
-                    {verifyReplyTo.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}
-                    Send Verification
-                  </button>
+              <div className="flex items-center gap-2 mb-3">
+                <BookOpen className="w-4 h-4 text-violet-600" />
+                <label className="text-xs font-medium text-gray-700">Email Tone & Style</label>
+              </div>
+
+              <div className="mb-3">
+                <label className="block text-[11px] font-medium text-gray-500 mb-1.5">Tone</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {TONE_OPTIONS.map(tone => (
+                    <button
+                      key={tone}
+                      onClick={() => setInitTones(prev => prev.includes(tone) ? prev.filter(t => t !== tone) : [...prev, tone])}
+                      className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                        initTones.includes(tone)
+                          ? 'bg-violet-100 border-violet-300 text-violet-700 font-medium'
+                          : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      {tone}
+                    </button>
+                  ))}
+                </div>
+                {initTones.length === 0 && (
+                  <p className="text-[11px] text-gray-400 mt-1">No preference — AI will vary randomly</p>
                 )}
               </div>
-              {replyToVerifySent && !replyToVerified && (
-                <p className="text-xs text-blue-600 mt-2">
-                  Verification email sent to <strong>{initReplyTo}</strong>. Click the link in your inbox — this will update automatically.
-                </p>
-              )}
-              {verifyReplyTo.isError && (
-                <p className="text-xs text-red-600 mt-1">
-                  {getApiErrorMessage(verifyReplyTo.error, 'Failed to send verification email')}
-                </p>
-              )}
-            </div>
-          )}
 
-          {/* From Name */}
-          {newDomain && (
-            <div className="mt-3">
-              <label className="block text-xs font-medium text-gray-600 mb-1">From Name (optional)</label>
-              <input
-                type="text"
-                className="input text-sm"
-                placeholder={newDomain || 'Your Company'}
-                value={initFromName}
-                onChange={(e) => setInitFromName(e.target.value)}
-              />
-              <p className="text-xs text-gray-400 mt-1">Display name shown in the "From" field of warmup emails</p>
+              <div className="mb-3">
+                <label className="block text-[11px] font-medium text-gray-500 mb-1.5">Content Types</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {CONTENT_TYPE_OPTIONS.map(ct => (
+                    <button
+                      key={ct}
+                      onClick={() => setInitContentTypes(prev => prev.includes(ct) ? prev.filter(c => c !== ct) : [...prev, ct])}
+                      className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                        initContentTypes.includes(ct)
+                          ? 'bg-blue-100 border-blue-300 text-blue-700 font-medium'
+                          : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      {ct}
+                    </button>
+                  ))}
+                </div>
+                {initContentTypes.length === 0 && (
+                  <p className="text-[11px] text-gray-400 mt-1">No preference — AI will vary randomly</p>
+                )}
+              </div>
+
+              <div className="mb-3">
+                <label className="block text-[11px] font-medium text-gray-500 mb-1.5">Email Length</label>
+                <div className="flex gap-2">
+                  {(['short', 'medium', 'long'] as const).map(len => (
+                    <button
+                      key={len}
+                      onClick={() => setInitEmailLength(len)}
+                      className={`text-xs px-4 py-1.5 rounded-md border transition-colors ${
+                        initEmailLength === len
+                          ? 'bg-gray-800 border-gray-800 text-white font-medium'
+                          : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      {len.charAt(0).toUpperCase() + len.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Preview button */}
+              <button
+                onClick={async () => {
+                  try {
+                    const toneKeys = initTones.map(t => t.toLowerCase());
+                    const ctKeys = initContentTypes.map(ct => CONTENT_TYPE_KEY_MAP[ct] || ct.toLowerCase());
+                    const result = await previewSetupEmail.mutateAsync({
+                      domain: newDomain,
+                      site_id: siteId,
+                      preferred_tones: toneKeys.length > 0 ? toneKeys : undefined,
+                      preferred_content_types: ctKeys.length > 0 ? ctKeys : undefined,
+                      email_length: initEmailLength,
+                    });
+                    setSetupPreview(result);
+                  } catch {
+                    // Error handled by mutation state
+                  }
+                }}
+                disabled={previewSetupEmail.isPending}
+                className="btn btn-secondary btn-sm inline-flex items-center gap-1.5"
+              >
+                {previewSetupEmail.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                Preview Email
+              </button>
+
+              {/* Preview card */}
+              {setupPreview && (
+                <div className="mt-3 border border-gray-200 rounded-lg bg-white overflow-hidden">
+                  <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                      <span className="text-sm font-medium text-gray-800 truncate">{setupPreview.subject}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">
+                        {CONTENT_TYPE_LABEL_MAP[setupPreview.content_type] || setupPreview.content_type}
+                      </span>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const toneKeys = initTones.map(t => t.toLowerCase());
+                            const ctKeys = initContentTypes.map(ct => CONTENT_TYPE_KEY_MAP[ct] || ct.toLowerCase());
+                            const result = await previewSetupEmail.mutateAsync({
+                              domain: newDomain,
+                              site_id: siteId,
+                              preferred_tones: toneKeys.length > 0 ? toneKeys : undefined,
+                              preferred_content_types: ctKeys.length > 0 ? ctKeys : undefined,
+                              email_length: initEmailLength,
+                            });
+                            setSetupPreview(result);
+                          } catch { /* */ }
+                        }}
+                        disabled={previewSetupEmail.isPending}
+                        className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${previewSetupEmail.isPending ? 'animate-spin' : ''}`} />
+                        Regenerate
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    className="p-3 max-h-64 overflow-y-auto text-sm text-gray-700 prose prose-sm max-w-none"
+                    dangerouslySetInnerHTML={{ __html: setupPreview.body_html }}
+                  />
+                </div>
+              )}
+
+              {previewSetupEmail.isError && (
+                <p className="text-xs text-red-600 mt-2 flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" /> Failed to generate preview
+                </p>
+              )}
             </div>
           )}
 
@@ -667,14 +814,14 @@ export default function WarmupManager({
           <div className="flex gap-2 mt-3">
             <button
               onClick={handleStartWarmup}
-              disabled={!newDomain.trim() || startWarmup.isPending || !replyToVerified}
+              disabled={!newDomain.trim() || startWarmup.isPending}
               className="btn btn-primary inline-flex items-center gap-2"
             >
               {startWarmup.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
               Start Warm-up
             </button>
             <button
-              onClick={() => { setShowAddForm(false); setNewDomain(''); setInitSeedList([]); setInitAutoWarmup(false); setInitFromName(''); setInitMaxBounce(5.0); setInitMaxComplaint(0.1); setInitReplyTo(''); setReplyToVerifySent(false); setReplyToVerified(false); setInitTargetVolume(500); }}
+              onClick={() => { setShowAddForm(false); setNewDomain(''); setInitSeedList([]); setInitAutoWarmup(false); setInitMaxBounce(5.0); setInitMaxComplaint(0.1); setInitTargetVolume(500); setInitWarmupDays(42); setInitStartVolume(10); setInitTones([]); setInitContentTypes([]); setInitEmailLength('medium'); setSetupPreview(null); }}
               className="btn btn-secondary"
             >
               Cancel
@@ -1015,7 +1162,6 @@ function WarmupDomainCard({
   const [editSeedList, setEditSeedList] = useState<string[]>(warmup.seed_list || []);
   const [showContactPicker, setShowContactPicker] = useState(false);
   const [editAutoWarmup, setEditAutoWarmup] = useState(warmup.auto_warmup_enabled);
-  const [editFromName, setEditFromName] = useState(warmup.from_name || '');
   const [seedListSaved, setSeedListSaved] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
@@ -1031,12 +1177,7 @@ function WarmupDomainCard({
   const updateSeedList = useUpdateSeedList(workspaceId);
   const updateSettings = useUpdateWarmupSettings(workspaceId);
   const sendTestEmail = useSendWarmupTestEmail(workspaceId);
-  const verifyFromEmail = useVerifyFromEmail(workspaceId);
-  const confirmFromEmail = useConfirmFromEmail(workspaceId);
   const [testEmailSent, setTestEmailSent] = useState(false);
-  const [editFromEmailLocal, setEditFromEmailLocal] = useState(warmup.from_email_local || '');
-  const [verificationSent, setVerificationSent] = useState(false);
-  const [fromEmailVerified, setFromEmailVerified] = useState(warmup.from_email_verified);
   const { data: healthData, isLoading: healthLoading, refetch: refetchHealth } = useDomainHealth(
     workspaceId,
     warmup.domain,
@@ -1057,8 +1198,6 @@ function WarmupDomainCard({
         domain: warmup.domain,
         seed_list: editSeedList,
         auto_warmup_enabled: editAutoWarmup,
-        from_name: editFromName || undefined,
-        from_email_local: editFromEmailLocal || undefined,
       });
       setSeedListSaved(true);
       setTimeout(() => setSeedListSaved(false), 2000);
@@ -1587,108 +1726,6 @@ function WarmupDomainCard({
                 </button>
               </div>
 
-              <div className="py-2 border-t border-gray-200">
-                <label className="block text-xs font-medium text-gray-600 mb-1">From Name</label>
-                <input
-                  type="text"
-                  className="input text-sm"
-                  placeholder={warmup.domain}
-                  value={editFromName}
-                  onChange={(e) => setEditFromName(e.target.value)}
-                />
-              </div>
-
-              {/* Warmup Sender Address */}
-              <div className="py-2 border-t border-gray-200">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Warmup Sender Address</label>
-                <p className="text-xs text-gray-500 mb-1.5">
-                  The address warmup emails are sent from. This is separate from your workspace sender identity.
-                </p>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="text"
-                    className="input text-sm flex-1"
-                    placeholder="noreply"
-                    value={editFromEmailLocal}
-                    onChange={(e) => {
-                      setEditFromEmailLocal(e.target.value.replace(/[^a-zA-Z0-9._%+-]/g, ''));
-                      setFromEmailVerified(false);
-                      setVerificationSent(false);
-                    }}
-                  />
-                  <span className="text-sm text-gray-500 shrink-0">@{warmup.domain}</span>
-                </div>
-                {editFromEmailLocal && (
-                  <div className="mt-2">
-                    {fromEmailVerified && editFromEmailLocal === warmup.from_email_local ? (
-                      <span className="text-xs text-green-600 flex items-center gap-1">
-                        <Check className="w-3 h-3" /> Verified
-                      </span>
-                    ) : verificationSent ? (
-                      <div className="space-y-2">
-                        <p className="text-xs text-blue-600">
-                          Requires SES verification &mdash; AWS will send a confirmation email to <strong>{editFromEmailLocal}@{warmup.domain}</strong>.
-                          Click the link, then click below.
-                        </p>
-                        <button
-                          onClick={async () => {
-                            try {
-                              const result = await confirmFromEmail.mutateAsync({ domain: warmup.domain });
-                              if ('verified' in result && !result.verified) {
-                                // Not yet verified — keep waiting
-                              } else {
-                                setFromEmailVerified(true);
-                                setVerificationSent(false);
-                              }
-                            } catch {
-                              // Error handled by mutation state
-                            }
-                          }}
-                          disabled={confirmFromEmail.isPending}
-                          className="btn btn-primary btn-sm text-xs inline-flex items-center gap-1"
-                        >
-                          {confirmFromEmail.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                          Check Verification
-                        </button>
-                        {confirmFromEmail.isError && (
-                          <p className="text-xs text-red-600">
-                            {getApiErrorMessage(confirmFromEmail.error, 'Failed to check status')}
-                          </p>
-                        )}
-                        {confirmFromEmail.isSuccess && !fromEmailVerified && (
-                          <p className="text-xs text-amber-600">
-                            Not verified yet. Click the link in the email from AWS, then try again.
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <button
-                        onClick={async () => {
-                          try {
-                            await verifyFromEmail.mutateAsync({ domain: warmup.domain, from_email_local: editFromEmailLocal });
-                            setVerificationSent(true);
-                          } catch {
-                            // Error handled by mutation state
-                          }
-                        }}
-                        disabled={verifyFromEmail.isPending}
-                        className="btn btn-secondary btn-sm text-xs inline-flex items-center gap-1"
-                      >
-                        {verifyFromEmail.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mail className="w-3 h-3" />}
-                        Verify Address
-                      </button>
-                    )}
-                    {verifyFromEmail.isError && !verificationSent && (
-                      <p className="text-xs text-red-600 mt-1">
-                        {getApiErrorMessage(verifyFromEmail.error, 'Failed to send verification')}
-                      </p>
-                    )}
-                  </div>
-                )}
-                <p className="text-xs text-gray-400 mt-1">
-                  {editFromEmailLocal ? `Warmup emails will come from ${editFromEmailLocal}@${warmup.domain}` : `Warmup emails will be sent from noreply@${warmup.domain}`}
-                </p>
-              </div>
 
               {/* Send Test Email */}
               {editSeedList.length > 0 && (

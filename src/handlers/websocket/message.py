@@ -85,14 +85,15 @@ def handle_public_chat(
         Response.
     """
     page_id = body.get("page_id")
+    site_id = body.get("site_id")
     workspace_id = body.get("workspace_id")
     message = body.get("message", "")
     visitor_id = body.get("visitor_id", "anonymous")
 
     # PERFORMANCE: workspace_id is now required to avoid O(n) table scan
     # The frontend should always include workspace_id from the page config
-    if not page_id or not message:
-        return {"statusCode": 400, "body": "page_id and message are required"}
+    if not message or (not page_id and not site_id):
+        return {"statusCode": 400, "body": "message and either page_id or site_id are required"}
 
     if not workspace_id:
         logger.warning(
@@ -159,58 +160,81 @@ def handle_public_chat(
         message_length=len(message),
     )
 
-    # Look up page to get AI persona and context
+    # Look up context: either page-based or site-based chat
     try:
-        page_repo = PageRepository()
+        ai_persona = "You are a helpful assistant."
+        business_context = {}
+        context_name = ""
+        context_headline = ""
+        effective_site_id = site_id
+        effective_workspace_id = workspace_id
 
-        # Direct query by workspace_id + page_id is O(1)
-        page = page_repo.get_by_id(workspace_id, page_id)
+        if page_id:
+            # Page-based chat: look up page for AI persona and context
+            page_repo = PageRepository()
+            page = page_repo.get_by_id(workspace_id, page_id)
 
-        if not page:
-            logger.warning("Page not found", page_id=page_id)
-            send_to_connection(
-                connection_id,
-                domain,
-                stage,
-                {
-                    "action": "ai_response",
-                    "message": "Sorry, I couldn't find the page configuration. Please try again later.",
-                },
-            )
-            return {"statusCode": 404}
+            if not page:
+                logger.warning("Page not found", page_id=page_id)
+                send_to_connection(
+                    connection_id, domain, stage,
+                    {"action": "ai_response", "message": "Sorry, I couldn't find the page configuration. Please try again later."},
+                )
+                return {"statusCode": 404}
 
-        # Build AI prompt with page context
-        # chat_config can be a Pydantic model or None
-        chat_config = page.chat_config
-        if chat_config:
-            # Handle both Pydantic model and dict
-            if hasattr(chat_config, 'ai_persona'):
-                ai_persona = chat_config.ai_persona or "You are a helpful assistant."
-                business_context = chat_config.business_context or {}
-            else:
-                ai_persona = chat_config.get("ai_persona") or "You are a helpful assistant."
-                business_context = chat_config.get("business_context", {})
-        else:
-            ai_persona = "You are a helpful assistant."
-            business_context = {}
+            chat_config = page.chat_config
+            if chat_config:
+                if hasattr(chat_config, 'ai_persona'):
+                    ai_persona = chat_config.ai_persona or ai_persona
+                    business_context = chat_config.business_context or {}
+                else:
+                    ai_persona = chat_config.get("ai_persona") or ai_persona
+                    business_context = chat_config.get("business_context", {})
+
+            effective_site_id = getattr(page, "site_id", None)
+            effective_workspace_id = page.workspace_id
+            context_name = page.name
+            context_headline = page.headline
+        elif site_id:
+            # Site-based chat: look up site settings for AI persona
+            from complens.repositories.site import SiteRepository
+            site_repo = SiteRepository()
+            site = site_repo.get_by_id(workspace_id, site_id)
+
+            if not site:
+                logger.warning("Site not found", site_id=site_id)
+                send_to_connection(
+                    connection_id, domain, stage,
+                    {"action": "ai_response", "message": "Sorry, I couldn't find the chat configuration. Please try again later."},
+                )
+                return {"statusCode": 404}
+
+            settings = site.settings or {}
+            if not settings.get("chat_enabled"):
+                send_to_connection(
+                    connection_id, domain, stage,
+                    {"action": "ai_response", "message": "Chat is not enabled for this site."},
+                )
+                return {"statusCode": 404}
+
+            ai_persona = settings.get("chat_ai_persona") or ai_persona
+            effective_workspace_id = site.workspace_id
+            context_name = site.name
 
         # Fetch business profile for richer AI context
-        # Pass site_id for site-scoped profile lookup
-        site_id = getattr(page, "site_id", None)
         profile_context = ""
         try:
             profile_repo = BusinessProfileRepository()
-            profile = profile_repo.get_effective_profile(page.workspace_id, page_id, site_id)
+            profile = profile_repo.get_effective_profile(effective_workspace_id, page_id, effective_site_id)
             if profile:
                 profile_context = profile.get_ai_context()
         except Exception as e:
             logger.warning("Business profile fetch skipped", error=str(e))
 
         # Fetch knowledge base documents directly from S3
-        # Pass site_id for site-filtered KB retrieval
         kb_context = ""
         try:
-            kb_context = _get_document_context(page.workspace_id, site_id=site_id)
+            kb_context = _get_document_context(effective_workspace_id, site_id=effective_site_id)
         except Exception as e:
             logger.warning("KB document fetch skipped", error=str(e))
 
@@ -218,9 +242,9 @@ def handle_public_chat(
 
 {profile_context}
 
-Page Context:
-- Page Name: {page.name}
-- Headline: {page.headline}
+Context:
+- Name: {context_name}
+{f"- Headline: {context_headline}" if context_headline else ""}
 {f"- Business Context: {json.dumps(business_context)}" if business_context else ""}
 {kb_context}
 Keep responses concise and helpful. Use the business profile and knowledge base documents above to give informed, accurate answers. If you don't know something, say so politely.
@@ -228,9 +252,9 @@ You may use markdown formatting (bold, lists, links) when it improves readabilit
 
         # Fire EventBridge event for workflow triggers
         _fire_chat_event(
-            workspace_id=page.workspace_id,
-            page_id=page_id,
-            page_name=page.name,
+            workspace_id=effective_workspace_id,
+            page_id=page_id or site_id or "",
+            page_name=context_name,
             visitor_id=visitor_id,
             message=message,
         )
@@ -239,16 +263,15 @@ You may use markdown formatting (bold, lists, links) when it improves readabilit
         if visitor_id and visitor_id.startswith("v_"):
             try:
                 visitor_repo = VisitorRepository()
-                visitor = visitor_repo.get_by_visitor_id(page.workspace_id, visitor_id)
-                # Fire trigger_chat_started if this is the visitor's first chat message
+                visitor = visitor_repo.get_by_visitor_id(effective_workspace_id, visitor_id)
                 if visitor and visitor.total_chat_messages == 0:
                     _fire_chat_started_event(
-                        workspace_id=page.workspace_id,
-                        page_id=page_id,
-                        page_name=page.name,
+                        workspace_id=effective_workspace_id,
+                        page_id=page_id or site_id or "",
+                        page_name=context_name,
                         visitor_id=visitor_id,
                     )
-                visitor_repo.increment_chat_messages(page.workspace_id, visitor_id)
+                visitor_repo.increment_chat_messages(effective_workspace_id, visitor_id)
             except Exception as e:
                 logger.warning("Visitor chat tracking failed", error=str(e))
 

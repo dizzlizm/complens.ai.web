@@ -52,6 +52,14 @@ def handler(event: dict[str, Any], context: Any) -> dict:
             return verify_reply_to(service, workspace_id, domain, event)
         elif path.endswith("/check-reply-to") and http_method == "POST" and domain:
             return check_reply_to(service, workspace_id, domain)
+        elif path.endswith("/verified-emails") and http_method == "GET" and not domain:
+            return list_verified_emails(workspace_id)
+        elif path.endswith("/verified-emails") and http_method == "POST" and not domain:
+            return add_verified_email(workspace_id, event)
+        elif path.endswith("/verified-emails") and http_method == "DELETE" and not domain:
+            return remove_verified_email(workspace_id, event)
+        elif path.endswith("/preview-setup") and http_method == "POST" and not domain:
+            return preview_setup_email(workspace_id, event)
         elif path.endswith("/verify-sender") and http_method == "POST" and not domain:
             return verify_sender(workspace_id, event)
         elif path.endswith("/check-sender") and http_method == "POST" and not domain:
@@ -180,6 +188,9 @@ def start_warmup(service: WarmupService, workspace_id: str, event: dict) -> dict
         preferred_content_types=request.preferred_content_types,
         email_length=request.email_length,
         target_daily_volume=request.target_daily_volume,
+        warmup_days=request.warmup_days,
+        start_volume=request.start_volume,
+        site_id=request.site_id,
     )
 
     logger.info(
@@ -562,6 +573,50 @@ def preview_email(
     })
 
 
+def preview_setup_email(workspace_id: str, event: dict) -> dict:
+    """Generate a preview warmup email during setup (before warmup starts).
+
+    Doesn't require an existing warmup record — takes domain, tone, content
+    type, and length directly from the request body.
+
+    Args:
+        workspace_id: Workspace ID.
+        event: API Gateway event.
+
+    Returns:
+        API response with preview email content.
+    """
+    body = json.loads(event.get("body") or "{}")
+    domain = body.get("domain", "")
+    site_id = body.get("site_id")
+    preferred_tones = body.get("preferred_tones") or None
+    preferred_content_types = body.get("preferred_content_types") or None
+    email_length = body.get("email_length") or None
+
+    if not domain:
+        return error("Domain is required", 400)
+
+    from complens.services.warmup_email_generator import WarmupEmailGenerator
+
+    generator = WarmupEmailGenerator()
+    email_data = generator.generate_email(
+        workspace_id=workspace_id,
+        domain=domain,
+        recipient_email="preview@example.com",
+        site_id=site_id,
+        preferred_tones=preferred_tones,
+        preferred_content_types=preferred_content_types,
+        email_length=email_length,
+    )
+
+    return success({
+        "subject": email_data["subject"],
+        "body_text": email_data.get("body_text"),
+        "body_html": email_data.get("body_html"),
+        "content_type": email_data.get("content_type"),
+    })
+
+
 def verify_reply_to(
     service: WarmupService,
     workspace_id: str,
@@ -801,6 +856,163 @@ def confirm_from_email(
         "ses_status": ses_status,
         "email": target_email,
     })
+
+
+def list_verified_emails(workspace_id: str) -> dict:
+    """List all registered emails with their verification status.
+
+    Reads the workspace's registered_emails list (stored as objects with
+    email, verified, and token fields).
+
+    Args:
+        workspace_id: Workspace ID.
+
+    Returns:
+        API response with list of emails and their verification status.
+    """
+    from complens.repositories.workspace import WorkspaceRepository
+
+    ws_repo = WorkspaceRepository()
+    workspace = ws_repo.get_by_id(workspace_id)
+    if not workspace:
+        return error("Workspace not found", 404)
+
+    registered = (workspace.settings or {}).get("registered_emails", [])
+    if not registered:
+        return success({"items": []})
+
+    items = [
+        {"email": entry["email"], "verified": entry.get("verified", False)}
+        for entry in registered
+        if isinstance(entry, dict) and "email" in entry
+    ]
+
+    return success({"items": items})
+
+
+def add_verified_email(workspace_id: str, event: dict) -> dict:
+    """Register a new email and send a verification link.
+
+    Adds the email to workspace.settings.registered_emails with a
+    verification token, then sends a branded email with a click-to-verify
+    link (following the same pattern as reply-to verification).
+
+    Args:
+        workspace_id: Workspace ID.
+        event: API Gateway event with ``email`` in body.
+
+    Returns:
+        API response confirming verification email was sent.
+    """
+    from uuid import uuid4
+    from complens.repositories.workspace import WorkspaceRepository
+
+    body = json.loads(event.get("body", "{}"))
+    email = body.get("email", "").strip().lower()
+
+    if not email or "@" not in email:
+        return error("A valid email address is required", 400)
+
+    ws_repo = WorkspaceRepository()
+    workspace = ws_repo.get_by_id(workspace_id)
+    if not workspace:
+        return error("Workspace not found", 404)
+
+    token = uuid4().hex
+
+    # Add or update in registered list
+    settings = workspace.settings or {}
+    registered = list(settings.get("registered_emails", []))
+    existing = next((e for e in registered if isinstance(e, dict) and e.get("email") == email), None)
+    if existing:
+        existing["verified"] = False
+        existing["token"] = token
+    else:
+        registered.append({"email": email, "verified": False, "token": token})
+    settings["registered_emails"] = registered
+    workspace.settings = settings
+    ws_repo.update_workspace(workspace, check_version=False)
+
+    # Send branded verification email
+    domain_name = os.environ.get("DOMAIN_NAME", "dev.complens.ai")
+    verify_url = f"https://api.{domain_name}/public/verify-email/{workspace_id}/{token}"
+
+    email_service = EmailService()
+    try:
+        email_service.send_email(
+            to=email,
+            subject="Verify your email address — Complens.ai",
+            body_html=(
+                f"<h2>Verify your email address</h2>"
+                f"<p>Click the link below to verify that <strong>{email}</strong> "
+                f"is your email address and can be used for sending.</p>"
+                f'<p><a href="{verify_url}" style="display:inline-block;padding:12px 24px;'
+                f'background:#4f46e5;color:#fff;text-decoration:none;border-radius:6px;'
+                f'font-weight:600;">Verify Email Address</a></p>'
+                f'<p style="color:#6b7280;font-size:13px;">Or copy this URL: {verify_url}</p>'
+                f'<p style="color:#6b7280;font-size:13px;">If you didn\'t request this, ignore this email.</p>'
+            ),
+            body_text=(
+                f"Verify your email address\n\n"
+                f"Click this link to verify that {email} is your email address "
+                f"and can be used for sending:\n\n{verify_url}\n\n"
+                f"If you didn't request this, ignore this email."
+            ),
+            _skip_warmup_check=True,
+        )
+    except Exception as e:
+        logger.error("Failed to send verification email", email=email, error=str(e))
+        return error("Failed to send verification email", 500)
+
+    logger.info(
+        "Verification email sent",
+        workspace_id=workspace_id,
+        email=email,
+    )
+
+    return success({"sent_to": email})
+
+
+def remove_verified_email(workspace_id: str, event: dict) -> dict:
+    """Remove a registered email from the workspace.
+
+    Args:
+        workspace_id: Workspace ID.
+        event: API Gateway event with ``email`` in body.
+
+    Returns:
+        API response confirming removal.
+    """
+    body = json.loads(event.get("body", "{}"))
+    email = body.get("email", "").strip().lower()
+
+    if not email:
+        return error("Email is required", 400)
+
+    from complens.repositories.workspace import WorkspaceRepository
+
+    ws_repo = WorkspaceRepository()
+    workspace = ws_repo.get_by_id(workspace_id)
+    if not workspace:
+        return error("Workspace not found", 404)
+
+    settings = workspace.settings or {}
+    registered = list(settings.get("registered_emails", []))
+    registered = [
+        e for e in registered
+        if not (isinstance(e, dict) and e.get("email") == email)
+    ]
+    settings["registered_emails"] = registered
+    workspace.settings = settings
+    ws_repo.update_workspace(workspace, check_version=False)
+
+    logger.info(
+        "Verified email removed",
+        workspace_id=workspace_id,
+        email=email,
+    )
+
+    return success({"deleted": True})
 
 
 def verify_sender(workspace_id: str, event: dict) -> dict:

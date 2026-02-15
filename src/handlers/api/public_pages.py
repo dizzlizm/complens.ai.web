@@ -95,6 +95,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         GET  /public/pages/{slug}?ws={workspace_id}  - Get page by slug
         GET  /public/forms/{form_id}?ws={workspace_id}  - Get form by ID
         GET  /public/chat-config/{page_id}?ws={workspace_id}  - Get chat widget config
+        GET  /public/chat-config/site/{site_id}?ws={workspace_id}  - Get site-level chat config
         GET  /public/domain/{domain}  - Get rendered page by custom domain
         GET  /public/subdomain/{subdomain}  - Get rendered page by subdomain
         POST /public/submit/page/{page_id}  - Submit form from page
@@ -110,6 +111,7 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         slug = path_params.get("slug")
         form_id = path_params.get("form_id")
         page_id = path_params.get("page_id")
+        site_id = path_params.get("site_id")
         domain = path_params.get("domain")
         subdomain = path_params.get("subdomain")
         workspace_id = query_params.get("ws")
@@ -117,14 +119,18 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         # Handle OPTIONS preflight for public endpoints (custom domain / embed CORS)
         if http_method == "OPTIONS" and (
             "/public/submit/" in path
-            or "/public/chat-config/" in path
+            or "/public/chat-config/" in path  # covers both page and site chat config
             or path == "/public/track"
         ):
             return handle_options_preflight(event)
 
         # Route to appropriate handler
-        if "/public/verify-reply-to/" in path and http_method == "GET":
+        if "/public/verify-email/" in path and http_method == "GET":
+            return verify_email_callback(path_params.get("workspace_id"), path_params.get("token"))
+        elif "/public/verify-reply-to/" in path and http_method == "GET":
             return verify_reply_to_callback(path_params.get("domain"), path_params.get("token"))
+        elif "/public/chat-config/site/" in path and http_method == "GET":
+            return get_site_chat_config(site_id, workspace_id, event)
         elif "/public/chat-config/" in path and http_method == "GET":
             return get_chat_config(page_id, workspace_id, event)
         elif "/public/submit/page/" in path and http_method == "POST":
@@ -267,6 +273,57 @@ def get_chat_config(page_id: str, workspace_id: str | None, event: dict) -> dict
         "chat_config": config_data,
         "primary_color": page.primary_color or "#6366f1",
         "page_name": page.name,
+        "ws_url": ws_url,
+    }, origin)
+
+
+def get_site_chat_config(site_id: str, workspace_id: str | None, event: dict) -> dict:
+    """Get site-level chat widget configuration for embedding.
+
+    Returns chat config from site.settings for sites that have chat enabled,
+    without requiring a landing page.
+    """
+    origin = _get_origin(event)
+
+    if not workspace_id:
+        return public_error("Workspace ID (ws) query parameter is required", origin, 400)
+
+    if not site_id:
+        return public_error("Site ID is required", origin, 400)
+
+    # Gate chat behind paid plan
+    from complens.services.feature_gate import FeatureGateError, get_workspace_plan, require_feature
+    try:
+        plan = get_workspace_plan(workspace_id)
+        require_feature(plan, "chat")
+    except FeatureGateError:
+        return public_error("Chat requires a paid plan", origin, 403, "PLAN_LIMIT")
+
+    from complens.repositories.site import SiteRepository
+    site_repo = SiteRepository()
+    site = site_repo.get_by_id(workspace_id, site_id)
+
+    if not site:
+        return public_error("Site not found", origin, 404, "NOT_FOUND")
+
+    settings = site.settings or {}
+    if not settings.get("chat_enabled"):
+        return public_error("Chat is not enabled for this site", origin, 404, "NOT_FOUND")
+
+    config_data = {
+        "enabled": True,
+        "position": settings.get("chat_position", "bottom-right"),
+        "initial_message": settings.get("chat_initial_message"),
+    }
+
+    domain_name = os.environ.get("DOMAIN_NAME", "dev.complens.ai")
+    ws_url = f"wss://ws.{domain_name}"
+
+    return public_success({
+        "site_id": site.id,
+        "workspace_id": workspace_id,
+        "chat_config": config_data,
+        "site_name": site.name,
         "ws_url": ws_url,
     }, origin)
 
@@ -701,6 +758,83 @@ def verify_reply_to_callback(domain: str | None, token: str | None) -> dict:
             "Reply-To Address Verified!",
             f"<strong>{warmup.reply_to}</strong> has been verified for <strong>{domain}</strong>. "
             f"You can close this tab and continue setting up your warm-up.",
+        ),
+    }
+
+
+def verify_email_callback(workspace_id: str | None, token: str | None) -> dict:
+    """Verify a registered email address via callback link.
+
+    This is the public endpoint that users click from their verification email.
+    Looks up the workspace, finds the matching email entry by token, and marks
+    it as verified.
+
+    Args:
+        workspace_id: The workspace ID.
+        token: The verification token from the email link.
+
+    Returns:
+        HTML response confirming verification or showing an error.
+    """
+    if not workspace_id or not token:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": _verify_html_page("Invalid Request", "Missing workspace or token.", is_error=True),
+        }
+
+    from complens.repositories.workspace import WorkspaceRepository
+
+    ws_repo = WorkspaceRepository()
+    workspace = ws_repo.get_by_id(workspace_id)
+
+    if not workspace:
+        return {
+            "statusCode": 404,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": _verify_html_page("Not Found", "Workspace not found.", is_error=True),
+        }
+
+    settings = workspace.settings or {}
+    registered = list(settings.get("registered_emails", []))
+
+    # Find the entry with the matching token
+    matched = next(
+        (e for e in registered if isinstance(e, dict) and e.get("token") == token),
+        None,
+    )
+
+    if not matched:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": _verify_html_page(
+                "Invalid or Expired Link",
+                "This verification link is invalid or has already been used.",
+                is_error=True,
+            ),
+        }
+
+    # Mark as verified and clear token
+    matched["verified"] = True
+    matched.pop("token", None)
+    settings["registered_emails"] = registered
+    workspace.settings = settings
+    ws_repo.update_workspace(workspace, check_version=False)
+
+    logger.info(
+        "Email address verified",
+        workspace_id=workspace_id,
+        email=matched["email"],
+    )
+
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "text/html; charset=utf-8"},
+        "body": _verify_html_page(
+            "Email Address Verified!",
+            f"<strong>{matched['email']}</strong> has been verified. "
+            f"You can close this tab and return to Complens.ai.",
         ),
     }
 

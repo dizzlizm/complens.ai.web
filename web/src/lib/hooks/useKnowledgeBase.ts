@@ -166,6 +166,48 @@ export function useImportKBUrl(workspaceId: string) {
   });
 }
 
+export function useImportKBText(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: { text: string; name?: string; site_id?: string }) => {
+      const { data } = await api.post<KBDocument>(
+        `/workspaces/${workspaceId}/knowledge-base/import-text`,
+        input
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kb-documents', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['kb-status', workspaceId] });
+    },
+  });
+}
+
+export interface CrawlSiteResult {
+  pages_found: number;
+  pages_imported: number;
+  documents: KBDocument[];
+}
+
+export function useCrawlSite(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: { url: string; max_pages?: number; site_id?: string }) => {
+      const { data } = await api.post<CrawlSiteResult>(
+        `/workspaces/${workspaceId}/knowledge-base/crawl-site`,
+        input
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kb-documents', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['kb-status', workspaceId] });
+    },
+  });
+}
+
 export function useSyncKB(workspaceId: string) {
   const queryClient = useQueryClient();
 

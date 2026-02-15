@@ -23,10 +23,10 @@ import DealPipeline from './pages/DealPipeline';
 import Sites from './pages/Sites';
 import Pages from './pages/Pages';
 import PageEditor from './pages/PageEditor';
-// Forms removed - now managed inside Page Editor
 import Conversations from './pages/Conversations';
 import Settings from './pages/Settings';
 import SiteAISettings from './pages/SiteAISettings';
+import SiteForms from './pages/SiteForms';
 import SiteSetup from './pages/SiteSetup';
 import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
@@ -90,6 +90,7 @@ function App() {
             <Route path="/sites/:siteId" element={<SiteLayout />}>
               <Route path="pages" element={<Pages />} />
               <Route path="pages/:id" element={<PageEditor />} />
+              <Route path="forms" element={<SiteForms />} />
               <Route path="workflows" element={<Workflows />} />
               <Route path="workflows/:id" element={<WorkflowEditor />} />
               <Route path="setup" element={<SiteSetup />} />

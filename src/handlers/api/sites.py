@@ -2,6 +2,7 @@
 
 import base64
 import json
+import uuid
 from typing import Any
 
 import structlog
@@ -27,9 +28,11 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         GET    /workspaces/{workspace_id}/sites/{site_id}
         PUT    /workspaces/{workspace_id}/sites/{site_id}
         DELETE /workspaces/{workspace_id}/sites/{site_id}
+        POST   /workspaces/{workspace_id}/sites/{site_id}/copy
     """
     try:
         http_method = event.get("httpMethod", "").upper()
+        path = event.get("path", "")
         path_params = event.get("pathParameters", {}) or {}
         workspace_id = path_params.get("workspace_id")
         site_id = path_params.get("site_id")
@@ -41,7 +44,9 @@ def handler(event: dict[str, Any], context: Any) -> dict:
 
         repo = SiteRepository()
 
-        if http_method == "GET" and site_id:
+        if http_method == "POST" and site_id and path.endswith("/copy"):
+            return copy_site(repo, workspace_id, site_id, event)
+        elif http_method == "GET" and site_id:
             return get_site(repo, workspace_id, site_id)
         elif http_method == "GET":
             return list_sites(repo, workspace_id, event)
@@ -89,6 +94,12 @@ def list_sites(
         last_key = json.loads(base64.b64decode(cursor).decode())
 
     sites, next_key = repo.list_by_workspace(workspace_id, limit, last_key)
+
+    # Auto-create default site if workspace has none (adopts orphan pages like demo)
+    if not sites and not cursor:
+        default_site = _ensure_default_site(repo, workspace_id)
+        if default_site:
+            sites = [default_site]
 
     next_cursor = None
     if next_key:
@@ -316,3 +327,178 @@ def delete_site(
     logger.info("Site deleted", site_id=site_id, workspace_id=workspace_id)
 
     return success({"deleted": True, "id": site_id})
+
+
+def copy_site(
+    repo: SiteRepository,
+    workspace_id: str,
+    site_id: str,
+    event: dict,
+) -> dict:
+    """Copy a site with all child entities.
+
+    Copies pages, workflows, business profile, and KB document metadata.
+    Clears domains/subdomains, resets counters, sets everything to draft.
+    """
+    source = repo.get_by_id(workspace_id, site_id)
+    if not source:
+        return not_found("Site", site_id)
+
+    try:
+        body = json.loads(event.get("body", "{}") or "{}")
+    except json.JSONDecodeError:
+        body = {}
+
+    new_name = body.get("name") or f"{source.name} (Copy)"
+
+    # Enforce sites limit
+    plan = get_workspace_plan(workspace_id)
+    site_count = count_resources(repo.table, workspace_id, "SITE#")
+    enforce_limit(plan, "sites", site_count)
+
+    # Create new site (no domain — user sets later)
+    new_site = Site(
+        workspace_id=workspace_id,
+        domain_name="",
+        name=new_name,
+        description=source.description,
+        settings=dict(source.settings),
+    )
+    new_site = repo.create_site(new_site)
+
+    # Build page_id mapping: old → new
+    page_id_map: dict[str, str] = {}
+
+    # Copy pages
+    page_repo = PageRepository()
+    pages, _ = page_repo.list_by_site(workspace_id, site_id, limit=100)
+    for page in pages:
+        from complens.models.page import Page
+
+        new_page_id = str(uuid.uuid4())
+        page_id_map[page.id] = new_page_id
+
+        # Generate a unique slug
+        base_slug = page.slug or "page"
+        new_slug = f"{base_slug}-copy"
+
+        new_page = Page(
+            id=new_page_id,
+            workspace_id=workspace_id,
+            site_id=new_site.id,
+            name=page.name,
+            slug=new_slug,
+            status="draft",
+            headline=page.headline,
+            subheadline=page.subheadline,
+            hero_image_url=page.hero_image_url,
+            body_content=page.body_content,
+            blocks=page.blocks,
+            form_ids=list(page.form_ids),
+            chat_config=page.chat_config,
+            primary_color=page.primary_color,
+            theme=dict(page.theme) if page.theme else {},
+            custom_css=page.custom_css,
+            meta_title=page.meta_title,
+            meta_description=page.meta_description,
+            og_image_url=page.og_image_url,
+            subdomain=None,
+            custom_domain=None,
+            view_count=0,
+            form_submission_count=0,
+            chat_session_count=0,
+        )
+        try:
+            page_repo.create_page(new_page)
+        except Exception as e:
+            # Slug conflict — append uuid suffix
+            logger.warning("Slug conflict during copy, retrying", slug=new_slug, error=str(e))
+            new_page.slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+            page_repo.create_page(new_page)
+
+    # Copy workflows
+    from complens.models.workflow import Workflow
+    from complens.repositories.workflow import WorkflowRepository
+
+    wf_repo = WorkflowRepository()
+    workflows, _ = wf_repo.list_by_site(workspace_id, site_id, limit=100)
+    for wf in workflows:
+        new_wf = Workflow(
+            workspace_id=workspace_id,
+            site_id=new_site.id,
+            page_id=page_id_map.get(wf.page_id) if wf.page_id else None,
+            name=wf.name,
+            description=wf.description,
+            status="draft",
+            nodes=wf.nodes,
+            edges=wf.edges,
+            viewport=dict(wf.viewport) if wf.viewport else {"x": 0, "y": 0, "zoom": 1},
+            trigger_config=wf.trigger_config,
+            total_runs=0,
+            successful_runs=0,
+            failed_runs=0,
+            last_run_at=None,
+            settings=dict(wf.settings) if wf.settings else {},
+        )
+
+        # Remap form_id in trigger_config if needed
+        if new_wf.trigger_config and hasattr(new_wf.trigger_config, "form_id"):
+            old_form_id = new_wf.trigger_config.form_id
+            if old_form_id:
+                # form_ids stay the same (forms are embedded in pages via form_ids list)
+                # but page_id in trigger_config may need remapping
+                pass
+
+        wf_repo.create_workflow(new_wf)
+
+    # Copy business profile
+    from complens.repositories.business_profile import BusinessProfileRepository
+
+    bp_repo = BusinessProfileRepository()
+    profile = bp_repo.get_by_site(workspace_id, site_id)
+    if profile:
+        from complens.models.business_profile import BusinessProfile
+
+        new_profile = BusinessProfile(
+            workspace_id=workspace_id,
+            site_id=new_site.id,
+            **{
+                k: v
+                for k, v in profile.model_dump(mode="json").items()
+                if k not in ("id", "workspace_id", "site_id", "page_id", "created_at", "updated_at")
+            },
+        )
+        bp_repo.create_profile(new_profile)
+
+    # Copy KB documents (metadata only — reference same S3 files)
+    from complens.repositories.document import DocumentRepository
+
+    doc_repo = DocumentRepository()
+    documents, _ = doc_repo.list_by_workspace(workspace_id, limit=100, site_id=site_id)
+    for doc in documents:
+        from complens.models.document import Document
+
+        new_doc = Document(
+            workspace_id=workspace_id,
+            site_id=new_site.id,
+            name=doc.name,
+            file_key=doc.file_key,
+            processed_key=doc.processed_key,
+            file_size=doc.file_size,
+            content_type=doc.content_type,
+            status=doc.status,
+        )
+        doc_repo.create_document(new_doc)
+
+    logger.info(
+        "Site copied",
+        source_site_id=site_id,
+        new_site_id=new_site.id,
+        pages_copied=len(page_id_map),
+        workflows_copied=len(workflows),
+        workspace_id=workspace_id,
+    )
+
+    result = new_site.model_dump(mode="json")
+    result["primary_page"] = _get_primary_page(workspace_id, new_site.id)
+    return created(result)

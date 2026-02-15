@@ -171,18 +171,29 @@ class SendEmailAction(BaseNode):
         template_name = self._get_config_value("email_template_name")
         template_data = self._get_config_value("email_template_data", {})
 
-        # Get from email: node config > workspace setting > service default
+        # Get from email: node config > site settings > workspace setting
         from_email = (
             self._get_config_value("email_from")
+            or context.site_settings.get("from_email")
             or context.workspace_settings.get("from_email")
         )
 
-        # Get reply-to: node config > workspace setting
+        # Build "Name <address>" format if site/workspace has from_name
+        if from_email and not from_email.startswith('"') and '<' not in from_email:
+            from_name = (
+                context.site_settings.get("from_name")
+                or context.workspace_settings.get("from_name")
+            )
+            if from_name:
+                from_email = f"{from_name} <{from_email}>"
+
+        # Get reply-to: node config > site settings > workspace setting
         reply_to = self._get_config_value("email_reply_to")
         if not reply_to:
-            ws_reply_to = context.workspace_settings.get("reply_to")
-            if ws_reply_to:
-                reply_to = ws_reply_to
+            reply_to = (
+                context.site_settings.get("reply_to")
+                or context.workspace_settings.get("reply_to")
+            )
         reply_to_list = [reply_to] if reply_to else None
 
         if not body_text and not body_html and not template_name:

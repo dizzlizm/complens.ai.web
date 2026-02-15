@@ -3,9 +3,15 @@
  *
  * Embeds the Complens chat widget on any website via an iframe.
  *
- * Usage:
+ * Usage (page-based):
  *   <script>
  *     window.ComplensChat = { pageId: "YOUR_PAGE_ID", workspaceId: "YOUR_WORKSPACE_ID" };
+ *   </script>
+ *   <script src="https://dev.complens.ai/embed/chat-loader.js" async></script>
+ *
+ * Usage (site-based — no landing page required):
+ *   <script>
+ *     window.ComplensChat = { siteId: "YOUR_SITE_ID", workspaceId: "YOUR_WORKSPACE_ID" };
  *   </script>
  *   <script src="https://dev.complens.ai/embed/chat-loader.js" async></script>
  */
@@ -13,9 +19,9 @@
   'use strict';
 
   var config = window.ComplensChat;
-  if (!config || !config.pageId || !config.workspaceId) {
+  if (!config || (!config.pageId && !config.siteId) || !config.workspaceId) {
     console.error(
-      '[Complens Chat] Missing configuration. Set window.ComplensChat = { pageId: "...", workspaceId: "..." } before loading the script.'
+      '[Complens Chat] Missing configuration. Set window.ComplensChat = { pageId: "..." OR siteId: "...", workspaceId: "..." } before loading the script.'
     );
     return;
   }
@@ -34,12 +40,13 @@
     host = 'https://dev.complens.ai';
   }
 
-  var iframeSrc =
-    host +
-    '/embed/chat?page_id=' +
-    encodeURIComponent(config.pageId) +
-    '&ws=' +
-    encodeURIComponent(config.workspaceId);
+  // Build iframe URL with either pageId or siteId
+  var iframeSrc = host + '/embed/chat?ws=' + encodeURIComponent(config.workspaceId);
+  if (config.siteId) {
+    iframeSrc += '&site_id=' + encodeURIComponent(config.siteId);
+  } else {
+    iframeSrc += '&page_id=' + encodeURIComponent(config.pageId);
+  }
 
   // Create iframe
   var iframe = document.createElement('iframe');

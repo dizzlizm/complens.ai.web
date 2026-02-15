@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSites, useCreateSite, useDeleteSite } from '../lib/hooks/useSites';
+import { useSites, useCreateSite, useDeleteSite, useCopySite } from '../lib/hooks/useSites';
 import { useCurrentWorkspace } from '../lib/hooks/useWorkspaces';
 import Modal from '../components/ui/Modal';
 import { useToast } from '../components/Toast';
 import {
-  Globe, Trash2, ArrowRight, Search, Plus, Loader2,
+  Globe, Trash2, ArrowRight, Search, Plus, Loader2, Copy,
 } from 'lucide-react';
 
 export default function Sites() {
@@ -13,6 +13,7 @@ export default function Sites() {
   const { data: sites, isLoading, error } = useSites(workspaceId);
   const createSite = useCreateSite(workspaceId || '');
   const deleteSite = useDeleteSite(workspaceId || '');
+  const copySite = useCopySite(workspaceId || '');
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -21,6 +22,8 @@ export default function Sites() {
   const [showCreate, setShowCreate] = useState(false);
   const [newSiteName, setNewSiteName] = useState('');
   const [newSiteDescription, setNewSiteDescription] = useState('');
+  const [copyTarget, setCopyTarget] = useState<{ id: string; name: string } | null>(null);
+  const [copyName, setCopyName] = useState('');
 
   const handleCreateSite = async () => {
     if (!newSiteName.trim()) return;
@@ -52,6 +55,26 @@ export default function Sites() {
       toast.success('Site deleted successfully');
     } catch (err) {
       toast.error('Failed to delete site. Please try again.');
+    }
+  };
+
+  const handleCopySite = async () => {
+    if (!copyTarget) return;
+    try {
+      const site = await copySite.mutateAsync({
+        siteId: copyTarget.id,
+        name: copyName.trim() || undefined,
+      });
+      setCopyTarget(null);
+      setCopyName('');
+      toast.success('Site copied successfully');
+      const target = site.primary_page
+        ? `/sites/${site.id}/pages/${site.primary_page.id}`
+        : `/sites/${site.id}/pages`;
+      navigate(target);
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || 'Failed to copy site';
+      toast.error(msg);
     }
   };
 
@@ -155,16 +178,29 @@ export default function Sites() {
                       )}
                     </div>
                   </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteConfirm(site.id);
-                    }}
-                    className="p-1.5 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                    title="Delete site"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCopyTarget({ id: site.id, name: site.name });
+                        setCopyName(`${site.name} (Copy)`);
+                      }}
+                      className="p-1.5 text-gray-400 hover:text-indigo-600"
+                      title="Copy site"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteConfirm(site.id);
+                      }}
+                      className="p-1.5 text-gray-400 hover:text-red-500"
+                      title="Delete site"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
                 {site.description && (
                   <p className="text-sm text-gray-600 mb-3 line-clamp-2">
@@ -232,6 +268,48 @@ export default function Sites() {
                 <><Loader2 className="w-4 h-4 animate-spin" /> Creating...</>
               ) : (
                 <><Plus className="w-4 h-4" /> Create Site</>
+              )}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Copy Site Modal */}
+      {copyTarget && (
+        <Modal isOpen onClose={() => setCopyTarget(null)} title="Copy Site">
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              This will copy all pages, workflows, business profile, and knowledge base documents.
+              Domains and subdomains will be cleared, and everything will be set to draft.
+            </p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">New Site Name</label>
+              <input
+                type="text"
+                className="input w-full"
+                value={copyName}
+                onChange={(e) => setCopyName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCopySite()}
+                autoFocus
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 mt-6">
+            <button
+              onClick={() => setCopyTarget(null)}
+              className="btn btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleCopySite}
+              disabled={copySite.isPending}
+              className="btn btn-primary inline-flex items-center gap-2"
+            >
+              {copySite.isPending ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Copying...</>
+              ) : (
+                <><Copy className="w-4 h-4" /> Copy Site</>
               )}
             </button>
           </div>

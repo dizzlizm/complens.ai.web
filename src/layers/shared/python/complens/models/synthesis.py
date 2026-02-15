@@ -405,6 +405,12 @@ class SynthesizePlanRequest(PydanticBaseModel):
         default=None,
         description="Block types already on the page (used to avoid injecting duplicates)",
     )
+    max_blocks: int | None = Field(
+        default=None,
+        ge=1,
+        le=12,
+        description="Maximum number of blocks to plan (from selected slot count)",
+    )
 
     def model_post_init(self, __context: Any) -> None:
         """Post-initialization validation."""
