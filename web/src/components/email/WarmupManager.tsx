@@ -1158,6 +1158,7 @@ function WarmupDomainCard({
 
   const [isExpanded, setIsExpanded] = useState(false);
   const [activePanel, setActivePanel] = useState<'health' | 'seedlist' | 'log' | 'settings' | 'content' | null>(null);
+  const [expandedLogIndex, setExpandedLogIndex] = useState<number | null>(null);
   const [seedInput, setSeedInput] = useState('');
   const [editSeedList, setEditSeedList] = useState<string[]>(warmup.seed_list || []);
   const [showContactPicker, setShowContactPicker] = useState(false);
@@ -1933,20 +1934,60 @@ function WarmupDomainCard({
                   <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
                 </div>
               ) : logData?.items && logData.items.length > 0 ? (
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {logData.items.map((entry, i) => (
-                    <div key={i} className="flex items-start gap-3 py-2 border-b border-gray-100 last:border-0 text-xs">
-                      <Mail className="w-3.5 h-3.5 text-gray-400 mt-0.5 shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-gray-800 truncate">{entry.subject}</p>
-                        <p className="text-gray-500">
-                          To: {entry.recipient}
-                          {entry.from_email && <> &middot; From: {entry.from_email}</>}
-                          {entry.sent_at && <> &middot; {new Date(entry.sent_at).toLocaleString()}</>}
-                        </p>
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {logData.items.map((entry, i) => {
+                    const hasAttribution = !!(entry.kb_source || entry.kb_excerpt || entry.kb_reasoning || entry.profile_alignment);
+                    const isExpanded = expandedLogIndex === i;
+                    return (
+                      <div key={i} className="border-b border-gray-100 last:border-0">
+                        <div
+                          className={`flex items-start gap-3 py-2 text-xs ${hasAttribution ? 'cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1' : ''}`}
+                          onClick={() => hasAttribution && setExpandedLogIndex(isExpanded ? null : i)}
+                        >
+                          <Mail className="w-3.5 h-3.5 text-gray-400 mt-0.5 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium text-gray-800 truncate">{entry.subject}</p>
+                            <p className="text-gray-500">
+                              To: {entry.recipient}
+                              {entry.from_email && <> &middot; From: {entry.from_email}</>}
+                              {entry.sent_at && <> &middot; {new Date(entry.sent_at).toLocaleString()}</>}
+                            </p>
+                          </div>
+                          {hasAttribution && (
+                            <BookOpen className={`w-3.5 h-3.5 shrink-0 mt-0.5 transition-colors ${isExpanded ? 'text-primary-500' : 'text-gray-300'}`} />
+                          )}
+                        </div>
+                        {isExpanded && hasAttribution && (
+                          <div className="ml-6 mb-2 p-2.5 bg-white rounded-lg border border-gray-200 text-xs space-y-2">
+                            {entry.kb_source && (
+                              <div>
+                                <span className="font-medium text-gray-600">KB Source: </span>
+                                <span className="text-gray-500">{entry.kb_source.split('/').pop() || entry.kb_source}</span>
+                              </div>
+                            )}
+                            {entry.kb_excerpt && (
+                              <div>
+                                <span className="font-medium text-gray-600">KB Excerpt: </span>
+                                <span className="text-gray-500 italic">{entry.kb_excerpt.length > 200 ? entry.kb_excerpt.slice(0, 200) + '...' : entry.kb_excerpt}</span>
+                              </div>
+                            )}
+                            {entry.kb_reasoning && (
+                              <div>
+                                <span className="font-medium text-gray-600">Why this content: </span>
+                                <span className="text-gray-500">{entry.kb_reasoning}</span>
+                              </div>
+                            )}
+                            {entry.profile_alignment && (
+                              <div>
+                                <span className="font-medium text-gray-600">Profile alignment: </span>
+                                <span className="text-gray-500">{entry.profile_alignment}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="text-xs text-gray-500 py-2">No warmup emails sent yet</p>

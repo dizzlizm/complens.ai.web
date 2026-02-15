@@ -9,6 +9,10 @@ from typing import Any
 
 import structlog
 
+from complens.repositories.contact import ContactRepository
+from complens.repositories.form import FormRepository
+from complens.repositories.page import PageRepository
+from complens.repositories.workflow import WorkflowRepository
 from complens.repositories.workspace import WorkspaceRepository
 from complens.services.admin_service import AdminService
 from complens.utils.auth import get_auth_context, require_super_admin
@@ -31,6 +35,14 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         POST   /admin/workspaces/{id}/members - Add member to workspace
         PUT    /admin/workspaces/{id}/members/{user_id} - Update member role
         DELETE /admin/workspaces/{id}/members/{user_id} - Remove member
+        GET    /admin/workspaces/{id}/pages - List workspace pages
+        DELETE /admin/workspaces/{id}/pages/{page_id} - Delete page
+        GET    /admin/workspaces/{id}/contacts - List workspace contacts
+        DELETE /admin/workspaces/{id}/contacts/{contact_id} - Delete contact
+        GET    /admin/workspaces/{id}/workflows - List workspace workflows
+        DELETE /admin/workspaces/{id}/workflows/{workflow_id} - Delete workflow
+        GET    /admin/workspaces/{id}/forms - List workspace forms
+        DELETE /admin/workspaces/{id}/forms/{form_id} - Delete form
         GET    /admin/users - List Cognito users
         GET    /admin/users/{id} - Get user details
         GET    /admin/users/{id}/stats - Get user's aggregated stats
@@ -73,6 +85,35 @@ def handler(event: dict[str, Any], context: Any) -> dict:
         elif "/admin/workspaces/" in path and path.endswith("/members") and http_method == "POST":
             workspace_id = path_params.get("workspace_id")
             return add_workspace_member(workspace_id, event)
+        # Workspace content routes (must be before generic workspace GET/PUT/DELETE)
+        elif "/admin/workspaces/" in path and path.endswith("/pages") and http_method == "GET":
+            workspace_id = path_params.get("workspace_id")
+            return list_workspace_pages(workspace_id)
+        elif "/admin/workspaces/" in path and "/pages/" in path and http_method == "DELETE":
+            workspace_id = path_params.get("workspace_id")
+            page_id = path_params.get("page_id")
+            return delete_workspace_page(workspace_id, page_id)
+        elif "/admin/workspaces/" in path and path.endswith("/contacts") and http_method == "GET":
+            workspace_id = path_params.get("workspace_id")
+            return list_workspace_contacts(workspace_id, event)
+        elif "/admin/workspaces/" in path and "/contacts/" in path and http_method == "DELETE":
+            workspace_id = path_params.get("workspace_id")
+            contact_id = path_params.get("contact_id")
+            return delete_workspace_contact(workspace_id, contact_id)
+        elif "/admin/workspaces/" in path and path.endswith("/workflows") and http_method == "GET":
+            workspace_id = path_params.get("workspace_id")
+            return list_workspace_workflows(workspace_id)
+        elif "/admin/workspaces/" in path and "/workflows/" in path and http_method == "DELETE":
+            workspace_id = path_params.get("workspace_id")
+            workflow_id = path_params.get("workflow_id")
+            return delete_workspace_workflow(workspace_id, workflow_id)
+        elif "/admin/workspaces/" in path and path.endswith("/forms") and http_method == "GET":
+            workspace_id = path_params.get("workspace_id")
+            return list_workspace_forms(workspace_id)
+        elif "/admin/workspaces/" in path and "/forms/" in path and http_method == "DELETE":
+            workspace_id = path_params.get("workspace_id")
+            form_id = path_params.get("form_id")
+            return delete_workspace_form(workspace_id, form_id)
         elif path.startswith("/admin/workspaces/") and http_method == "GET":
             workspace_id = path_params.get("workspace_id")
             return get_workspace(workspace_id)
@@ -587,3 +628,151 @@ def update_plan(plan_key: str, event: dict) -> dict:
     logger.info("Plan config updated by admin", plan_key=plan_key, fields=list(body.keys()))
 
     return success(existing.model_dump(mode="json"))
+
+
+# -------------------------------------------------------------------------
+# Workspace content CRUD (pages, contacts, workflows, forms)
+# -------------------------------------------------------------------------
+
+
+def _validate_workspace(workspace_id: str) -> None:
+    """Verify workspace exists; raises NotFoundError if not."""
+    ws_repo = WorkspaceRepository()
+    workspace = ws_repo.get_by_id(workspace_id)
+    if not workspace:
+        raise NotFoundError("workspace", workspace_id)
+
+
+def list_workspace_pages(workspace_id: str) -> dict:
+    """List all pages in a workspace."""
+    _validate_workspace(workspace_id)
+    repo = PageRepository()
+    pages, _ = repo.list_by_workspace(workspace_id, limit=200)
+
+    return success({
+        "items": [
+            {
+                "id": p.id,
+                "title": p.title or "",
+                "slug": p.slug or "",
+                "status": getattr(p, "status", "draft"),
+                "subdomain": getattr(p, "subdomain", None),
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in pages
+        ],
+        "count": len(pages),
+    })
+
+
+def delete_workspace_page(workspace_id: str, page_id: str) -> dict:
+    """Delete a page from a workspace."""
+    _validate_workspace(workspace_id)
+    repo = PageRepository()
+    deleted = repo.delete_page(workspace_id, page_id)
+    if not deleted:
+        return not_found("page", page_id)
+
+    logger.info("Page deleted by admin", workspace_id=workspace_id, page_id=page_id)
+    return success({"message": "Page deleted", "page_id": page_id})
+
+
+def list_workspace_contacts(workspace_id: str, event: dict) -> dict:
+    """List contacts in a workspace."""
+    _validate_workspace(workspace_id)
+    query_params = event.get("queryStringParameters", {}) or {}
+    limit = int(query_params.get("limit", 100))
+
+    repo = ContactRepository()
+    contacts, _ = repo.list_by_workspace(workspace_id, limit=limit)
+
+    return success({
+        "items": [
+            {
+                "id": c.id,
+                "email": c.email or "",
+                "first_name": getattr(c, "first_name", ""),
+                "last_name": getattr(c, "last_name", ""),
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in contacts
+        ],
+        "count": len(contacts),
+    })
+
+
+def delete_workspace_contact(workspace_id: str, contact_id: str) -> dict:
+    """Delete a contact from a workspace."""
+    _validate_workspace(workspace_id)
+    repo = ContactRepository()
+    deleted = repo.delete_contact(workspace_id, contact_id)
+    if not deleted:
+        return not_found("contact", contact_id)
+
+    logger.info("Contact deleted by admin", workspace_id=workspace_id, contact_id=contact_id)
+    return success({"message": "Contact deleted", "contact_id": contact_id})
+
+
+def list_workspace_workflows(workspace_id: str) -> dict:
+    """List workflows in a workspace."""
+    _validate_workspace(workspace_id)
+    repo = WorkflowRepository()
+    workflows, _ = repo.list_by_workspace(workspace_id, limit=200)
+
+    return success({
+        "items": [
+            {
+                "id": w.id,
+                "name": w.name or "",
+                "status": getattr(w, "status", "draft"),
+                "trigger_type": getattr(w, "trigger_type", None),
+                "created_at": w.created_at.isoformat() if w.created_at else None,
+            }
+            for w in workflows
+        ],
+        "count": len(workflows),
+    })
+
+
+def delete_workspace_workflow(workspace_id: str, workflow_id: str) -> dict:
+    """Delete a workflow from a workspace."""
+    _validate_workspace(workspace_id)
+    repo = WorkflowRepository()
+    deleted = repo.delete_workflow(workspace_id, workflow_id)
+    if not deleted:
+        return not_found("workflow", workflow_id)
+
+    logger.info("Workflow deleted by admin", workspace_id=workspace_id, workflow_id=workflow_id)
+    return success({"message": "Workflow deleted", "workflow_id": workflow_id})
+
+
+def list_workspace_forms(workspace_id: str) -> dict:
+    """List all forms in a workspace."""
+    _validate_workspace(workspace_id)
+    repo = FormRepository()
+    forms, _ = repo.list_by_workspace(workspace_id, limit=200)
+
+    return success({
+        "items": [
+            {
+                "id": f.id,
+                "name": getattr(f, "name", ""),
+                "page_id": getattr(f, "page_id", None),
+                "created_at": f.created_at.isoformat() if f.created_at else None,
+            }
+            for f in forms
+        ],
+        "count": len(forms),
+    })
+
+
+def delete_workspace_form(workspace_id: str, form_id: str) -> dict:
+    """Delete a form from a workspace."""
+    _validate_workspace(workspace_id)
+    repo = FormRepository()
+    deleted = repo.delete_form(workspace_id, form_id)
+    if not deleted:
+        return not_found("form", form_id)
+
+    logger.info("Form deleted by admin", workspace_id=workspace_id, form_id=form_id)
+    return success({"message": "Form deleted", "form_id": form_id})

@@ -2771,6 +2771,54 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /admin/workspaces/{workspace_id}/members/{user_id}
             Method: DELETE
+        AdminListPages:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/pages
+            Method: GET
+        AdminDeletePage:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/pages/{page_id}
+            Method: DELETE
+        AdminListContacts:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/contacts
+            Method: GET
+        AdminDeleteContact:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/contacts/{contact_id}
+            Method: DELETE
+        AdminListWorkflows:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/workflows
+            Method: GET
+        AdminDeleteWorkflow:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/workflows/{workflow_id}
+            Method: DELETE
+        AdminListForms:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/forms
+            Method: GET
+        AdminDeleteForm:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /admin/workspaces/{workspace_id}/forms/{form_id}
+            Method: DELETE
         ToggleSuperAdmin:
           Type: Api
           Properties:

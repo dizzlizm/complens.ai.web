@@ -104,7 +104,9 @@ class WarmupEmailGenerator:
             logger.debug("Could not load business context, using generic", workspace_id=workspace_id)
 
         # Gather enrichment context from KB, pages, and deals
-        kb_context = self._get_kb_context(workspace_id, content_type, site_id=site_id)
+        kb_result = self._get_kb_context(workspace_id, content_type, site_id=site_id)
+        kb_context = kb_result.get("text", "")
+        kb_source = kb_result.get("source", "")
         page_context = self._get_page_context(workspace_id, site_id=site_id)
         deal_context = self._get_deal_context(workspace_id)
 
@@ -115,6 +117,7 @@ class WarmupEmailGenerator:
             business_context_len=len(business_context),
             has_kb_context=bool(kb_context),
             kb_context_len=len(kb_context),
+            kb_source=kb_source[:120] if kb_source else "",
             has_page_context=bool(page_context),
             has_deal_context=bool(deal_context),
         )
@@ -204,7 +207,9 @@ Return JSON with exactly these fields:
 - subject: string (email subject line)
 - body_text: string (plain text version)
 - body_html: string (HTML version with basic formatting)
-- content_type: string ("{content_type}")"""
+- content_type: string ("{content_type}")
+- kb_reasoning: string (1-2 sentences: why this KB content was chosen as the email's focus, or "" if no KB content)
+- profile_alignment: string (1-2 sentences: how the email's tone and style reflect the business profile, or "" if no profile)"""
 
         try:
             system_prompt = (
@@ -226,12 +231,25 @@ Return JSON with exactly these fields:
 
             result["content_type"] = content_type
 
+            # Attach KB attribution metadata
+            if kb_context:
+                result["kb_source"] = kb_source
+                result["kb_excerpt"] = kb_context[:300]
+            else:
+                result["kb_source"] = ""
+                result["kb_excerpt"] = ""
+
+            # Ensure reasoning fields exist (Claude may omit if empty)
+            result.setdefault("kb_reasoning", "")
+            result.setdefault("profile_alignment", "")
+
             logger.info(
                 "Warmup email generated",
                 domain=domain,
                 content_type=content_type,
                 subject=result["subject"][:50],
                 has_kb_context=bool(kb_context),
+                kb_source=result["kb_source"][:80] if result["kb_source"] else "",
             )
 
             return result
@@ -269,7 +287,7 @@ Return JSON with exactly these fields:
         return None
 
     @staticmethod
-    def _get_kb_context(workspace_id: str, content_type: str, site_id: str | None = None) -> str:
+    def _get_kb_context(workspace_id: str, content_type: str, site_id: str | None = None) -> dict:
         """Retrieve a single KB snippet for the email to focus on.
 
         Queries KB for relevant content, then randomly picks ONE snippet so
@@ -282,7 +300,7 @@ Return JSON with exactly these fields:
             site_id: Optional site ID for site-scoped retrieval.
 
         Returns:
-            A single KB snippet string, or empty string if none available.
+            Dict with ``text`` and ``source`` keys, or empty dict if none available.
         """
         try:
             from complens.repositories.document import DocumentRepository
@@ -294,23 +312,26 @@ Return JSON with exactly these fields:
             else:
                 indexed_docs, _ = doc_repo.list_by_workspace(workspace_id, status="indexed", limit=1)
             if not indexed_docs:
-                return ""
+                return {}
 
             kb_service = KnowledgeBaseService()
             query = KB_QUERIES_BY_CONTENT_TYPE.get(content_type, "product features updates")
             results = kb_service.retrieve(workspace_id, query, max_results=8, site_id=site_id)
 
-            # Collect unique snippets
+            # Collect unique snippets with their source metadata
             seen_texts: set[str] = set()
-            snippets: list[str] = []
+            snippets: list[dict] = []
             for r in (results or []):
                 text = r.get("text", "").strip()
                 if text and text[:100] not in seen_texts:
                     seen_texts.add(text[:100])
-                    snippets.append(text[:1500])
+                    snippets.append({
+                        "text": text[:1500],
+                        "source": r.get("source", ""),
+                    })
 
             if not snippets:
-                return ""
+                return {}
 
             # Pick ONE random snippet — each email focuses on a single topic
             chosen = random.choice(snippets)
@@ -320,15 +341,16 @@ Return JSON with exactly these fields:
                 workspace_id=workspace_id,
                 content_type=content_type,
                 available_snippets=len(snippets),
-                chosen_len=len(chosen),
-                chosen_preview=chosen[:80],
+                chosen_len=len(chosen["text"]),
+                chosen_preview=chosen["text"][:80],
+                chosen_source=chosen["source"][:120] if chosen["source"] else "",
             )
 
             return chosen
 
         except Exception:
             logger.debug("Could not load KB context for warmup", workspace_id=workspace_id)
-            return ""
+            return {}
 
     @staticmethod
     def _get_page_context(workspace_id: str, site_id: str | None = None) -> str:

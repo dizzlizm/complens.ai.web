@@ -156,6 +156,10 @@ def handler(event: dict[str, Any], context: Any) -> dict:
                         "from_email": from_email,
                         "content_type": email_content.get("content_type", ""),
                         "sent_at": datetime.now(timezone.utc).isoformat(),
+                        "kb_source": email_content.get("kb_source", ""),
+                        "kb_excerpt": email_content.get("kb_excerpt", ""),
+                        "kb_reasoning": email_content.get("kb_reasoning", ""),
+                        "profile_alignment": email_content.get("profile_alignment", ""),
                     },
                 )
             except Exception:

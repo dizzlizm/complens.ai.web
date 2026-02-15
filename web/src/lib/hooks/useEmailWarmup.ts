@@ -102,6 +102,10 @@ export interface WarmupLogEntry {
   from_email: string;
   content_type: string;
   sent_at: string;
+  kb_source?: string;
+  kb_excerpt?: string;
+  kb_reasoning?: string;
+  profile_alignment?: string;
 }
 
 export interface WarmupLogResponse {
